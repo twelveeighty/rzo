@@ -1,0 +1,14 @@
+[
+    {
+        "apiVersion": "v1",
+        "kind": "Source",
+        "metadata": {
+            "name": "db"
+        },
+        "spec": {
+            "type": "base.rest-client.RestClientSource",
+            "url": "http://localhost:5001/"
+        }
+    }
+]
+

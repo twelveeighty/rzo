@@ -1,0 +1,153 @@
+[
+    {
+        "apiVersion": "v1",
+        "kind": "Policy",
+        "metadata": {
+            "name": "drivers"
+        },
+        "spec": {
+            "type": "server.policy.Policy",
+            "appliesTo": "drivers",
+            "statements": [
+                { "resource": "entity/zone", "action": "get",
+                  "effect": "allow"
+                },
+                { "resource": "entity/rider", "action": "get",
+                  "effect": "allow"
+                },
+                { "resource": "entity/driver", "action": "get",
+                  "effect": "allow",
+                  "where": {
+                      "match": "all", "conditions": [
+                          { "attr": "id",
+                            "op": "eq",
+                            "subject": "${my.driver_id}"
+                          }
+                      ]
+                  }
+                },
+                { "resource": "entity/trip", "action": "get",
+                  "effect": "allow",
+                  "where": {
+                      "match": "any", "conditions": [
+                          { "attr": "drivernum_id",
+                            "op": "isNull"
+                          },
+                          { "attr": "drivernum_id",
+                            "op": "=",
+                            "subject": "${my.driver_id}"
+                          }
+                      ]
+                  }
+                },
+                { "resource": "entity/trip", "action": "put",
+                  "effect": "allow",
+                  "where": {
+                      "match": "any", "conditions": [
+                          { "attr": "drivernum_id",
+                            "op": "eq",
+                            "subject": "${my.driver_id}"
+                          },
+                          { "attr": "drivernum_id",
+                            "op": "isNull"
+                          }
+                      ]
+                  }
+                }
+            ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Policy",
+        "metadata": {
+            "name": "riders"
+        },
+        "spec": {
+            "type": "server.policy.Policy",
+            "appliesTo": "riders",
+            "statements": [
+                { "resource": "entity/zone", "action": "get",
+                  "effect": "allow"
+                },
+                { "resource": "entity/rider", "action": "get",
+                  "effect": "allow",
+                  "where": {
+                      "match": "all", "conditions": [
+                          { "attr": "id",
+                            "op": "eq",
+                            "subject": "${my.rider_id}"
+                          }
+                      ]
+                  }
+                },
+                { "resource": "entity/driver", "action": "get",
+                  "effect": "deny"
+                },
+                { "resource": "entity/trip", "action": "get",
+                  "effect": "allow",
+                  "where": {
+                      "match": "all", "conditions": [
+                          { "attr": "ridernum_id",
+                            "op": "eq",
+                            "subject": "${my.rider_id}"
+                          }
+                      ]
+                  }
+                },
+                { "resource": "entity/trip", "action": "put",
+                  "effect": "allow",
+                  "where": {
+                      "match": "any", "conditions": [
+                          { "attr": "ridernum_id",
+                            "op": "eq",
+                            "subject": "${my.rider_id}"
+                          },
+                          { "attr": "ridernum_id",
+                            "op": "isNull"
+                          }
+                      ]
+                  }
+                }
+            ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Policy",
+        "metadata": {
+            "name": "admins"
+        },
+        "spec": {
+            "type": "server.policy.Policy",
+            "appliesTo": "admins",
+            "statements": [
+                { "resource": "entity/useraccount", "action": "get", "effect": "allow" },
+                { "resource": "entity/useraccount", "action": "post", "effect": "allow" },
+                { "resource": "entity/useraccount", "action": "put", "effect": "allow" },
+                { "resource": "entity/useraccount", "action": "delete", "effect": "allow" },
+                { "resource": "entity/login", "action": "get", "effect": "deny" },
+                { "resource": "entity/login", "action": "post", "effect": "allow" },
+                { "resource": "entity/login", "action": "put", "effect": "deny" },
+                { "resource": "entity/login", "action": "delete", "effect": "allow" },
+                { "resource": "entity/zone", "action": "get", "effect": "allow" },
+                { "resource": "entity/zone", "action": "post", "effect": "allow" },
+                { "resource": "entity/zone", "action": "put", "effect": "allow" },
+                { "resource": "entity/zone", "action": "delete", "effect": "allow" },
+                { "resource": "entity/rider", "action": "get", "effect": "allow" },
+                { "resource": "entity/rider", "action": "post", "effect": "allow" },
+                { "resource": "entity/rider", "action": "put", "effect": "allow" },
+                { "resource": "entity/rider", "action": "delete", "effect": "allow" },
+                { "resource": "entity/driver", "action": "get", "effect": "allow" },
+                { "resource": "entity/driver", "action": "post", "effect": "allow" },
+                { "resource": "entity/driver", "action": "put", "effect": "allow" },
+                { "resource": "entity/driver", "action": "delete", "effect": "allow" },
+                { "resource": "entity/trip", "action": "get", "effect": "allow" },
+                { "resource": "entity/trip", "action": "post", "effect": "allow" },
+                { "resource": "entity/trip", "action": "put", "effect": "allow" },
+                { "resource": "entity/trip", "action": "delete", "effect": "allow" }
+            ]
+        }
+    }
+]
+

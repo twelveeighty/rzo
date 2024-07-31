@@ -1,0 +1,59 @@
+[
+    {
+        "apiVersion": "v1",
+        "kind": "Source",
+        "metadata": {
+            "name": "db"
+        },
+        "spec": {
+            "type": "server.pg-client.PgClientSource",
+            "leaderElector": "leaderelector",
+            "pageSize": 100
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Worker",
+        "metadata": {
+            "name": "restserver"
+        },
+        "spec": {
+            "type": "server.rest.BootstrapRestServerWorker",
+            "source": "db",
+            "cache": "sessioncache",
+            "sessionBackendSource": "db",
+            "ports": [5001]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Worker",
+        "metadata": {
+            "name": "sessioncache"
+        },
+        "spec": {
+            "type": "server.cache.CacheWorker",
+            "leaderElector": "leaderelector",
+            "ttl": 60000,
+            "sessionBackendSource": "db",
+            "cacheCheckFrequency": 10000,
+            "backendCheckFrequency": 60000
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Worker",
+        "metadata": {
+            "name": "leaderelector"
+        },
+        "spec": {
+            "type": "server.election.LeaderElector",
+            "source": "db",
+            "leaderElectRowId": 1,
+            "leaderCastVoteInterval": "2 minutes",
+            "leaderCastVoteFrequency": 120000,
+            "leaderReelectFrequency": 60000
+        }
+    }
+]
+

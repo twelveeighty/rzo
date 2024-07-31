@@ -1,0 +1,78 @@
+[
+    {
+        "apiVersion": "v1",
+        "kind": "Collection",
+        "metadata": {
+            "name": "useraccounts"
+        },
+        "spec": {
+            "type": "Collection",
+            "entity": "useraccount",
+            "source": "db",
+            "via": "query",
+            "fields": [ "*" ],
+            "orderBy": [ { "field": "useraccountnum", "order": "asc" } ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Collection",
+        "metadata": {
+            "name": "zones"
+        },
+        "spec": {
+            "type": "Collection",
+            "entity": "zone",
+            "source": "db",
+            "via": "query",
+            "fields": [ "*" ],
+            "orderBy": [ { "field": "zone", "order": "asc" } ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Collection",
+        "metadata": {
+            "name": "riders"
+        },
+        "spec": {
+            "type": "Collection",
+            "entity": "rider",
+            "source": "db",
+            "via": "query",
+            "fields": [ "*" ],
+            "orderBy": [ { "field": "ridernum", "order": "asc" } ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Collection",
+        "metadata": {
+            "name": "drivers"
+        },
+        "spec": {
+            "type": "Collection",
+            "entity": "driver",
+            "source": "db",
+            "via": "query",
+            "fields": [ "*" ],
+            "orderBy": [ { "field": "drivernum", "order": "asc" } ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Collection",
+        "metadata": {
+            "name": "trips"
+        },
+        "spec": {
+            "type": "Collection",
+            "entity": "trip",
+            "source": "db",
+            "via": "query",
+            "fields": [ "*" ],
+            "orderBy": [ { "field": "appointmentts", "order": "desc" } ]
+        }
+    }
+]
+

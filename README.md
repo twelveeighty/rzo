@@ -1,2 +1,2 @@
-# rzo
+# RZO
 A Business Application Framework

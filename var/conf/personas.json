@@ -1,0 +1,65 @@
+[
+    {
+        "apiVersion": "v1",
+        "kind": "Persona",
+        "metadata": {
+            "name": "drivers",
+            "description": "Drivers"
+        },
+        "spec": {
+            "type": "Persona",
+            "memberships": [
+                {
+                    "name": "drivers",
+                    "entity": "driver",
+                    "through": "subject",
+                    "source": "db"
+                }
+            ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Persona",
+        "metadata": {
+            "name": "riders",
+            "description": "Riders"
+        },
+        "spec": {
+            "type": "Persona",
+            "memberships": [
+                {
+                    "name": "riders",
+                    "entity": "rider",
+                    "through": "subject",
+                    "source": "db"
+                }
+            ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Persona",
+        "metadata": {
+            "name": "planners",
+            "description": "Planners"
+        },
+        "spec": {
+            "type": "Persona",
+            "memberships": []
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Persona",
+        "metadata": {
+            "name": "admins",
+            "description": "Administrators"
+        },
+        "spec": {
+            "type": "Persona",
+            "memberships": []
+        }
+    }
+]
+

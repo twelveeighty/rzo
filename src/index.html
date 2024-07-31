@@ -1,0 +1,591 @@
+<!doctype html>
+<html lang="en" data-bs-theme="auto">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <title>RZO</title>
+
+    <!-- Bootstrap -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-T3c6CoIi6uLrA9TneNEoa7RxnatzjcDSCmG1MXxSR1GAsXEV/Dwwykc2MPK8M2HN" crossorigin="anonymous">
+    <script type="importmap">
+    {
+        "imports": {
+            "bootstrap": "https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.esm.min.js",
+            "@popperjs/core": "./popperjs/index.js"
+        }
+    }
+    </script>
+
+    <!-- RZO -->
+    <script type="module" src="webmain.js"></script>
+
+    <!-- Favicon -->
+    <link rel="shortcut icon" href="rzo.png">
+
+    <meta name="theme-color" content="#712cf9">
+
+    <link href="index.css" rel="stylesheet">
+
+  </head>
+  <body>
+
+  <nav class="navbar navbar-expand-lg bg-body-tertiary">
+      <div class="container-fluid">
+          <a id="welcome-heading" class="navbar-brand" href="#">Drive</a>
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse"
+                  data-bs-target="#navbarNavDropdown"
+                  aria-controls="navbarNavDropdown"
+                  aria-expanded="false" aria-label="Toggle navigation">
+              <span class="navbar-toggler-icon"></span>
+          </button>
+          <div class="collapse navbar-collapse" id="navbarNavDropdown">
+              <ul class="navbar-nav">
+                  <!--
+                  <li class="nav-item">
+                      <a class="nav-link active" aria-current="page" href="#">Home</a>
+                  </li>
+                  -->
+                  <li class="nav-item">
+                      <a id="nav-trips-a" class="nav-link" href="#">Trips</a>
+                  </li>
+                  <li class="nav-item">
+                      <a id="nav-riders-a" class="nav-link" href="#">Riders</a>
+                  </li>
+                  <li class="nav-item">
+                      <a id="nav-drivers-a" class="nav-link" href="#">Drivers</a>
+                  </li>
+                  <li class="nav-item dropdown">
+                      <a class="nav-link dropdown-toggle" href="#" role="button"
+                         data-bs-toggle="dropdown" aria-expanded="false">
+
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor"
+         viewBox="0 0 16 16">
+      <path id="person-open-path" d="M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6m2-3a2 2 0 1 1-4 0 2 2 0 0 1 4 0m4 8c0 1-1 1-1 1H3s-1 0-1-1 1-4 6-4 6 3 6 4m-1-.004c-.001-.246-.154-.986-.832-1.664C11.516 10.68 10.289 10 8 10s-3.516.68-4.168 1.332c-.678.678-.83 1.418-.832 1.664z"/>
+      <path id="person-filled-path" class="invisible"
+      d="M12.5 16a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7m1.679-4.493-1.335 2.226a.75.75 0 0 1-1.174.144l-.774-.773a.5.5 0 0 1 .708-.708l.547.548 1.17-1.951a.5.5 0 1 1 .858.514M11 5a3 3 0 1 1-6 0 3 3 0 0 1 6 0"/>
+      <path id="person-check-path" class="invisible"
+      d="M2 13c0 1 1 1 1 1h5.256A4.5 4.5 0 0 1 8 12.5a4.5 4.5 0 0 1 1.544-3.393Q8.844 9.002 8 9c-5 0-6 3-6 4"/>
+    </svg>
+    <!--
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor"
+        viewBox="0 0 16 16">
+      <path id="person-fill-path" d="M12.5 16a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7m1.679-4.493-1.335 2.226a.75.75 0 0 1-1.174.144l-.774-.773a.5.5 0 0 1 .708-.708l.547.548 1.17-1.951a.5.5 0 1 1 .858.514M11 5a3 3 0 1 1-6 0 3 3 0 0 1 6 0"/>
+      <path id="person-check-path" d="M2 13c0 1 1 1 1 1h5.256A4.5 4.5 0 0 1 8 12.5a4.5 4.5 0 0 1 1.544-3.393Q8.844 9.002 8 9c-5 0-6 3-6 4"/>
+    </svg>
+    -->
+                      </a>
+                      <ul class="dropdown-menu">
+                          <li><a class="dropdown-item" href="#">Logout</a></li>
+                      </ul>
+                  </li>
+              </ul>
+          </div>
+      </div>
+  </nav>
+
+<main>
+    <h1 class="visually-hidden">Drive Happiness</h1>
+
+    <div id="toaster-div" class="toast" role="alert" aria-live="assertive"
+         aria-atomic="true">
+        <div class="toast-header">
+            <strong class="me-auto">Drive</strong>
+            <small>11 mins ago</small>
+            <button type="button" class="btn-close" data-bs-dismiss="toast"
+                    aria-label="Close"></button>
+        </div>
+        <div id="toaster-msg-div" class="toast-body">
+            Default Message
+        </div>
+    </div>
+
+    <div id="openid-div" class="container" hidden>
+        <h1>OpenID</h1>
+        <pre id="openid-error-pre">
+        </pre>
+    </div>
+
+    <div id="login-div" class="container" hidden>
+        <h1>Login</h1>
+        <form id="login-form">
+            <div class="mb-3">
+                <label for="user-txt" class="form-label">User</label>
+                <input id="user-txt" type="text" class="form-control">
+            </div>
+            <div class="mb-3">
+                <label for="persona-sel" class="form-label">Persona</label>
+                <select id="persona-sel" class="form-select">
+                    <option selected value="">--Select Persona--</option>
+                </select>
+            </div>
+            <button id="login-btn" type="submit" class="btn btn-primary">Login</button>
+        </form>
+    </div>
+
+    <div id="riders-div" class="container" hidden>
+        <h1>Riders</h1>
+        <button id="rider-create-btn" class="btn btn-primary" type="button">New...</button>
+        <div class="b-divider"></div>
+        <div id="riders-list-div" class="list-group">
+        </div>
+    </div>
+
+    <div id="rider-view-div" class="container" hidden>
+        <h1 id="rider-view-name-heading">Name</h1>
+        <p id="rider-view-status-p">
+        </p>
+        <pre id="rider-view-address-pre">
+        </pre>
+        <h4 id="rider-view-tripinfo-heading">Trip Details</h4>
+        <div id="rider-view-tripinfo-div">
+        </div>
+        <h4 id="rider-view-comments-heading">Comments</h4>
+        <div id="rider-view-comments-div">
+        </div>
+        <div class="d-flex gap-2 justify-content-center py-5">
+            <button id="rider-view-create-btn" type="button"
+                class="btn btn-primary">New Trip...</button>
+            <button id="rider-view-edit-btn" type="button"
+                class="btn btn-primary">Edit Rider...</button>
+        </div>
+        <h2>Trips</h2>
+        <div class="b-divider"></div>
+        <div id="rider-view-trips-div" class="list-group">
+        </div>
+    </div>
+
+    <div id="rider-edit-div" class="container" hidden>
+        <form id="rider-edit-form">
+            <div class="row">
+                <div class="col-4">
+                    <label for="rider-ridernum-txt" class="form-label">ID</label>
+                    <input id="rider-ridernum-txt" type="text" class="form-control"></input>
+                </div>
+                <div class="col-4">
+                    <label for="rider-zone-sel" class="form-label">Zone</label>
+                    <select id="rider-zone-sel" class="form-select">
+                        <option selected value="">Choose...</option>
+                    </select>
+                </div>
+                <div class="col-4">
+                    <label for="rider-status-sel" class="form-label">Status</label>
+                    <select id="rider-status-sel" class="form-select">
+                        <option selected value="">Choose...</option>
+                        <option value="NEW">NEW</option>
+                        <option value="ACTIVE">ACTIVE</option>
+                        <option value="INACTIVE">INACTIVE</option>
+                    </select>
+                </div>
+                <div class="col-12">
+                    <label for="rider-name-txt" class="form-label">Name</label>
+                    <input id="rider-name-txt" type="text" class="form-control"></input>
+                </div>
+                <div class="col-12">
+                    <label for="rider-address1-txt" class="form-label">Address</label>
+                    <input id="rider-address1-txt" type="text" class="form-control"></input>
+                </div>
+                <div class="col-12">
+                    <label for="rider-address2-txt" class="form-label">Address 2</label>
+                    <input id="rider-address2-txt" type="text" class="form-control"></input>
+                </div>
+                <div class="col-4">
+                    <label for="rider-city-txt" class="form-label">City</label>
+                    <input id="rider-city-txt" type="text" class="form-control"></input>
+                </div>
+                <div class="col-4">
+                    <label for="rider-stateprov-txt" class="form-label">Prov/State</label>
+                    <input id="rider-stateprov-txt" type="text" class="form-control"></input>
+                </div>
+                <div class="col-4">
+                    <label for="rider-postalcode-txt" class="form-label">Zip</label>
+                    <input id="rider-postalcode-txt" type="text" class="form-control"></input>
+                </div>
+                <div class="col-4">
+                    <label for="rider-maplink-txt" class="form-label">Map Link</label>
+                    <input id="rider-maplink-txt" type="text"
+                           class="form-control-plaintext"></input>
+                </div>
+                <div class="col-4">
+                    <input id="rider-override-cbox" type="checkbox" class="form-check-input">
+                    <label class="form-check-label" for="rider-override-cbox">
+                        Override map link</label>
+                </div>
+                <div class="col-4">
+                    <label for="rider-maplinkmanual-txt"
+                           class="form-label">Map Link Override</label>
+                    <input id="rider-maplinkmanual-txt" type="text"
+                           class="form-control"></input>
+                </div>
+                <div class="col-4">
+                    <label for="rider-phone1-txt" class="form-label">Phone</label>
+                    <input id="rider-phone1-txt" type="text" class="form-control"></input>
+                </div>
+                <div class="col-4">
+                    <label for="rider-phone2-txt" class="form-label">Phone 2</label>
+                    <input id="rider-phone2-txt" type="text" class="form-control"></input>
+                </div>
+                <div class="col-4">
+                    <label for="rider-phone3-txt" class="form-label">Phone 3</label>
+                    <input id="rider-phone3-txt" type="text" class="form-control"></input>
+                </div>
+                <div class="col-12">
+                    <label for="rider-comments-tarea" class="form-label">Comments</label>
+                    <textarea id="rider-comments-tarea" class="form-control"></textarea>
+                </div>
+                <div class="col-12">
+                    <label for="rider-tripinfo-tarea"
+                        class="form-label">Default Trip Details</label>
+                    <textarea id="rider-tripinfo-tarea" class="form-control"></textarea>
+                </div>
+            </div>
+            <div class="b-divider"></div>
+            <button id="rider-edit-btn" type="submit"
+                    class="btn btn-primary">Save</button>
+            <button id="rider-edit-cancel-btn" type="button"
+                    class="btn btn-primary">Cancel</button>
+        </form>
+    </div>
+
+    <div id="drivers-div" class="container" hidden>
+        <h1>Drivers</h1>
+        <button id="driver-create-btn" class="btn btn-primary" type="button">New...</button>
+        <div class="b-divider"></div>
+        <div id="drivers-list-div" class="list-group">
+        </div>
+    </div>
+
+
+    <div id="driver-view-div" class="container" hidden>
+        <h1 id="driver-view-name-heading">Name</h1>
+        <p id="driver-view-status-p">
+        </p>
+        <pre id="driver-view-address-pre">
+        </pre>
+        <div class="d-flex gap-2 justify-content-center py-5">
+            <button id="driver-view-edit-btn" type="button"
+                class="btn btn-primary">Edit Rider...</button>
+        </div>
+        <h2>Trips</h2>
+        <div class="b-divider"></div>
+        <div id="driver-view-trips-div" class="list-group">
+        </div>
+    </div>
+
+    <div id="driver-edit-div" class="container" hidden>
+        <form id="driver-edit-form">
+            <div class="row">
+                <div class="col-4">
+                    <label for="driver-drivernum-txt" class="form-label">ID</label>
+                    <input id="driver-drivernum-txt" type="text" class="form-control"></input>
+                </div>
+                <div class="col-4">
+                    <label for="driver-status-sel" class="form-label">Status</label>
+                    <select id="driver-status-sel" class="form-select">
+                        <option selected value="">Choose...</option>
+                        <option value="NEW">NEW</option>
+                        <option value="ACTIVE">ACTIVE</option>
+                        <option value="INACTIVE">INACTIVE</option>
+                    </select>
+                </div>
+                <div class="col-12">
+                    <label for="driver-name-txt" class="form-label">Name</label>
+                    <input id="driver-name-txt" type="text" class="form-control"></input>
+                </div>
+                <div class="col-12">
+                    <label for="driver-address1-txt" class="form-label">Address</label>
+                    <input id="driver-address1-txt" type="text" class="form-control"></input>
+                </div>
+                <div class="col-12">
+                    <label for="driver-address2-txt" class="form-label">Address 2</label>
+                    <input id="driver-address2-txt" type="text" class="form-control"></input>
+                </div>
+                <div class="col-4">
+                    <label for="driver-city-txt" class="form-label">City</label>
+                    <input id="driver-city-txt" type="text" class="form-control"></input>
+                </div>
+                <div class="col-4">
+                    <label for="driver-stateprov-txt" class="form-label">Prov/State</label>
+                    <input id="driver-stateprov-txt" type="text" class="form-control"></input>
+                </div>
+                <div class="col-4">
+                    <label for="driver-postalcode-txt" class="form-label">Zip</label>
+                    <input id="driver-postalcode-txt" type="text" class="form-control"></input>
+                </div>
+                <div class="col-4">
+                    <label for="driver-maplink-txt" class="form-label">Map Link</label>
+                    <input id="driver-maplink-txt" type="text"
+                           class="form-control-plaintext"></input>
+                </div>
+                <div class="col-4">
+                    <input id="driver-override-cbox" type="checkbox" class="form-check-input">
+                    <label class="form-check-label" for="driver-override-cbox">
+                        Override map link</label>
+                </div>
+                <div class="col-4">
+                    <label for="driver-maplinkmanual-txt"
+                           class="form-label">Map Link Override</label>
+                    <input id="driver-maplinkmanual-txt" type="text"
+                           class="form-control"></input>
+                </div>
+                <div class="col-4">
+                    <label for="driver-phone1-txt" class="form-label">Phone</label>
+                    <input id="driver-phone1-txt" type="text" class="form-control"></input>
+                </div>
+                <div class="col-4">
+                    <label for="driver-phone2-txt" class="form-label">Phone 2</label>
+                    <input id="driver-phone2-txt" type="text" class="form-control"></input>
+                </div>
+                <div class="col-4">
+                    <label for="driver-phone3-txt" class="form-label">Phone 3</label>
+                    <input id="driver-phone3-txt" type="text" class="form-control"></input>
+                </div>
+            </div>
+            <div class="b-divider"></div>
+            <button id="driver-edit-btn" type="submit"
+                    class="btn btn-primary">Save</button>
+            <button id="driver-edit-cancel-btn" type="button"
+                    class="btn btn-primary">Cancel</button>
+        </form>
+    </div>
+
+    <div id="trip-view-div" class="container" hidden>
+        <h4 id="trip-view-name-heading">Name</h4>
+        <p id="trip-view-status-p">
+        </p>
+        <h4>From</h4>
+        <pre id="trip-view-fromaddress-pre">
+        </pre>
+        <h4>To</h4>
+        <pre id="trip-view-toaddress-pre">
+        </pre>
+        <h4>Driver</h4>
+        <p id="trip-view-driver-p">(none)
+        </p>
+        <div class="d-flex gap-2 justify-content-center py-5">
+            <button id="trip-view-assign-btn" type="button"
+                class="btn btn-primary">Assign Driver...</button>
+            <button id="trip-view-edit-btn" type="button"
+                class="btn btn-primary">Edit Trip...</button>
+            <button id="trip-view-back-btn" type="button"
+                class="btn btn-primary">Go back</button>
+        </div>
+    </div>
+
+    <div id="trip-assign-div" class="container" hidden>
+        <h1 id="trip-assign-name-heading">Name</h1>
+        <p id="trip-assign-status-p">
+        </p>
+        <h4>Current driver</h4>
+        <p id="trip-assign-driver-p">(none)
+        </p>
+        <div class="d-flex gap-2 justify-content-center py-5">
+            <button id="trip-assign-unassign-btn" type="button"
+                class="btn btn-primary">Unassign Driver</button>
+            <button id="trip-assign-back-btn" type="button"
+                class="btn btn-primary">Go back</button>
+        </div>
+        <div id="trip-assign-drivers-div" class="list-group">
+        </div>
+    </div>
+
+    <div id="trip-edit-div" class="container" hidden>
+        <form id="trip-edit-form">
+            <div class="row row-gap-2">
+                <div class="col-4">
+                    <label for="trip-tripnum-txt" class="form-label">ID</label>
+                    <input id="trip-tripnum-txt" type="text"
+                           class="form-control-plaintext"></input>
+                </div>
+                <div class="col-4">
+                    <label for="trip-zone-sel" class="form-label">Zone *</label>
+                    <select id="trip-zone-sel" class="form-select">
+                        <option selected value="">Choose...</option>
+                    </select>
+                </div>
+                <div class="col-4">
+                    <label for="trip-status-sel" class="form-label">Status *</label>
+                    <select id="trip-status-sel" class="form-select">
+                        <option selected value="">Choose...</option>
+                        <option value="NEW">NEW</option>
+                        <option value="APPR">APPR</option>
+                        <option value="INPRG">INPRG</option>
+                    </select>
+                </div>
+
+                <div class="col-4">
+                    <label for="trip-ridernum-txt" class="form-label">Rider ID</label>
+                    <input id="trip-ridernum-txt" type="text"
+                           class="form-control-plaintext"></input>
+                </div>
+                <div class="col-8">
+                    <label for="trip-ridername-txt" class="form-label">Name</label>
+                    <input id="trip-ridername-txt" type="text"
+                           class="form-control-plaintext"></input>
+                </div>
+
+                <div class="col-12">
+                    <label for="trip-description-txt" class="form-label">Description</label>
+                    <input id="trip-description-txt" type="text" class="form-control"></input>
+                </div>
+
+                <div class="col-4">
+                    <label for="trip-triptype-sel" class="form-label">Type *</label>
+                    <select id="trip-triptype-sel" class="form-select">
+                        <option selected value="">Choose...</option>
+                        <option value="RETURN">RETURN</option>
+                        <option value="ONEWAY">ONEWAY</option>
+                    </select>
+                </div>
+                <div class="col-4">
+                    <label for="trip-appointmentts-txt" class="form-label">Pickup *</label>
+                    <input id="trip-appointmentts-txt" type="datetime-local"
+                           class="form-control"></input>
+                </div>
+                <div class="col-4">
+                    <label for="trip-returnts-txt" class="form-label">Return</label>
+                    <input id="trip-returnts-txt" type="datetime-local"
+                           class="form-control"></input>
+                </div>
+
+                <h4>From</h4>
+                <div class="col-12">
+                    <label for="trip-oaddress1-txt" class="form-label">Address *</label>
+                    <input id="trip-oaddress1-txt" type="text" class="form-control"></input>
+                </div>
+                <div class="col-12">
+                    <label for="trip-oaddress2-txt" class="form-label">Address 2</label>
+                    <input id="trip-oaddress2-txt" type="text" class="form-control"></input>
+                </div>
+                <div class="col-4">
+                    <label for="trip-ocity-txt" class="form-label">City</label>
+                    <input id="trip-ocity-txt" type="text" class="form-control"></input>
+                </div>
+                <div class="col-4">
+                    <label for="trip-ostateprov-txt" class="form-label">Prov/State</label>
+                    <input id="trip-ostateprov-txt" type="text" class="form-control"></input>
+                </div>
+                <div class="col-4">
+                    <label for="trip-opostalcode-txt" class="form-label">Zip</label>
+                    <input id="trip-opostalcode-txt" type="text" class="form-control"></input>
+                </div>
+                <div class="col-4">
+                    <label for="trip-omaplink-txt" class="form-label">Map Link</label>
+                    <input id="trip-omaplink-txt" type="text"
+                           class="form-control-plaintext"></input>
+                </div>
+                <div class="col-4">
+                    <input id="trip-ooverride-cbox" type="checkbox" class="form-check-input">
+                    <label class="form-check-label" for="trip-ooverride-cbox">
+                        Override map link</label>
+                </div>
+                <div class="col-4">
+                    <label for="trip-omaplinkmanual-txt"
+                           class="form-label">Map Link Override</label>
+                    <input id="trip-omaplinkmanual-txt" type="text"
+                           class="form-control-plaintext"></input>
+                </div>
+                <div class="col-12">
+                    <label for="trip-ophone-txt" class="form-label">Phone *</label>
+                    <input id="trip-ophone-txt" type="text" class="form-control"></input>
+                </div>
+
+                <h4>To</h4>
+                <div class="col-12">
+                    <label for="trip-daddress1-txt" class="form-label">Address *</label>
+                    <input id="trip-daddress1-txt" type="text" class="form-control"></input>
+                </div>
+                <div class="col-12">
+                    <label for="trip-daddress2-txt" class="form-label">Address 2</label>
+                    <input id="trip-daddress2-txt" type="text" class="form-control"></input>
+                </div>
+                <div class="col-4">
+                    <label for="trip-dcity-txt" class="form-label">City</label>
+                    <input id="trip-dcity-txt" type="text" class="form-control"></input>
+                </div>
+                <div class="col-4">
+                    <label for="trip-dstateprov-txt" class="form-label">Prov/State</label>
+                    <input id="trip-dstateprov-txt" type="text" class="form-control"></input>
+                </div>
+                <div class="col-4">
+                    <label for="trip-dpostalcode-txt" class="form-label">Zip</label>
+                    <input id="trip-dpostalcode-txt" type="text" class="form-control"></input>
+                </div>
+                <div class="col-4">
+                    <label for="trip-dmaplink-txt" class="form-label">Map Link</label>
+                    <input id="trip-dmaplink-txt" type="text"
+                           class="form-control-plaintext"></input>
+                </div>
+                <div class="col-4">
+                    <input id="trip-doverride-cbox" type="checkbox" class="form-check-input">
+                    <label class="form-check-label" for="trip-doverride-cbox">
+                        Override map link</label>
+                </div>
+                <div class="col-4">
+                    <label for="trip-dmaplinkmanual-txt"
+                           class="form-label">Map Link Override</label>
+                    <input id="trip-dmaplinkmanual-txt" type="text"
+                           class="form-control-plaintext"></input>
+                </div>
+                <div class="col-12">
+                    <label for="trip-dphone-txt" class="form-label">Phone *</label>
+                    <input id="trip-dphone-txt" type="text" class="form-control"></input>
+                </div>
+                <div class="col-12">
+                    <label for="trip-comments-tarea" class="form-label">Comments</label>
+                    <textarea id="trip-comments-tarea" class="form-control"></textarea>
+                </div>
+            </div>
+            <div class="b-divider"></div>
+            <button id="trip-edit-btn" type="submit"
+                    class="btn btn-primary">Save</button>
+            <button id="trip-edit-cancel-btn" type="button"
+                    class="btn btn-primary">Cancel</button>
+        </form>
+    </div>
+
+    <div id="trip-list-div" class="container" hidden>
+        <div class="row">
+            <div class="col-4">
+                <label for="trip-search-zone-sel" class="form-label">Zone</label>
+                <select id="trip-search-zone-sel" class="form-select">
+                    <option selected value="">[All Zones]</option>
+                </select>
+            </div>
+            <div class="col-4">
+                <label for="trip-search-time-sel" class="form-label">Timeframe</label>
+                <select id="trip-search-time-sel" class="form-select">
+                    <option selected value="DAY">2 days</option>
+                    <option value="WEEK">7 days</option>
+                    <option value="ALL">All</option>
+                </select>
+            </div>
+            <div class="col-1 d-flex align-items-end">
+                <button id="trip-search-left-btn" type="button"
+                        class="btn btn-primary">&lt;</button>
+            </div>
+            <div class="col-2 d-flex align-items-end">
+                <pre id="trip-search-daterange-pre"
+                     class="pre-centered">27 Apr - 03 May</pre>
+            </div>
+            <div class="col-1 d-flex align-items-end">
+                <button id="trip-search-right-btn" type="button"
+                        class="btn btn-primary">&gt;</button>
+            </div>
+        </div>
+        <div class="b-divider"></div>
+        <div class="row">
+            <div class="col-4">
+                <button id="trip-search-refresh-btn" type="button"
+                        class="btn btn-primary">Refresh</button>
+            </div>
+        </div>
+        <div class="b-divider"></div>
+        <div id="trip-list-trips-div" class="list-group">
+        </div>
+    </div>
+
+</main>
+</body>
+</html>
+

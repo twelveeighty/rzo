@@ -1,0 +1,417 @@
+[
+    {
+        "apiVersion": "v1",
+        "kind": "Entity",
+        "metadata": {
+            "name": "useraccount"
+        },
+        "spec": {
+            "type": "Entity",
+            "table": "useraccount",
+            "keyFields": [
+                { "name": "useraccountnum", "type": "StringField", "required": true }
+            ],
+            "coreFields": [
+                { "name": "name", "type": "StringField", "required": true },
+                { "name": "email", "type": "UniqueField",
+                    "required": true,
+                    "maxlength": 255,
+                    "indexed": "asc",
+                    "source": "db"
+                },
+                { "name": "persona", "type": "StringField", "required": true },
+                { "name": "otherpersonas", "type": "StringField" },
+                { "name": "status", "type": "AliasValueList",
+                      "required": true,
+                      "maxlength": 32,
+                      "internal": [ "ACTIVE", "INACTIVE" ],
+                      "aliases": []
+                }
+            ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Entity",
+        "metadata": {
+            "name": "session"
+        },
+        "spec": {
+            "type": "ImmutableEntity",
+            "table": "session",
+            "keyFields": [],
+            "coreFields": [
+                { "name": "useraccountnum", "type": "CrossoverForeignKey",
+                      "required": true,
+                      "target": "useraccount",
+                      "value": "useraccountnum",
+                      "collection": "useraccounts",
+                      "copies": [ { "from": "persona", "to": "persona" } ]
+                },
+                { "name": "persona", "type": "StringField", "required": true },
+                { "name": "expiry", "type": "DateTimeField", "required": true,
+                    "indexed": "asc" },
+                { "name": "subjects", "type": "StringField" }
+            ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Entity",
+        "metadata": {
+            "name": "zone"
+        },
+        "spec": {
+            "type": "Entity",
+            "table": "zone",
+            "keyFields": [
+                { "name": "zone", "type": "StringField", "required": true,
+                      "maxlength": 32
+                }
+            ],
+            "coreFields": [
+                { "name": "description", "type": "StringField" },
+                { "name": "status", "type": "AliasValueList",
+                      "required": true,
+                      "maxlength": 32,
+                      "internal": [ "ACTIVE", "INACTIVE" ],
+                      "aliases": []
+                }
+            ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Entity",
+        "metadata": {
+            "name": "rider"
+        },
+        "spec": {
+            "type": "scheduler.trip.SubjectEntity",
+            "table": "rider",
+            "keyFields": [
+                { "name": "ridernum", "type": "StringField", "required": true,
+                      "maxlength": 32
+                }
+            ],
+            "coreFields": [
+                { "name": "name", "type": "StringField", "required": true },
+                { "name": "zone", "type": "ForeignKey",
+                      "required": true,
+                      "target": "zone",
+                      "value": "zone",
+                      "collection": "zones"
+                },
+                { "name": "useraccountnum", "type": "ForeignKey",
+                      "target": "useraccount",
+                      "value": "useraccountnum",
+                      "collection": "useraccounts"
+                },
+                { "name": "comments", "type": "StringField" },
+                { "name": "tripinfo", "type": "StringField" },
+                { "name": "address1", "type": "people.person.MapLinkSrcField",
+                    "required": true, "target": "maplink"
+                },
+                { "name": "address2", "type": "people.person.MapLinkSrcField",
+                    "target": "maplink"
+                },
+                { "name": "city", "type": "people.person.MapLinkSrcField",
+                    "target": "maplink"
+                },
+                { "name": "stateprov", "type": "people.person.MapLinkSrcField",
+                    "target": "maplink"
+                },
+                { "name": "postalcode", "type": "people.person.MapLinkSrcField",
+                    "target": "maplink"
+                },
+                { "name": "maplinkmanual", "type": "people.person.MapLinkManualField",
+                    "target": "maplink"
+                },
+                { "name": "maplink", "type": "people.person.MapLinkTargetField",
+                    "required": true
+                },
+                { "name": "phone1label", "type": "people.person.PhoneLabelField",
+                    "default": "D" },
+                { "name": "phone1", "type": "StringField", "required": true },
+                { "name": "phone2label", "type": "people.person.PhoneLabelField",
+                    "default": "C" },
+                { "name": "phone2", "type": "StringField" },
+                { "name": "phone3label", "type": "people.person.PhoneLabelField",
+                    "default": "Other" },
+                { "name": "phone3", "type": "StringField" },
+                { "name": "status", "type": "AliasValueList",
+                      "required": true,
+                      "maxlength": 32,
+                      "internal": [ "NEW", "ACTIVE", "INACTIVE" ],
+                      "aliases": []
+                },
+                { "name": "statusmemo", "type": "StringField" }
+            ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Entity",
+        "metadata": {
+            "name": "riderstatus"
+        },
+        "spec": {
+            "type": "FieldChangeLogEntity",
+            "table": "riderstatus",
+            "targetEntity": "rider",
+            "triggeredBy": "status",
+            "alsoLogs": ["statusmemo"],
+            "parents": [],
+            "keyFields": [
+                { "name": "ridernum", "type": "StringField", "required": true,
+                    "maxlength": 32
+                }
+            ],
+            "coreFields": [
+                { "name": "status", "type": "StringField", "required": true,
+                    "maxlength": 32
+                },
+                { "name": "statusmemo", "type": "StringField" }
+            ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Entity",
+        "metadata": {
+            "name": "driver"
+        },
+        "spec": {
+            "type": "scheduler.trip.SubjectEntity",
+            "table": "driver",
+            "keyFields": [
+                { "name": "drivernum", "type": "StringField", "required": true,
+                    "maxlength": 32
+                }
+            ],
+            "coreFields": [
+                { "name": "name", "type": "StringField", "required": true },
+                { "name": "useraccountnum", "type": "ForeignKey",
+                      "target": "useraccount",
+                      "value": "useraccountnum",
+                      "collection": "useraccounts"
+                },
+                { "name": "address1", "type": "people.person.MapLinkSrcField",
+                    "required": true, "target": "maplink"
+                },
+                { "name": "address2", "type": "people.person.MapLinkSrcField",
+                    "target": "maplink"
+                },
+                { "name": "city", "type": "people.person.MapLinkSrcField",
+                    "target": "maplink"
+                },
+                { "name": "stateprov", "type": "people.person.MapLinkSrcField",
+                    "target": "maplink"
+                },
+                { "name": "postalcode", "type": "people.person.MapLinkSrcField",
+                    "target": "maplink"
+                },
+                { "name": "maplinkmanual", "type": "people.person.MapLinkManualField",
+                    "target": "maplink"
+                },
+                { "name": "maplink", "type": "people.person.MapLinkTargetField",
+                    "required": true
+                },
+                { "name": "phone1label", "type": "people.person.PhoneLabelField",
+                    "default": "D" },
+                { "name": "phone1", "type": "StringField", "required": true },
+                { "name": "phone2label", "type": "people.person.PhoneLabelField",
+                    "default": "C" },
+                { "name": "phone2", "type": "StringField" },
+                { "name": "phone3label", "type": "people.person.PhoneLabelField",
+                    "default": "Other" },
+                { "name": "phone3", "type": "StringField" },
+                { "name": "status", "type": "AliasValueList",
+                      "required": true,
+                      "maxlength": 32,
+                      "internal": [ "NEW", "ACTIVE", "INACTIVE" ],
+                      "aliases": []
+                },
+                { "name": "statusmemo", "type": "StringField" }
+            ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Entity",
+        "metadata": {
+            "name": "driverstatus"
+        },
+        "spec": {
+            "type": "FieldChangeLogEntity",
+            "table": "driverstatus",
+            "targetEntity": "driver",
+            "triggeredBy": "status",
+            "alsoLogs": ["statusmemo"],
+            "parents": [],
+            "keyFields": [
+                { "name": "drivernum", "type": "StringField", "required": true,
+                    "maxlength": 32
+                }
+            ],
+            "coreFields": [
+                { "name": "status", "type": "StringField", "required": true,
+                    "maxlength": 32
+                },
+                { "name": "statusmemo", "type": "StringField" }
+            ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Entity",
+        "metadata": {
+            "name": "trip"
+        },
+        "spec": {
+            "type": "scheduler.trip.Trip",
+            "table": "trip",
+            "keyFields": [
+                { "name": "tripnum", "type": "GeneratorField", "required": true,
+                      "maxlength": 32,
+                      "format": "$YY-$NEXT",
+                      "min": 100000,
+                      "max": 999999
+                }
+            ],
+            "coreFields": [
+                { "name": "ridernum", "type": "CrossoverForeignKey",
+                      "required": true,
+                      "target": "rider",
+                      "value": "ridernum",
+                      "collection": "riders",
+                      "copies": [
+                          { "from": "name", "to": "ridername" },
+                          { "from": "zone", "to": "zone" },
+                          { "from": "address1", "to": "oaddress1" },
+                          { "from": "address2", "to": "oaddress2" },
+                          { "from": "city", "to": "ocity" },
+                          { "from": "stateprov", "to": "ostateprov" },
+                          { "from": "postalcode", "to": "opostalcode" },
+                          { "from": "city", "to": "ocity" },
+                          { "from": "maplinkmanual", "to": "omaplinkmanual" },
+                          { "from": "maplink", "to": "omaplink" },
+                          { "from": "phone1", "to": "ophone" },
+                          { "from": "tripinfo", "to": "comments" }
+                      ]
+                },
+                { "name": "ridername", "type": "StringField", "required": true },
+                { "name": "drivernum", "type": "CrossoverForeignKey",
+                      "target": "driver",
+                      "value": "drivernum",
+                      "collection": "drivers",
+                      "copies": [
+                          { "from": "name", "to": "drivername" }
+                      ]
+                },
+                { "name": "drivername", "type": "StringField" },
+                { "name": "zone", "type": "ForeignKey",
+                      "required": true,
+                      "target": "zone",
+                      "value": "zone",
+                      "collection": "zones"
+                },
+                { "name": "description", "type": "StringField" },
+                { "name": "comments", "type": "StringField" },
+                { "name": "oaddress1", "type": "people.person.MapLinkSrcField",
+                    "required": true, "target": "omaplink"
+                },
+                { "name": "oaddress2", "type": "people.person.MapLinkSrcField",
+                    "target": "omaplink"
+                },
+                { "name": "ocity", "type": "people.person.MapLinkSrcField",
+                    "target": "omaplink"
+                },
+                { "name": "ostateprov", "type": "people.person.MapLinkSrcField",
+                    "target": "omaplink"
+                },
+                { "name": "opostalcode", "type": "people.person.MapLinkSrcField",
+                    "target": "omaplink"
+                },
+                { "name": "omaplinkmanual", "type": "people.person.MapLinkManualField",
+                    "target": "omaplink"
+                },
+                { "name": "omaplink", "type": "people.person.MapLinkTargetField",
+                    "required": true
+                },
+                { "name": "ophone", "type": "StringField", "required": true },
+                { "name": "daddress1", "type": "people.person.MapLinkSrcField",
+                    "required": true, "target": "dmaplink"
+                },
+                { "name": "daddress2", "type": "people.person.MapLinkSrcField",
+                    "target": "dmaplink"
+                },
+                { "name": "dcity", "type": "people.person.MapLinkSrcField",
+                    "target": "dmaplink"
+                },
+                { "name": "dstateprov", "type": "people.person.MapLinkSrcField",
+                    "target": "dmaplink"
+                },
+                { "name": "dpostalcode", "type": "people.person.MapLinkSrcField",
+                    "target": "dmaplink"
+                },
+                { "name": "dmaplinkmanual", "type": "people.person.MapLinkManualField",
+                    "target": "dmaplink"
+                },
+                { "name": "dmaplink", "type": "people.person.MapLinkTargetField",
+                    "required": true
+                },
+                { "name": "dphone", "type": "StringField" },
+                { "name": "appointmentts", "type": "scheduler.trip.AppointmentTSField",
+                    "required": true
+                },
+                { "name": "triptype", "type": "scheduler.trip.TripTypeField",
+                      "required": true,
+                      "default": "RETURN",
+                      "maxlength": 32,
+                      "internal": [ "RETURN", "ONEWAY" ],
+                      "aliases": []
+                },
+                { "name": "returnts", "type": "scheduler.trip.ReturnTSField" },
+                { "name": "status", "type": "AliasValueList",
+                      "required": true,
+                      "maxlength": 32,
+                      "internal": [ "NEW", "WAPPR", "APPR", "SCHED", "REJECT", "INPRG",
+                                    "COMP", "ARCHIVED" ],
+                      "aliases": [
+                          { "for": "APPR", "aliases": ["ACTIVE"] },
+                          { "for": "ARCHIVED", "aliases": ["CANCEL", "CLOSED"] }
+                      ]
+                },
+                { "name": "statusmemo", "type": "StringField" }
+            ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Entity",
+        "metadata": {
+            "name": "tripstatus"
+        },
+        "spec": {
+            "type": "FieldChangeLogEntity",
+            "table": "tripstatus",
+            "targetEntity": "trip",
+            "triggeredBy": "status",
+            "alsoLogs": ["statusmemo"],
+            "parents": [],
+            "keyFields": [
+                { "name": "tripnum", "type": "StringField", "required": true,
+                    "maxlength": 32
+                }
+            ],
+            "coreFields": [
+                { "name": "status", "type": "StringField", "required": true,
+                    "maxlength": 32
+                },
+                { "name": "statusmemo", "type": "StringField" }
+            ]
+        }
+    }
+]
+

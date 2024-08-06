@@ -313,10 +313,14 @@ export class ForeignKeyDDL implements FieldCreator {
         const idDDL = `   ${field.idName} uuid${req}`;
         const postDDL = [];
         if (!doVersion) {
-            const indexDDL =
-                `create index ${field.entity.name}_${field.name} ` +
-                `on ${field.entity.table} (${field.idName})`;
-            postDDL.push(indexDDL);
+            if (field.significance != "key") {
+                postDDL.push(
+                    `create index ${field.entity.name}_${field.name} ` +
+                    `on ${field.entity.table} (${field.name})`);
+            }
+            postDDL.push(
+                `create index ${field.entity.name}_${field.name}_id ` +
+                `on ${field.entity.table} (${field.idName})`);
         }
         const result: DataDef = {
             ddl: [intoDDL, idDDL],
@@ -360,6 +364,8 @@ export class ForeignKeyDDL implements FieldCreator {
         if (!doVersion) {
             result.push(
                 `drop index if exists ${from.entity.name}_${from.name}`);
+            result.push(
+                `drop index if exists ${from.entity.name}_${from.name}_id`);
         }
         result.push(
             `alter table ${table} drop column if exists ${from.name}`);

@@ -9,6 +9,17 @@
             "type": "server.policy.Policy",
             "appliesTo": "drivers",
             "statements": [
+                { "resource": "entity/login", "action": "delete",
+                  "effect": "allow",
+                  "where": {
+                      "match": "all", "conditions": [
+                          { "attr": "useraccountnum_id",
+                            "op": "eq",
+                            "subject": "${userid}"
+                          }
+                      ]
+                  }
+                },
                 { "resource": "entity/zone", "action": "get",
                   "effect": "allow"
                 },
@@ -67,6 +78,17 @@
             "type": "server.policy.Policy",
             "appliesTo": "riders",
             "statements": [
+                { "resource": "entity/login", "action": "delete",
+                  "effect": "allow",
+                  "where": {
+                      "match": "all", "conditions": [
+                          { "attr": "useraccountnum_id",
+                            "op": "eq",
+                            "subject": "${userid}"
+                          }
+                      ]
+                  }
+                },
                 { "resource": "entity/zone", "action": "get",
                   "effect": "allow"
                 },
@@ -105,6 +127,56 @@
                           },
                           { "attr": "ridernum_id",
                             "op": "isNull"
+                          }
+                      ]
+                  }
+                }
+            ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Policy",
+        "metadata": {
+            "name": "onetimelogins"
+        },
+        "spec": {
+            "type": "server.policy.Policy",
+            "appliesTo": "onetimelogins",
+            "statements": [
+                { "resource": "entity/onetimelogin", "action": "get",
+                  "effect": "allow",
+                  "where": {
+                      "match": "all", "conditions": [
+                          { "attr": "useraccountnum_id",
+                            "op": "eq",
+                            "subject": "${userid}"
+                          },
+                          { "attr": "useraccountnum_id",
+                            "op": "ne",
+                            "subject": "00000000-0000-1000-8000-000000000000"
+                          }
+                      ]
+                  }
+                },
+                { "resource": "entity/login", "action": "delete",
+                  "effect": "allow",
+                  "where": {
+                      "match": "all", "conditions": [
+                          { "attr": "useraccountnum_id",
+                            "op": "eq",
+                            "subject": "${userid}"
+                          }
+                      ]
+                  }
+                },
+                { "resource": "entity/login", "action": "put",
+                  "effect": "allow",
+                  "where": {
+                      "match": "all", "conditions": [
+                          { "attr": "useraccountnum_id",
+                            "op": "eq",
+                            "subject": "${userid}"
                           }
                       ]
                   }

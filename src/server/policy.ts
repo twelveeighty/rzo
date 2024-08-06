@@ -130,6 +130,9 @@ export class Policy {
         if (cached !== undefined) {
             return cached || "";
         }
+        if (subject == "${userid}") {
+            return context.userAccountId;
+        }
         const subjectRegex = /\$\{my\.(\w+)}/;
         const match = subjectRegex.exec(subject);
         if (match) {

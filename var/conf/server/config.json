@@ -19,10 +19,120 @@
         },
         "spec": {
             "type": "server.rest.RestServerWorker",
+            "ports": [5001],
+            "adapters": [
+                { "context": "e", "adapter": "entityadapter" },
+                { "context": "c", "adapter": "collectionadapter" },
+                { "context": "g", "adapter": "generatoradapter" },
+                { "context": "o", "adapter": "queryoneadapter" },
+                { "context": "r", "adapter": "replicationadapter" },
+                { "context": "s", "adapter": "authadapter" },
+                { "context": "otl", "adapter": "onetimeloginadapter" },
+                { "context": "t", "adapter": "tokenadapter" }
+            ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Worker",
+        "metadata": {
+            "name": "entityadapter"
+        },
+        "spec": {
+            "type": "server.adapter.EntityAdapter",
+            "source": "db",
+            "cache": "sessioncache",
+            "sessionBackendSource": "db"
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Worker",
+        "metadata": {
+            "name": "collectionadapter"
+        },
+        "spec": {
+            "type": "server.adapter.CollectionAdapter",
+            "source": "db",
+            "cache": "sessioncache",
+            "sessionBackendSource": "db"
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Worker",
+        "metadata": {
+            "name": "generatoradapter"
+        },
+        "spec": {
+            "type": "server.adapter.GeneratorAdapter",
+            "source": "db",
+            "cache": "sessioncache",
+            "sessionBackendSource": "db"
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Worker",
+        "metadata": {
+            "name": "queryoneadapter"
+        },
+        "spec": {
+            "type": "server.adapter.QueryOneAdapter",
+            "source": "db",
+            "cache": "sessioncache",
+            "sessionBackendSource": "db"
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Worker",
+        "metadata": {
+            "name": "replicationadapter"
+        },
+        "spec": {
+            "type": "server.replication.ReplicationAdapter",
+            "source": "db"
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Worker",
+        "metadata": {
+            "name": "authadapter"
+        },
+        "spec": {
+            "type": "server.adapter.RZOAuthAdapter",
+            "source": "db",
+            "cache": "sessioncache",
+            "sessionBackendSource": "db"
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Worker",
+        "metadata": {
+            "name": "onetimeloginadapter"
+        },
+        "spec": {
+            "type": "server.adapter.RZOOneTimeAdapter",
             "source": "db",
             "cache": "sessioncache",
             "sessionBackendSource": "db",
-            "ports": [5001]
+            "persona": "onetimelogins"
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Worker",
+        "metadata": {
+            "name": "tokenadapter"
+        },
+        "spec": {
+            "type": "server.adapter.TokenAdapter",
+            "source": "db",
+            "cache": "sessioncache",
+            "sessionBackendSource": "db"
         }
     },
     {
@@ -38,6 +148,17 @@
             "sessionBackendSource": "db",
             "cacheCheckFrequency": 10000,
             "backendCheckFrequency": 60000
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Authenticator",
+        "metadata": {
+            "name": "auth"
+        },
+        "spec": {
+            "type": "server.authentication.RZOAuthenticator",
+            "source": "db"
         }
     },
     {

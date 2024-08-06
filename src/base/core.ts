@@ -1234,6 +1234,8 @@ export type Phase = "create" | "update" | "delete" | "set";
 
 export type SideEffects = string[] | null;
 
+export type FieldSignificance = "key" | "core";
+
 /* Holds a scalar value.
  *
  * A Field is of a particular FieldType:
@@ -1241,8 +1243,8 @@ export type SideEffects = string[] | null;
  * of other Entity fields, or a summation of other Entities.
  */
 export class Field {
-
     required: boolean;
+    significance: FieldSignificance;
     entity: Entity;
     readonly name: string;
     readonly type: string;
@@ -1253,6 +1255,7 @@ export class Field {
     constructor(entity: Entity, config: FieldCfg) {
         this.entity = entity;
         this.required = config.required ?? false;
+        this.significance = "core";
         this.default = config.default ?? "";
         this.name = config.name;
         this.type = config.type;
@@ -2274,14 +2277,14 @@ export class Entity {
         for (const field of config.spec.keyFields) {
             const field_name = field.name;
             this.checkDuplicateField(field_name);
-            // console.log(`Creating ${this.name}.${field_name} ...`);
-            this.keyFields.set(field_name, this.loadField(field, blueprints));
+            this.keyFields.set(
+                field_name, this.loadField(field, blueprints, "key"));
         }
         for (const field of config.spec.coreFields) {
             const field_name = field.name;
             this.checkDuplicateField(field_name);
-            // console.log(`Creating ${this.name}.${field_name} ...`);
-            this.coreFields.set(field_name, this.loadField(field, blueprints));
+            this.coreFields.set(
+                field_name, this.loadField(field, blueprints, "core"));
         }
     }
 
@@ -2483,14 +2486,17 @@ export class Entity {
         return columns;
     }
 
-    loadField(config: FieldCfg, blueprints: Map<string, any>): Field {
+    loadField(config: FieldCfg, blueprints: Map<string, any>,
+              significance: FieldSignificance): Field {
         const type_j = config.type;
         if (!type_j) {
             throw new CoreError(
                 `Missing type attribute for field name ${config.name}`);
         }
         const field_clazz = Entity.getFieldClass(type_j, blueprints);
-        return new field_clazz(this, config);
+        const field = new field_clazz(this, config);
+        field.significance = significance;
+        return field;
     }
 
     hasMembership(through: string): boolean {
@@ -2547,6 +2553,14 @@ export class ImmutableEntity extends Entity {
     constructor(config: TypeCfg<EntitySpec>, blueprints: Map<string, any>) {
         super(config, blueprints);
         this._immutable = true;
+    }
+
+    async delete(service: IService, state: State,
+                 context: IContext): Promise<void> {
+        await this.validate("delete", state);
+        if (state.hasId()) {
+            await service.deleteImmutable(this, state.id);
+        }
     }
 }
 

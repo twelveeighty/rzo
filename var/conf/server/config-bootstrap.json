@@ -18,11 +18,97 @@
             "name": "restserver"
         },
         "spec": {
-            "type": "server.rest.BootstrapRestServerWorker",
+            "type": "server.rest.RestServerWorker",
             "source": "db",
             "cache": "sessioncache",
             "sessionBackendSource": "db",
-            "ports": [5001]
+            "ports": [5001],
+            "adapters": [
+                { "context": "e", "adapter": "entityadapter" },
+                { "context": "c", "adapter": "collectionadapter" },
+                { "context": "g", "adapter": "generatoradapter" },
+                { "context": "o", "adapter": "queryoneadapter" },
+                { "context": "s", "adapter": "bootstrapsessionadapter" },
+                { "context": "t", "adapter": "tokenadapter" }
+            ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Worker",
+        "metadata": {
+            "name": "entityadapter"
+        },
+        "spec": {
+            "type": "server.adapter.EntityAdapter",
+            "source": "db",
+            "cache": "sessioncache",
+            "sessionBackendSource": "db"
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Worker",
+        "metadata": {
+            "name": "collectionadapter"
+        },
+        "spec": {
+            "type": "server.adapter.CollectionAdapter",
+            "source": "db",
+            "cache": "sessioncache",
+            "sessionBackendSource": "db"
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Worker",
+        "metadata": {
+            "name": "generatoradapter"
+        },
+        "spec": {
+            "type": "server.adapter.GeneratorAdapter",
+            "source": "db",
+            "cache": "sessioncache",
+            "sessionBackendSource": "db"
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Worker",
+        "metadata": {
+            "name": "queryoneadapter"
+        },
+        "spec": {
+            "type": "server.adapter.QueryOneAdapter",
+            "source": "db",
+            "cache": "sessioncache",
+            "sessionBackendSource": "db"
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Worker",
+        "metadata": {
+            "name": "bootstrapsessionadapter"
+        },
+        "spec": {
+            "type": "server.adapter.BootstrapSessionAdapter",
+            "source": "db",
+            "cache": "sessioncache",
+            "sessionBackendSource": "db"
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Worker",
+        "metadata": {
+            "name": "tokenadapter"
+        },
+        "spec": {
+            "type": "server.adapter.TokenAdapter",
+            "source": "db",
+            "cache": "sessioncache",
+            "sessionBackendSource": "db"
         }
     },
     {

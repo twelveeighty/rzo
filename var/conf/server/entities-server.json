@@ -46,7 +46,9 @@
                 }
             ],
             "coreFields": [
-                { "name": "code", "type": "StringField", "required": true }
+                { "name": "code", "type": "StringField", "required": true },
+                { "name": "expiry", "type": "DateTimeField", "required": true,
+                    "indexed": "asc" }
             ]
         }
     }

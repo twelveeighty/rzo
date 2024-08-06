@@ -126,7 +126,7 @@ export class PgClient implements IReplicableService, IElectorService,
         this.userEntity.v = configuration.getEntity("useraccount");
     }
 
-    get replicable(): boolean {
+    get isReplicable(): boolean {
         return true;
     }
 

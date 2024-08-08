@@ -32,6 +32,10 @@ import {
     CoreColumns, SummaryField, Persona, Cfg, IService, SideEffects
 } from "../base/core.js";
 
+import {
+    ISessionBackendService, SessionContext, serializeSubjectMap
+} from "../base/session.js";
+
 import { ITaskRunner, Scheduler } from "../base/scheduler.js";
 
 import {
@@ -42,10 +46,6 @@ import {
 } from "./replication.js";
 
 import { IElectorService, LeaderElector } from "./election.js";
-
-import {
-    ISessionBackendService, SessionContext, serializeSubjectMap
-} from "./session.js";
 
 class PgClientError extends _IError {
     constructor(message: string, code?: number, options?: ErrorOptions) {
@@ -200,26 +200,31 @@ export class PgClient implements IReplicableService, IElectorService,
         return row;
     }
 
-    async createSessionContext(userId: string): Promise<Row> {
+    async createSessionContext(userId: string, expiryOverride?: Date,
+                               personaOverride?: Persona): Promise<Row> {
         const serverContext = new SessionContext();
         const useraccount = await this.getOne(this.userEntity.v, userId);
         if (!useraccount || useraccount.empty) {
             throw new PgClientError(`useraccount not found: ${userId}`, 404);
         }
-        const personaName = useraccount.get("persona");
-        const persona = this.configuration.v.personas.get(personaName);
-        if (!persona) {
-            throw new PgClientError(`persona not found: ${personaName}`, 404);
-        }
+        const persona = personaOverride ||
+            this.configuration.v.getPersona(useraccount.get("persona"));
         const session = await this.sessionEntity.v.create(this);
-        const validations: Promise<SideEffects>[] = [];
-        validations.push(
-            this.sessionEntity.v.setValue(
+        await this.sessionEntity.v.setValue(
                 session,
                 "useraccountnum", useraccount.get("useraccountnum"),
                 serverContext)
-        );
-        const expiry = new Date(Date.now() + SessionContext.DEFAULT_TIMEOUT);
+        const validations: Promise<SideEffects>[] = [];
+        if (personaOverride) {
+            validations.push(
+                this.sessionEntity.v.setValue(
+                    session,
+                    "persona", personaOverride.name,
+                    serverContext)
+            );
+        }
+        const expiry = expiryOverride ||
+            new Date(Date.now() + SessionContext.DEFAULT_TIMEOUT);
         validations.push(
             this.sessionEntity.v.setValue(
                 session,
@@ -906,10 +911,6 @@ export class PgClient implements IReplicableService, IElectorService,
             return `${result.rows[0].nextval}-${dbid}`;
         }
         return "" + result.rows[0].nextval;
-    }
-
-    async createSession(id: string): Promise<Row> {
-        throw new PgClientError("Cannot call createSession() on this service");
     }
 
     async getSequenceId(entity: Entity): Promise<string> {

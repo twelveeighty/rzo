@@ -21,7 +21,7 @@ import {
     ClassSpec, TypeCfg, IConfiguration, DaemonWorker, _IError, ICache, Cfg
 } from "../base/core.js";
 
-import { ISessionBackendService } from "./session.js";
+import { ISessionBackendService } from "../base/session.js";
 
 import { LeaderElector } from "./election.js";
 

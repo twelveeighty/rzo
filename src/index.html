@@ -76,7 +76,7 @@
     -->
                       </a>
                       <ul class="dropdown-menu">
-                          <li><a class="dropdown-item" href="#">Logout</a></li>
+                          <li><a id="nav-logout-a" class="dropdown-item" href="#">Logout</a></li>
                       </ul>
                   </li>
               </ul>
@@ -106,20 +106,70 @@
         </pre>
     </div>
 
+    <div id="password-reset-div" class="container" hidden>
+        <h1>Create or Reset Password</h1>
+        <form id="password-reset-form">
+            <div class="mb-3">
+                <label for="password-reset-user-txt" class="form-label">User</label>
+                <input id="password-reset-user-txt" type="text" class="form-control">
+            </div>
+            <button id="password-reset-submit-btn" type="submit"
+                class="btn btn-primary">Reset</button>
+        </form>
+    </div>
+
+    <div id="onetimelogin-div" class="container" hidden>
+        <h1>Enter code</h1>
+        <p>Check the email associated with this account and enter the code
+        specified</p>
+        <form id="onetimelogin-form">
+            <div class="mb-3">
+                <label for="onetimelogin-user-txt" class="form-label">User</label>
+                <input id="onetimelogin-user-txt" type="text"
+                class="form-control-plaintext">
+            </div>
+            <div class="mb-3">
+                <label for="onetimelogin-email-txt" class="form-label">Email</label>
+                <input id="onetimelogin-email-txt" type="text"
+                class="form-control-plaintext">
+            </div>
+            <div class="mb-3">
+                <label for="onetimelogin-code-txt" class="form-label">Code</label>
+                <input id="onetimelogin-code-txt" type="text" class="form-control">
+            </div>
+            <button id="onetimelogin-submit-btn" type="submit"
+                class="btn btn-primary">Proceed</button>
+        </form>
+    </div>
+
+    <div id="create-password-div" class="container" hidden>
+        <h1>Set your Password</h1>
+        <p>Your password must be at least <b>12</b> characters long, it must contain
+        at least <b>2</b> special characters and <b>2</b> numbers.</p>
+        <form id="create-password-form">
+            <div class="mb-3">
+                <label for="create-password-txt" class="form-label">New Password</label>
+                <input id="create-password-txt" type="password" class="form-control">
+            </div>
+            <button id="create-password-submit-btn" type="submit"
+                class="btn btn-primary">Submit</button>
+        </form>
+    </div>
+
     <div id="login-div" class="container" hidden>
         <h1>Login</h1>
         <form id="login-form">
             <div class="mb-3">
-                <label for="user-txt" class="form-label">User</label>
-                <input id="user-txt" type="text" class="form-control">
+                <label for="login-user-txt" class="form-label">User</label>
+                <input id="login-user-txt" type="text" class="form-control">
             </div>
             <div class="mb-3">
-                <label for="persona-sel" class="form-label">Persona</label>
-                <select id="persona-sel" class="form-select">
-                    <option selected value="">--Select Persona--</option>
-                </select>
+                <label for="login-password-txt" class="form-label">Password</label>
+                <input id="login-password-txt" type="password" class="form-control">
             </div>
             <button id="login-btn" type="submit" class="btn btn-primary">Login</button>
+            <button id="login-reset-btn" type="button"
+                class="btn btn-primary">Reset...</button>
         </form>
     </div>
 

@@ -17,13 +17,174 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-// import { Filter, Query } from "../base/core.js";
+import { Cfg, IAuthenticator, Row } from "../base/core.js";
 import { RZO, CONTEXT } from "../base/configuration.js";
 
 import * as X from "./common.js";
 import { TOASTER } from "./toaster.js";
 
 import { IPanel, BasePanel, PanelData } from "./panel.js";
+
+export class CreateLoginPanel extends BasePanel implements IPanel {
+    div: HTMLElement;
+    form: HTMLFormElement;
+    passwordTxt: HTMLInputElement;
+    authenticator: Cfg<IAuthenticator>;
+
+    constructor() {
+        super();
+        this.authenticator = new Cfg("auth");
+        this.div = X.div("create-password-div");
+        this.form = X.form("create-password-form");
+        this.passwordTxt = X.txt("create-password-txt");
+    }
+
+    get id(): string {
+        return "create-password-panel";
+    }
+
+    initialize(): void {
+        this.authenticator.v = RZO.getAuthenticator("auth").service;
+
+        this.form.addEventListener("submit", (evt) => {
+            evt.preventDefault();
+            this.onSubmit(evt);
+        });
+    }
+
+    private onSubmit(evt: Event): void {
+        const row = new Row(
+            { "password": this.passwordTxt.value });
+        this.authenticator.v.createLogin(row, CONTEXT.session)
+        .then((session) => {
+            CONTEXT.reset();
+            this.controller.v.show("login-panel");
+        })
+        .catch((err) => {
+            console.error(err);
+            TOASTER.error(`ERROR: ${err}`);
+        });
+    }
+
+    async show(panelData?: PanelData): Promise<void> {
+        this.passwordTxt.value = "";
+        this.div.hidden = false;
+    }
+
+    hide(): void {
+        this.div.hidden = true;
+    }
+}
+
+export class OneTimeLoginPanel extends BasePanel implements IPanel {
+    div: HTMLElement;
+    form: HTMLFormElement;
+    userTxt: HTMLInputElement;
+    emailTxt: HTMLInputElement;
+    codeTxt: HTMLInputElement;
+    authenticator: Cfg<IAuthenticator>;
+
+    constructor() {
+        super();
+        this.authenticator = new Cfg("auth");
+        this.div = X.div("onetimelogin-div");
+        this.form = X.form("onetimelogin-form");
+        this.emailTxt = X.txt("onetimelogin-email-txt");
+        this.userTxt = X.txt("onetimelogin-user-txt");
+        this.codeTxt = X.txt("onetimelogin-code-txt");
+    }
+
+    get id(): string {
+        return "onetimelogin-panel";
+    }
+
+    initialize(): void {
+        this.authenticator.v = RZO.getAuthenticator("auth").service;
+
+        this.form.addEventListener("submit", (evt) => {
+            evt.preventDefault();
+            this.onSubmit(evt);
+        });
+    }
+
+    private onSubmit(evt: Event): void {
+        const row = new Row(
+            { "username": this.userTxt.value, "code": this.codeTxt.value });
+        this.authenticator.v.oneTimeLogin(row)
+        .then((session) => {
+            CONTEXT.session = session;
+            this.controller.v.show("create-password-panel");
+        })
+        .catch((err) => {
+            console.error(err);
+            TOASTER.error(`ERROR: ${err}`);
+        });
+    }
+
+    async show(panelData?: PanelData): Promise<void> {
+        if (panelData) {
+            const row = panelData.row;
+            this.userTxt.value = row.get("user");
+            this.emailTxt.value = row.get("email");
+        }
+        this.div.hidden = false;
+    }
+
+    hide(): void {
+        this.div.hidden = true;
+    }
+}
+
+export class PasswordResetPanel extends BasePanel implements IPanel {
+    div: HTMLElement;
+    form: HTMLFormElement;
+    userTxt: HTMLInputElement;
+    authenticator: Cfg<IAuthenticator>;
+
+    constructor() {
+        super();
+        this.authenticator = new Cfg("auth");
+        this.div = X.div("password-reset-div");
+        this.form = X.form("password-reset-form");
+        this.userTxt = X.txt("password-reset-user-txt");
+    }
+
+    get id(): string {
+        return "password-reset-panel";
+    }
+
+    initialize(): void {
+        this.authenticator.setIf(
+            "Authenticator ", RZO.getAuthenticator("auth").service);
+
+        this.form.addEventListener("submit", (evt) => {
+            evt.preventDefault();
+            this.onSubmit(evt);
+        });
+    }
+
+    private onSubmit(evt: Event): void {
+        const row = new Row({ "user": this.userTxt.value });
+        this.authenticator.v.resetAuthentication(row)
+        .then((resultRow) => {
+            this.controller.v.show(
+                "onetimelogin-panel", new PanelData("Row", resultRow));
+        })
+        .catch((err) => {
+            console.error(err);
+            TOASTER.error(`ERROR: ${err}`);
+        });
+    }
+
+    async show(panelData?: PanelData): Promise<void> {
+        this.userTxt.value = "";
+        this.div.hidden = false;
+    }
+
+    hide(): void {
+        this.div.hidden = true;
+    }
+}
 
 export class LoginPanel extends BasePanel implements IPanel {
     onSubmitInitPanels: IPanel[];
@@ -32,10 +193,12 @@ export class LoginPanel extends BasePanel implements IPanel {
     welcomeHeading: HTMLElement;
     loginDiv: HTMLElement;
     userTxt: HTMLInputElement;
-    personaSel: HTMLSelectElement;
+    passwordTxt: HTMLInputElement;
     personOpenPath: SVGPathElement;
     personFilledPath: SVGPathElement;
     personCheckPath: SVGPathElement;
+    passwordResetBtn: HTMLButtonElement;
+    authenticator: Cfg<IAuthenticator>;
 
     constructor() {
         super();
@@ -43,13 +206,15 @@ export class LoginPanel extends BasePanel implements IPanel {
         this.form = X.form("login-form");
         this.welcomeHeading = X.heading("welcome-heading");
         this.loginDiv = X.div("login-div");
-        this.userTxt = X.txt("user-txt");
-        this.personaSel = X.sel("persona-sel");
+        this.userTxt = X.txt("login-user-txt");
+        this.passwordTxt = X.txt("login-password-txt");
         this.personOpenPath = X.path("person-open-path");
         this.personFilledPath = X.path("person-filled-path");
         this.personCheckPath = X.path("person-check-path");
+        this.passwordResetBtn = X.btn("login-reset-btn");
 
         this.onSubmitInitPanels = [];
+        this.authenticator = new Cfg("auth");
     }
 
     get id(): string {
@@ -61,8 +226,7 @@ export class LoginPanel extends BasePanel implements IPanel {
     }
 
     initialize(): void {
-        this.entity.setIf("Entity ", RZO.getEntity("useraccount"));
-        this.service.setIf("Service ", RZO.getSource("db").service);
+        this.authenticator.v = RZO.getAuthenticator("auth").service;
 
         this.form.addEventListener("submit", (evt) => {
             evt.preventDefault();
@@ -71,42 +235,29 @@ export class LoginPanel extends BasePanel implements IPanel {
         this.welcomeHeading.addEventListener("click", (evt) => {
             evt.preventDefault();
         });
+        this.passwordResetBtn.addEventListener("click", (evt) => {
+            this.onResetPassword(evt);
+        });
+    }
 
-        for (const personaKey of RZO.personas.keys()) {
-            const opt = document.createElement("option");
-            opt.value = personaKey;
-            opt.text = personaKey;
-            this.personaSel.add(opt);
-        }
+    private onResetPassword(evt: Event): void {
+        this.controller.v.show("password-reset-panel");
     }
 
     private onSubmit(evt: Event): void {
         try {
-            /*
-            const targetPersona = this.personaSel.value;
-            if (!targetPersona) {
-                TOASTER.error("You must select a valid Persona");
-                throw new Error("No persona selected");
+            const targetUsername = this.userTxt.value;
+            const targetPassword = this.passwordTxt.value;
+            if (!targetUsername || !targetPassword) {
+                TOASTER.error("You must enter a valid User and Password");
+                throw new Error("No User or Password entered");
             }
-            const persona = RZO.personas.get(targetPersona);
-            if (!persona) {
-                TOASTER.error(`Cannot find persona: ${targetPersona}`);
-                throw new Error(`Cannot find persona: ${targetPersona}`);
-            }
-            CONTEXT.persona = persona;
-            */
-            const targetUserId = this.userTxt.value;
-            if (!targetUserId) {
-                TOASTER.error("You must enter a valid User");
-                throw new Error("No User entered");
-            }
-            this.service.v.createSession(targetUserId)
+            const credsRow = new Row(
+                { "username": targetUsername, "password": targetPassword });
+            this.authenticator.v.login(credsRow)
             .then((session) => {
-                CONTEXT.userAccountId = targetUserId;
-                CONTEXT.persona = RZO.getPersona(session.get("persona"));
-                CONTEXT.sessionId = session.get("_id");
-                this.welcomeHeading.innerText =
-                    `${session.get("useraccountnum")}`;
+                CONTEXT.session = session;
+                this.welcomeHeading.innerText = targetUsername;
                 // Initialize panels that required a login
                 for (const panel of this.onSubmitInitPanels) {
                     panel.initialize();
@@ -127,41 +278,6 @@ export class LoginPanel extends BasePanel implements IPanel {
                 console.error(err);
                 TOASTER.error(`ERROR: ${err}`);
             });
-            /*
-            const filter = new Filter().
-                op("useraccountnum", "=", targetUserId);
-            const query = new Query([], filter);
-            this.service.v.getQuery(this.entity.v, query)
-            .then((resultSet) => {
-                if (resultSet.next()) {
-                    CONTEXT.userAccountId = resultSet.getString("_id");
-                    this.welcomeHeading.innerText =
-                        `${resultSet.getString("name")}`;
-
-                    // Initialize panels that required a login
-                    for (const panel of this.onSubmitInitPanels) {
-                        panel.initialize();
-                    }
-
-                    // Broadcast the "logged-in" message
-                    this.controller.v.broadcast("logged-in");
-
-                    // Switch the icon on the nav bar
-                    this.personOpenPath.classList.toggle("invisible");
-                    this.personFilledPath.classList.toggle("invisible");
-                    this.personCheckPath.classList.toggle("invisible");
-
-                    // Switch to the main 'Trips' panel
-                    this.controller.v.show("trips-panel");
-                } else {
-                    TOASTER.error(`Cannot log in: ${targetUserId}`);
-                }
-            })
-            .catch((err) => {
-                console.error(err);
-                TOASTER.error(`ERROR: ${err}`);
-            });
-            */
         } catch (err) {
             console.error(err);
         }
@@ -169,7 +285,7 @@ export class LoginPanel extends BasePanel implements IPanel {
 
     async show(panelData?: PanelData): Promise<void> {
         this.userTxt.value = "";
-        this.personaSel.value = "";
+        this.passwordTxt.value = "";
         this.loginDiv.hidden = false;
     }
 

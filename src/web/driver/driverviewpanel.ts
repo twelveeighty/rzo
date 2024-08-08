@@ -118,7 +118,7 @@ export class DriverViewPanel extends BasePanel implements IPanel {
                     "drivernum_id", "=", this.state.id),
                 [ { field: "appointmentts", order: "desc" } ]
             );
-            this.tripsCollection.v.query(CONTEXT, query)
+            this.tripsCollection.v.query(CONTEXT.session, query)
             .then((resultSet) => {
                 this.abortController = new AbortController();
                 this.tripsDivElement.innerHTML = "";
@@ -217,7 +217,8 @@ export class DriverViewPanel extends BasePanel implements IPanel {
             this.stateToUI(this.state);
             this.div.hidden = false;
         } else if (panelData) {
-            this.entity.v.load(this.service.v, CONTEXT, panelData.asString)
+            this.entity.v.load(
+                this.service.v, CONTEXT.session, panelData.asString)
             .then((state) => {
                 this.state = state;
                 this.stateToUI(this.state);

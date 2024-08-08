@@ -104,7 +104,8 @@ export class RiderViewPanel extends BasePanel implements IPanel {
             const ridernum = this.state.value("ridernum");
             this.tripEntity.v.create(this.service.v)
             .then((newTrip) => {
-                this.tripRidernumField.v.setValue(newTrip, ridernum, CONTEXT)
+                this.tripRidernumField.v.setValue(
+                    newTrip, ridernum, CONTEXT.session)
                 .then(() => {
                     this.controller.v.stack(
                         "trip-edit-panel", new PanelData("State", newTrip));
@@ -151,7 +152,7 @@ export class RiderViewPanel extends BasePanel implements IPanel {
                     "ridernum_id", "=", this.state.id),
                 [ { field: "appointmentts", order: "desc" } ]
             );
-            this.tripsCollection.v.query(CONTEXT, query)
+            this.tripsCollection.v.query(CONTEXT.session, query)
             .then((resultSet) => {
                 this.abortController = new AbortController();
                 this.tripsDivElement.innerHTML = "";
@@ -269,7 +270,8 @@ export class RiderViewPanel extends BasePanel implements IPanel {
             this.stateToUI(this.state);
             this.div.hidden = false;
         } else if (panelData) {
-            this.entity.v.load(this.service.v, CONTEXT, panelData.asString)
+            this.entity.v.load(
+                this.service.v, CONTEXT.session, panelData.asString)
             .then((state) => {
                 this.state = state;
                 this.stateToUI(this.state);

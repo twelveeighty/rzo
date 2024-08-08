@@ -170,7 +170,7 @@
                       ]
                   }
                 },
-                { "resource": "entity/login", "action": "put",
+                { "resource": "entity/login", "action": "post",
                   "effect": "allow",
                   "where": {
                       "match": "all", "conditions": [

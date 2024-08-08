@@ -9,6 +9,17 @@
             "type": "base.rest-client.RestClientSource",
             "url": "http://localhost:5001/"
         }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Authenticator",
+        "metadata": {
+            "name": "auth"
+        },
+        "spec": {
+            "type": "base.rest-client.RestClientAuthenticator",
+            "source": "db"
+        }
     }
 ]
 

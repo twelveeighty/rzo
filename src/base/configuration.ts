@@ -20,7 +20,7 @@
 import {
     TypeCfg, ClassSpec, EntitySpec, Entity, Field, Source, Persona, Nobody,
     Collection, AsyncTask, DaemonWorker, IConfiguration, IContext, ICache,
-    IPolicyConfiguration
+    IPolicyConfiguration, Authenticator
 } from "./core.js";
 
 import { ClassInfo, Reflection } from "./reflect.js";
@@ -40,6 +40,9 @@ type EntityClass = { new(config: TypeCfg<ClassSpec>,
 type SourceClass = { new(config: TypeCfg<ClassSpec>,
                          blueprints: Map<string, any>): Source; };
 
+type AuthenticatorClass = { new(config: TypeCfg<ClassSpec>,
+                         blueprints: Map<string, any>): Authenticator; };
+
 type PersonaClass = { new(config: TypeCfg<ClassSpec>,
                           blueprints: Map<string, any>): Persona; };
 
@@ -54,6 +57,7 @@ type DaemonWorkerClass = { new(config: TypeCfg<ClassSpec>,
 export class Configuration implements IConfiguration {
     entities: Map<string, Entity>;
     sources: Map<string, Source>;
+    authenticators: Map<string, Authenticator>;
     personas: Map<string, Persona>;
     collections: Map<string, Collection>;
     workers: Map<string, DaemonWorker>;
@@ -68,6 +72,7 @@ export class Configuration implements IConfiguration {
         this.json_config = [];
         this.entities = new Map();
         this.sources = new Map();
+        this.authenticators = new Map();
         this.personas = new Map();
         this.collections = new Map();
         this.workers = new Map();
@@ -147,24 +152,28 @@ export class Configuration implements IConfiguration {
             }
             switch (config_j.kind) {
                 case "Entity":
-                    this.instantiate<Entity,EntityClass>(config_j,
-                                                         this.entities);
+                    this.instantiate<Entity,EntityClass>(
+                        config_j, this.entities);
                     break;
                 case "Source":
-                    this.instantiate<Source,SourceClass>(config_j,
-                                                         this.sources);
+                    this.instantiate<Source,SourceClass>(
+                        config_j, this.sources);
+                    break;
+                case "Authenticator":
+                    this.instantiate<Authenticator,AuthenticatorClass>(
+                        config_j, this.authenticators);
                     break;
                 case "Persona":
-                    this.instantiate<Persona,PersonaClass>(config_j,
-                                                           this.personas);
+                    this.instantiate<Persona,PersonaClass>(
+                        config_j, this.personas);
                     break;
                 case "Collection":
-                    this.instantiate<Collection,CollectionClass>(config_j,
-                                                             this.collections);
+                    this.instantiate<Collection,CollectionClass>(
+                        config_j, this.collections);
                     break;
                 case "Worker":
-                    this.instantiate<DaemonWorker,DaemonWorkerClass>(config_j,
-                                                           this.workers);
+                    this.instantiate<DaemonWorker,DaemonWorkerClass>(
+                        config_j, this.workers);
                     break;
             }
         }
@@ -214,6 +223,14 @@ export class Configuration implements IConfiguration {
         throw new ConfigError(`No such source: ${name}`);
     }
 
+    getAuthenticator(name: string): Authenticator {
+        const authenticator = this.authenticators.get(name);
+        if (authenticator) {
+            return authenticator;
+        }
+        throw new ConfigError(`No such authenticator: ${name}`);
+    }
+
     registerAsyncTask(task: AsyncTask): void {
         this.asyncTasks.push(task);
     }
@@ -259,6 +276,9 @@ export class Configuration implements IConfiguration {
         for (const source of this.sources.values()) {
             source.configure(this);
         }
+        for (const authenticator of this.authenticators.values()) {
+            authenticator.configure(this);
+        }
         for (const persona of this.personas.values()) {
             persona.configure(this);
         }
@@ -293,27 +313,34 @@ export class Configuration implements IConfiguration {
     }
 }
 
-class ClientContext implements IContext {
+class NobodyContext implements IContext {
     sessionId?: string;
     persona: Persona;
     userAccountId: string;
-    private subjects: Map<string, string>;
 
-    constructor(config: IConfiguration) {
+    constructor() {
         this.persona = Nobody.INSTANCE;
         this.userAccountId = Nobody.ID;
-        this.subjects = new Map();
     }
 
     getSubject(key: string): string {
-        return this.subjects.get(key) || "";
+        return "";
+    }
+}
+
+class ClientContext {
+    session: IContext;
+
+    constructor() {
+        this.session = new NobodyContext();
     }
 
-    setSubject(key: string, subject: string) {
-        this.subjects.set(key, subject);
+    reset(): void {
+        this.session = new NobodyContext();
     }
 }
 
 export const RZO = new Configuration();
-export const CONTEXT = new ClientContext(RZO);
+export const NOCONTEXT = new NobodyContext();
+export const CONTEXT = new ClientContext();
 

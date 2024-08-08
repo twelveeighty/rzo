@@ -23,10 +23,6 @@ import {
 } from "./core.js";
 
 export class FauxService implements IService {
-    async createSession(id: string): Promise<Row> {
-        return new Row();
-    }
-
     async getGeneratorNext(generatorName: string,
                            context: IContext): Promise<string> {
         return "";

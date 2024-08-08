@@ -27,7 +27,8 @@ type SubjectType = {
 export interface ISessionBackendService {
     get isSessionBackendService(): boolean;
     getSessionContext(id: string): Promise<Row>;
-    createSessionContext(userId: string): Promise<Row>;
+    createSessionContext(userId: string, expiryOverride?: Date,
+                         personaOverride?: Persona): Promise<Row>;
     deleteSession(id: string): Promise<void>;
     deleteSessionsUpTo(expiry: Date): Promise<void>;
 }

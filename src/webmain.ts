@@ -21,7 +21,9 @@ import { RZO } from "./base/configuration.js";
 
 import { TOASTER } from "./web/toaster.js";
 import { PanelController, PanelData } from "./web/panel.js";
-import { LoginPanel } from "./web/loginpanel.js";
+import {
+    CreateLoginPanel, OneTimeLoginPanel, PasswordResetPanel, LoginPanel
+} from "./web/loginpanel.js";
 import { OpenIDPanel } from "./web/openidpanel.js";
 import { NavigationPanel } from "./web/navigationpanel.js";
 
@@ -44,7 +46,11 @@ TOASTER.initialize();
 
 const panelController = new PanelController();
 
+const createLoginPanel = new CreateLoginPanel();
+const oneTimeLoginPanel = new OneTimeLoginPanel();
+const passwordResetPanel = new PasswordResetPanel();
 const loginPanel = new LoginPanel();
+
 const openIDPanel = new OpenIDPanel();
 const navigationPanel = new NavigationPanel();
 
@@ -77,7 +83,11 @@ loginPanel.addSubmitInitPanel(driversListPanel);
 loginPanel.addSubmitInitPanel(driverViewPanel);
 
 // Add panels to the controller
+panelController.add(createLoginPanel);
+panelController.add(oneTimeLoginPanel);
+panelController.add(passwordResetPanel);
 panelController.add(loginPanel);
+
 panelController.add(openIDPanel);
 panelController.add(navigationPanel);
 
@@ -134,6 +144,9 @@ import(metadataName)
         RZO.bootstrap(METADATA)
         .then(() => {
             navigationPanel.initialize();
+            createLoginPanel.initialize();
+            oneTimeLoginPanel.initialize();
+            passwordResetPanel.initialize();
             loginPanel.initialize();
             entryPoint();
         })

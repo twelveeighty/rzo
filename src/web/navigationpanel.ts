@@ -17,7 +17,12 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+import { Cfg, IAuthenticator } from "../base/core.js";
+
+import { RZO, CONTEXT } from "../base/configuration.js";
+
 import * as X from "./common.js";
+
 import { TOASTER } from "./toaster.js";
 
 import { PanelController, IPanel, PanelData, PanelMessage } from "./panel.js";
@@ -26,13 +31,17 @@ export class NavigationPanel implements IPanel {
     navTrips: HTMLAnchorElement;
     navRiders: HTMLAnchorElement;
     navDrivers: HTMLAnchorElement;
+    navLogout: HTMLAnchorElement;
     controller?: PanelController;
+    authenticator: Cfg<IAuthenticator>;
     loggedIn: boolean;
 
     constructor() {
         this.navTrips = X.a("nav-trips-a");
         this.navRiders = X.a("nav-riders-a");
         this.navDrivers = X.a("nav-drivers-a");
+        this.navLogout = X.a("nav-logout-a");
+        this.authenticator = new Cfg("auth");
         this.loggedIn = false;
     }
 
@@ -60,11 +69,30 @@ export class NavigationPanel implements IPanel {
         }
     }
 
+    private onLogout(evt: Event): void {
+        if (this.loggedIn) {
+            this.authenticator.v.logout(CONTEXT.session)
+            .then(() => {
+                CONTEXT.reset();
+                this.controller!.broadcast("logged-out");
+                this.controller!.show("login-panel");
+            })
+            .catch((err) => {
+                console.error(err);
+                TOASTER.error(`ERROR: ${err}`);
+            });
+        } else {
+            TOASTER.error("You must log in first.");
+        }
+    }
+
     get id(): string {
         return "nav-panel";
     }
 
     initialize(): void {
+        this.authenticator.v = RZO.getAuthenticator("auth").service;
+
         this.navTrips.addEventListener("click", (evt) => {
             evt.preventDefault();
             this.onTrips(evt);
@@ -76,6 +104,10 @@ export class NavigationPanel implements IPanel {
         this.navDrivers.addEventListener("click", (evt) => {
             evt.preventDefault();
             this.onDrivers(evt);
+        });
+        this.navLogout.addEventListener("click", (evt) => {
+            evt.preventDefault();
+            this.onLogout(evt);
         });
     }
 

@@ -62,7 +62,8 @@ export class RiderEditPanel extends FormPanel implements IPanel {
 
     private loadZones(): void {
         const riderZoneSel = this.getSelect("rider-zone-sel");
-        this.service.v.queryCollection(RZO.getCollection("zones"), CONTEXT)
+        this.service.v.queryCollection(
+            RZO.getCollection("zones"), CONTEXT.session)
         .then((resultSet) => {
             while (riderZoneSel.options.length > 1) {
                 riderZoneSel.remove(1);

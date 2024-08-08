@@ -79,7 +79,7 @@ export class RidersListPanel extends BasePanel implements IPanel {
                 this.abortController.abort();
                 this.abortController = null;
             }
-            this.collection.v.query(CONTEXT)
+            this.collection.v.query(CONTEXT.session)
             .then((resultSet) => {
                 this.abortController = new AbortController();
                 this.listDiv.innerHTML = "";

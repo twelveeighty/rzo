@@ -127,7 +127,8 @@ export class TripsListPanel extends BasePanel implements IPanel {
     }
 
     private loadZones(): void {
-        this.service.v.queryCollection(RZO.getCollection("zones"), CONTEXT)
+        this.service.v.queryCollection(
+            RZO.getCollection("zones"), CONTEXT.session)
         .then((resultSet) => {
             while (this.zones.options.length > 1) {
                 this.zones.remove(1);
@@ -267,7 +268,7 @@ export class TripsListPanel extends BasePanel implements IPanel {
                 filter,
                 [{field: "appointmentts", order: "asc"}]
             );
-            this.collection.v.query(CONTEXT, query)
+            this.collection.v.query(CONTEXT.session, query)
             .then((resultSet) => {
                 this.abortController = new AbortController();
                 this.listDiv.innerHTML = "";

@@ -59,6 +59,7 @@ export interface IPolicyConfiguration {
 export interface IConfiguration {
     entities: Map<string, Entity>;
     sources: Map<string, Source>;
+    authenticators: Map<string, Authenticator>;
     personas: Map<string, Persona>;
     collections: Map<string, Collection>;
     caches: Map<string, ICache>;
@@ -68,6 +69,7 @@ export interface IConfiguration {
     getEntity(name: string): Entity;
     getField(fqName: string): Field;
     getSource(name: string): Source;
+    getAuthenticator(name: string): Authenticator;
     getPersona(name: string): Persona;
 
     registerAsyncTask(task: AsyncTask): void;
@@ -700,7 +702,6 @@ export class MemResultSet implements IResultSet {
 }
 
 export interface IService {
-    createSession(id: string): Promise<Row>;
     getGeneratorNext(generatorName: string, context?: IContext): Promise<string>;
     getOne(entity: Entity, id: string, rev?: string,
            context?: IContext): Promise<Row>;
@@ -722,6 +723,15 @@ export interface IService {
                        id: string): Promise<DeferredToken | null>;
     getDeferredToken(tokenUuid: string): Promise<DeferredToken | null>;
     putDeferredToken(token: DeferredToken, context: IContext): Promise<number>;
+}
+
+export interface IAuthenticator {
+    get isAuthenticator(): boolean;
+    resetAuthentication(row: Row): Promise<Row>;
+    oneTimeLogin(row: Row): Promise<IContext>;
+    createLogin(row: Row, context: IContext): Promise<Row>;
+    login(row: Row): Promise<IContext>;
+    logout(context: IContext): Promise<void>;
 }
 
 type Metadata = {
@@ -3185,6 +3195,22 @@ export class Source {
 
     get service(): IService {
         throw new CoreError(`Source ${this.name} has an undefined service`);
+    }
+}
+
+export class Authenticator {
+    readonly name: String;
+
+    constructor(config: TypeCfg<ClassSpec>, blueprints: Map<string, any>) {
+        this.name = config.metadata.name;
+    }
+
+    configure(configuration: IConfiguration) {
+    }
+
+    get service(): IAuthenticator {
+        throw new CoreError(
+            `Authenticator ${this.name} has an undefined service`);
     }
 }
 

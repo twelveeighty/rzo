@@ -100,9 +100,9 @@ export class TripAssignPanel extends BasePanel implements IPanel {
     private onUnassign(evt: Event): void {
         if (this.state && this.row) {
             const trip_id = this.row.getString("_id");
-            this.drivernumField.v.setValue(this.state, null, CONTEXT)
+            this.drivernumField.v.setValue(this.state, null, CONTEXT.session)
             .then(() => {
-                this.entity.v.put(this.service.v, this.state!, CONTEXT)
+                this.entity.v.put(this.service.v, this.state!, CONTEXT.session)
                 .then((row) => {
                     this.controller.v.pop(new PanelData("string", trip_id));
                 })
@@ -122,9 +122,11 @@ export class TripAssignPanel extends BasePanel implements IPanel {
             const driver_num = target.id.slice(4);
             if (this.state && this.row) {
                 const trip_id = this.row.getString("_id");
-                this.drivernumField.v.setValue(this.state, driver_num, CONTEXT)
+                this.drivernumField.v.setValue(
+                    this.state, driver_num, CONTEXT.session)
                 .then(() => {
-                    this.entity.v.put(this.service.v, this.state!, CONTEXT)
+                    this.entity.v.put(
+                        this.service.v, this.state!, CONTEXT.session)
                     .then((row) => {
                         this.controller.v.pop(new PanelData("string", trip_id));
                     })
@@ -149,7 +151,7 @@ export class TripAssignPanel extends BasePanel implements IPanel {
                 [],
                 new Filter().op("status", "=", "ACTIVE")
             );
-            this.collection.v.query(CONTEXT, query)
+            this.collection.v.query(CONTEXT.session, query)
             .then((resultSet) => {
                 this.abortController = new AbortController();
                 this.driversDiv.innerHTML = "";

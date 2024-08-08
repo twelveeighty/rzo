@@ -92,7 +92,7 @@
             "name": "bootstrapsessionadapter"
         },
         "spec": {
-            "type": "server.adapter.BootstrapSessionAdapter",
+            "type": "server.authentication.BootstrapSessionAdapter",
             "source": "db",
             "cache": "sessioncache",
             "sessionBackendSource": "db"

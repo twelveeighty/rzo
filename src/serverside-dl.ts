@@ -27,7 +27,6 @@ import {
 
 import { RZO } from "./base/configuration.js";
 
-import { SessionContext } from "./server/session.js";
 
 type EntityLoad = {
     entity: string;
@@ -71,43 +70,38 @@ async function loadEntityState(service: IService, context: IContext,
 try {
     if (argv.length != 4) {
         throw new Error(
-            "Usage: node serverside-dl.js <useraccount> <file>");
+            "Usage: node serverside-dl.js <creds-file> <data-file>");
     }
 
-    const contents = await Promise.all([
+    const configuration = await Promise.all([
         readFile(getUrl("entities"), { encoding: 'utf8' }),
         readFile(getUrl("personas"), { encoding: 'utf8' }),
         readFile(getUrl("collections", "client"), { encoding: 'utf8' }),
         readFile(getUrl("config", "serverside-client"), { encoding: 'utf8' })
     ]);
 
+    const credsFile = await readFile(
+        new URL(argv[2], import.meta.url), { encoding: 'utf8' });
+    const credsRow = new Row(JSON.parse(credsFile));
+
     const fileData = await readFile(
         new URL(argv[3], import.meta.url), { encoding: 'utf8' });
     const loadData = JSON.parse(fileData) as EntityLoad[];
 
-    await RZO.load(contents);
+    await RZO.load(configuration);
     await RZO.startAsyncTasks();
 
     try {
         const source = RZO.getSource("db");
         const service = source.service;
+        const authenticator = RZO.getAuthenticator("auth").service;
 
         if (!service) {
             throw new Error("Invalid source");
         }
-        const session = await service.createSession(argv[2]);
+        const context = await authenticator.login(credsRow);
         console.log(
-            `Session: ${JSON.stringify(Row.rowToData(session))}`);
-
-        const context: IContext = new SessionContext(
-            session, RZO.getPersona(session.get("persona")));
-
-        /*
-        CONTEXT.userAccountId = argv[2];
-        CONTEXT.persona = RZO.getPersona(session.get("persona"));
-        CONTEXT.sessionId = session.get("_id");
-        const context: IContext = CONTEXT;
-         */
+            `Session: ${JSON.stringify(context)}`);
 
         for (const entityCfg of loadData) {
             if (!entityCfg) {
@@ -163,6 +157,7 @@ try {
                 await entity.delete(service, state, context);
             }
         }
+        await authenticator.logout(context);
     } finally {
         await RZO.stopAsyncTasks();
     }

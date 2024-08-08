@@ -25,7 +25,7 @@ import {
     OrderBy, Collection, IResultSet, DeferredToken, JsonObject
 } from "../base/core.js";
 
-import { SessionContext, ISessionBackendService } from "./session.js";
+import { SessionContext, ISessionBackendService } from "../base/session.js";
 
 type ErrorType = {
     type: string;

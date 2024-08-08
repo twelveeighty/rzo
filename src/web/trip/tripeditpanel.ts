@@ -85,7 +85,8 @@ export class TripEditPanel extends FormPanel implements IPanel {
 
     private loadZones(): void {
         const tripZoneSel = this.getSelect("trip-zone-sel");
-        this.service.v.queryCollection(RZO.getCollection("zones"), CONTEXT)
+        this.service.v.queryCollection(
+            RZO.getCollection("zones"), CONTEXT.session)
         .then((resultSet) => {
             while (tripZoneSel.options.length > 1) {
                 tripZoneSel.remove(1);
@@ -127,7 +128,7 @@ export class TripEditPanel extends FormPanel implements IPanel {
         if (panelData) {
             if (panelData.dataType == "string") {
                 this.state = await this.entity.v.load(
-                    this.service.v, CONTEXT, panelData.asString);
+                    this.service.v, CONTEXT.session, panelData.asString);
             } else if (panelData.dataType == "State") {
                 this.state = panelData.state;
             }
@@ -146,7 +147,7 @@ export class TripEditPanel extends FormPanel implements IPanel {
 
     private async showRider(ridernum_id: string): Promise<void> {
         const riderState = await this.riderEntity.v.load(
-            this.service.v, CONTEXT, ridernum_id);
+            this.service.v, CONTEXT.session, ridernum_id);
         this.riderNum.value = riderState.value("ridernum");
         this.riderName.value = riderState.value("name");
     }
@@ -186,8 +187,10 @@ export class TripEditPanel extends FormPanel implements IPanel {
             this.validate()
             .then(() => {
                 const action = this.state?.hasId() ?
-                    this.entity.v.put(this.service.v, this.state!, CONTEXT) :
-                    this.entity.v.post(this.service.v, this.state!, CONTEXT);
+                    this.entity.v.put(
+                        this.service.v, this.state!, CONTEXT.session) :
+                    this.entity.v.post(
+                        this.service.v, this.state!, CONTEXT.session);
                 action.then((row) => {
                     TOASTER.info(`Saved: ${row.getString("_id")}`);
                     this.controller.v.pop();

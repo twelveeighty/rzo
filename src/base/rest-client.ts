@@ -20,8 +20,10 @@
 import {
     Entity, IService, IResultSet, Query, MemResultSet, EmptyResultSet,
     Filter, Collection, IContext, Row, TypeCfg, DeferredToken, Source,
-    ClassSpec, IConfiguration, Cfg
+    ClassSpec, IConfiguration, Cfg, Authenticator, IAuthenticator, Persona
 } from "./core.js";
+
+import { SessionContext } from "./session.js";
 
 class RestClientError extends Error {
 
@@ -37,13 +39,15 @@ class RestClientError extends Error {
     }
 }
 
-export class RestClient implements IService {
+export class RestClient implements IService, IAuthenticator {
 
-    private url: string;
+    readonly url: string;
     sessionEntity: Cfg<Entity>;
+    personas: Cfg<Map<string, Persona>>;
 
     constructor(url: string) {
         this.sessionEntity = new Cfg("session");
+        this.personas = new Cfg("personas");
         let finalUrl = url.trim();
         while (finalUrl.endsWith("/")) {
             finalUrl = finalUrl.slice(0, -1);
@@ -53,6 +57,7 @@ export class RestClient implements IService {
 
     configure(configuration: IConfiguration) {
         this.sessionEntity.v = configuration.getEntity(this.sessionEntity.name);
+        this.personas.v = configuration.personas;
     }
 
     async getDeferredToken(tokenUuid: string): Promise<DeferredToken | null> {
@@ -114,29 +119,6 @@ export class RestClient implements IService {
         const data = await response.json();
         const row = Row.dataToRow(data);
         return row.has("wait") ? row.get("wait") : 0;
-    }
-
-    async createSession(id: string): Promise<Row> {
-        const payload = JSON.stringify({ sub: id });
-        const fetchRequest = {
-            method: "post",
-            body: payload
-        };
-        const targetUrl = this.url + "/s";
-        console.log(`fetch POST - ${targetUrl}`);
-        const response = await fetch(targetUrl, fetchRequest);
-        if (!response.ok) {
-            const body = await response.text();
-            throw RestClientError.fromResponse(response, body);
-        }
-        const data = await response.json();
-        const row = Row.dataToRow(data, this.sessionEntity.v);
-        if (row.empty) {
-            throw new RestClientError(
-                `POST call for createSession resulted in an empty or invalid ` +
-                `JSON object`);
-        }
-        return row;
     }
 
     async getGeneratorNext(generatorName: string,
@@ -352,7 +334,7 @@ export class RestClient implements IService {
         }
         const data = await response.json();
         const result = Row.dataToRow(data, entity);
-        if (result === null) {
+        if (result.empty) {
             throw new RestClientError(
                 `PUT call for Entity ${entity.name}, id = ${id} resulted in ` +
                 `an empty or invalid JSON object`);
@@ -384,7 +366,7 @@ export class RestClient implements IService {
         }
         const data = await response.json();
         const result = Row.dataToRow(data, entity);
-        if (result === null) {
+        if (result.empty) {
             throw new RestClientError(
                 `POST call for Entity ${entity.name} resulted in an empty ` +
                 `or invalid JSON object`);
@@ -416,6 +398,161 @@ export class RestClient implements IService {
             throw RestClientError.fromResponse(response, body);
         }
     }
+
+    get isAuthenticator(): boolean {
+        return true;
+    }
+
+    async resetAuthentication(row: Row): Promise<Row> {
+        /* This is the client call to:
+         * server.authentication.RZOOneTimeAdapter.createOneTimeLogin()
+         * GET https:/host/otl?user=WILSONB
+         *
+         * Returns: { email: "ma..@d.com", expiry: "<date>" }
+         */
+        if (!row.has("user")) {
+            throw new RestClientError("Missing 'user' in passed row");
+        }
+        const targetUrl = `${this.url}/otl?user=${row.getString("user")}`;
+        console.log(`fetch GET - ${targetUrl}`);
+        const response = await fetch(targetUrl);
+        if (!response.ok) {
+            const body = await response.text();
+            throw RestClientError.fromResponse(response, body);
+        }
+        const data = await response.json();
+        const result = Row.dataToRow(data);
+        if (result.empty) {
+            throw new RestClientError(
+                `GET call for resetAuthentication resulted in an empty or ` +
+                `invalid JSON object`);
+        }
+        return result;
+    }
+
+    async oneTimeLogin(row: Row): Promise<IContext> {
+        /* This is the client call to:
+         * server.authentication.RZOOneTimeAdapter.authenticate()
+         * POST https:/host/otl
+         *    { username: "WILSONB", code: "1234567" }
+         *
+         * Returns SessionContext {}
+         */
+        const jsonData = Row.rowToData(row);
+        const payload = JSON.stringify(jsonData);
+
+        const headers = new Headers();
+        headers.set("Content-Type", "application/json");
+        const fetchRequest = {
+            method: "post",
+            body: payload,
+            headers: headers
+        };
+        const targetUrl = this.url + "/otl";
+        console.log(`fetch POST - ${targetUrl}`);
+        const response = await fetch(targetUrl, fetchRequest);
+        if (!response.ok) {
+            const body = await response.text();
+            throw RestClientError.fromResponse(response, body);
+        }
+        const data = await response.json();
+        const result = Row.dataToRow(data);
+        if (result.empty) {
+            throw new RestClientError(
+                `One time login does not return anything`);
+        }
+        const persona = this.personas.v.get(result.get("persona"));
+        if (!persona) {
+            throw new RestClientError(
+                `OneTimeLogin returns unknown persona: ` +
+                `${result.get("persona")}`);
+        }
+        return new SessionContext(result, persona);
+    }
+
+    async createLogin(row: Row, context: IContext): Promise<Row> {
+        /* This is the client call to:
+         * server.authentication.RZOOneTimeAdapter.createLogin()
+         * PUT https:/host/otl
+         *    { password: "clear_text_password" }
+         *
+         * Returns Row, a Login without password
+         */
+        if (!context.sessionId) {
+            throw new RestClientError(
+                "One time Context and/or Session ID missing");
+        }
+        const jsonData = Row.rowToData(row);
+        const payload = JSON.stringify(jsonData);
+
+        const headers = new Headers();
+        headers.set("rzo-sessionid", context.sessionId);
+        headers.set("Content-Type", "application/json");
+        const fetchRequest = {
+            method: "put",
+            body: payload,
+            headers: headers
+        };
+        const targetUrl = this.url + "/otl";
+        console.log(`fetch PUT - ${targetUrl}`);
+        const response = await fetch(targetUrl, fetchRequest);
+        if (!response.ok) {
+            const body = await response.text();
+            throw RestClientError.fromResponse(response, body);
+        }
+        const data = await response.json();
+        const result = Row.dataToRow(data);
+        if (result.empty) {
+            throw new RestClientError(`create login returns empty`);
+        }
+        return result;
+    }
+
+    async login(row: Row): Promise<IContext> {
+        const payload = JSON.stringify(Row.rowToData(row));
+        const fetchRequest = {
+            method: "post",
+            body: payload
+        };
+        const targetUrl = this.url + "/s";
+        console.log(`fetch POST - ${targetUrl}`);
+        const response = await fetch(targetUrl, fetchRequest);
+        if (!response.ok) {
+            const body = await response.text();
+            throw RestClientError.fromResponse(response, body);
+        }
+        const data = await response.json();
+        const result = Row.dataToRow(data);
+        if (result.empty) {
+            throw new RestClientError(`Login does not return anything`);
+        }
+        const persona = this.personas.v.get(result.get("persona"));
+        if (!persona) {
+            throw new RestClientError(
+                `Login returns unknown persona: ${result.get("persona")}`);
+        }
+        return new SessionContext(result, persona);
+    }
+
+    async logout(context: IContext): Promise<void> {
+        if (!context.sessionId) {
+            throw new RestClientError("Context and/or Session ID missing");
+        }
+        const headers = new Headers();
+        headers.set("rzo-sessionid", context.sessionId);
+        headers.set("Content-Type", "application/json");
+        const fetchRequest = {
+            method: "delete",
+            headers: headers
+        };
+        const targetUrl = this.url + "/s";
+        console.log(`fetch DELETE - ${targetUrl}`);
+        const response = await fetch(targetUrl, fetchRequest);
+        if (!response.ok) {
+            const body = await response.text();
+            throw RestClientError.fromResponse(response, body);
+        }
+    }
 }
 
 type RestClientSourceSpec = ClassSpec & {
@@ -439,6 +576,35 @@ export class RestClientSource extends Source {
 
     get service(): IService {
         return this._service;
+    }
+}
+
+type RestClientAuthenticatorSpec = ClassSpec & {
+    source: string;
+}
+
+export class RestClientAuthenticator extends Authenticator {
+    source: Cfg<IAuthenticator>;
+
+    constructor(config: TypeCfg<RestClientAuthenticatorSpec>,
+                blueprints: Map<string, any>) {
+        super(config, blueprints);
+        this.source = new Cfg(config.spec.source);
+    }
+
+    configure(configuration: IConfiguration) {
+        super.configure(configuration);
+        const target = configuration.getSource(this.source.name).service;
+        if (!((<any>target).isAuthenticator)) {
+            throw new RestClientError(
+                `Invalid Authenticator ${this.name}, source ` +
+                `'${this.source.name}' is not an IAuthenticator`);
+        }
+        this.source.v = target as unknown as IAuthenticator;
+    }
+
+    get service(): IAuthenticator {
+        return this.source.v;
     }
 }
 

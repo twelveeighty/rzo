@@ -19,15 +19,19 @@
 
 import { IncomingMessage, ServerResponse } from "http";
 
+import { randomInt } from "node:crypto";
+
 import {
     _IError, Row, Filter, Cfg, Entity, TypeCfg, IConfiguration, Nobody,
     JsonObject, Persona, SideEffects
 } from "../base/core.js";
 
-import { SessionContext } from "./session.js";
+import { NOCONTEXT } from "../base/configuration.js";
+
+import { SessionContext } from "../base/session.js";
 
 import {
-    SessionAwareAdapter, SessionAwareAdapterSpec, AdapterError
+    SessionAwareAdapter, SessionAwareAdapterSpec, AdapterError, getHeader
 } from "./adapter.js";
 
 import { PasswordField } from "./crypto.js";
@@ -44,23 +48,75 @@ type OneTimeAdapterSpec = SessionAwareAdapterSpec & {
 }
 
 export class RZOOneTimeAdapter extends SessionAwareAdapter {
-    onetimeEntity: Cfg<Entity>;
+    oneTimeEntity: Cfg<Entity>;
     loginEntity: Cfg<Entity>;
+    userAccountEntity: Cfg<Entity>;
     persona: Cfg<Persona>;
+
+    static FIVEMINUTES = 1000*5*60;
 
     constructor(config: TypeCfg<OneTimeAdapterSpec>,
                 blueprints: Map<string, any>) {
         super(config, blueprints);
-        this.onetimeEntity = new Cfg("onetimelogin");
+        this.oneTimeEntity = new Cfg("onetimelogin");
         this.loginEntity = new Cfg("loginentity");
+        this.userAccountEntity = new Cfg("useraccount");
         this.persona = new Cfg(config.spec.persona);
     }
 
     configure(configuration: IConfiguration): void {
         super.configure(configuration);
-        this.onetimeEntity.v = configuration.getEntity("onetimelogin");
+        this.oneTimeEntity.v = configuration.getEntity("onetimelogin");
         this.loginEntity.v = configuration.getEntity("login");
+        this.userAccountEntity.v = configuration.getEntity("useraccount");
         this.persona.v = configuration.getPersona(this.persona.name);
+    }
+
+    private async createOneTimeLogin(userNum: string,
+                                     response: ServerResponse): Promise<void> {
+        const filter = new Filter()
+            .op("useraccountnum", "=", userNum);
+        const userRow = await this.source.v.getQueryOne(
+            this.userAccountEntity.v, filter);
+        if (userRow.empty) {
+            console.log(
+                `Cannot create One Time Login because the requested usernum ` +
+                `${userNum} does not exist`);
+            throw new AuthenticationError("Authentication error", 403);
+        }
+        // Delete any existing onetimelogin, if present
+        const existingRow = await this.source.v.getQueryOne(
+            this.oneTimeEntity.v, filter);
+        if (!existingRow.empty) {
+            await this.source.v.deleteImmutable(
+                this.oneTimeEntity.v, existingRow.get("_id"));
+        }
+
+        // Create a random number between 111000 and 999900 (as a string)
+        const code = "" + randomInt(111000, 999900);
+        // Censor the email address
+        const split = userRow.getString("email").split("@");
+        const right = split.length > 1 ? split[1].slice(-5) : "";
+        const left = split[0].slice(2);
+        const email = `${left}..@..${right}`;
+        // Set the expiry to be 5 minutes from now
+        const expiry = new Date(Date.now() + RZOOneTimeAdapter.FIVEMINUTES);
+        // Create the onetimelogin entity
+        const state = await this.oneTimeEntity.v.create(this.source.v);
+        const validations: Promise<SideEffects>[] = [];
+        validations.push(
+            this.oneTimeEntity.v.setValue(state, "useraccountnum", userNum));
+        validations.push(
+            this.oneTimeEntity.v.setValue(state, "code", code));
+        validations.push(
+            this.oneTimeEntity.v.setValue(state, "expiry", expiry));
+        await Promise.all(validations);
+        await this.oneTimeEntity.v.post(this.source.v, state, NOCONTEXT);
+        console.log(
+            `One Time Login created for User: ${userNum}, Email: ${email}, ` +
+            `Code: ${code}, Expiry: ${expiry}`);
+        response.end(JSON.stringify(
+            { "user": userNum, "email": email, "expiry": expiry }));
     }
 
     private async authenticate(row: Row,
@@ -72,7 +128,7 @@ export class RZOOneTimeAdapter extends SessionAwareAdapter {
                 const filter = new Filter()
                     .op("useraccountnum", "=", useraccountnum);
                 const authRow = await this.source.v.getQueryOne(
-                    this.onetimeEntity.v, filter);
+                    this.oneTimeEntity.v, filter);
                 if (row.empty) {
                     console.log(
                         `OTL Login attempt blocked due no OTL found for ` +
@@ -98,7 +154,10 @@ export class RZOOneTimeAdapter extends SessionAwareAdapter {
                     `${useraccountnum}`);
                 const userId = authRow.getString("useraccountnum_id");
                 const sessionRow =
-                    await this.sessionBackend.v.createSessionContext(userId);
+                    await this.sessionBackend.v.createSessionContext(
+                        userId,
+                        new Date(Date.now() + RZOOneTimeAdapter.FIVEMINUTES),
+                        this.persona.v);
 
                 const sessionContext = new SessionContext(
                     sessionRow, this.persona.v);
@@ -147,11 +206,14 @@ export class RZOOneTimeAdapter extends SessionAwareAdapter {
         validations.push(
             this.loginEntity.v.setValue(state, "password", passwd));
         await Promise.all(validations);
-        await this.loginEntity.v.post(this.source.v, state, sessionContext);
+        const resultRow = await this.loginEntity.v.post(
+            this.source.v, state, sessionContext);
         // Delete the One Time session
         this.sessionCache.v.delete(sessionContext.sessionId);
         // Session expired, delete it, no need to 'await' it.
         this.sessionBackend.v.deleteSession(sessionContext.sessionId);
+        resultRow.delete("password");
+        response.end(JSON.stringify(Row.rowToData(resultRow)));
     }
 
     protected async payloadHandler(payload: JsonObject,
@@ -173,7 +235,28 @@ export class RZOOneTimeAdapter extends SessionAwareAdapter {
 
     handle(request: IncomingMessage, response: ServerResponse,
            uriElements: string[]): void {
-        if (request.method == "POST" || request.method == "PUT") {
+        if (request.method == "GET") {
+            /* https:/host/
+             *             0     1         2
+             * GET        otl    ?    user=WILSONB
+             */
+            if (uriElements.length == 3 && uriElements[1] == "?" &&
+                uriElements[2].startsWith("user=")) {
+                const userNum = uriElements[2].substring("user=".length);
+                if (userNum) {
+                    this.createOneTimeLogin(userNum, response)
+                    .catch((error) => {
+                        AdapterError.toResponse(error, response);
+                    });
+                } else {
+                    console.log(`Missing user in uriElements: ${uriElements}`);
+                    throw new AuthenticationError("Authentication error", 500);
+                }
+            } else {
+                console.log(`Invalid uriElements: ${uriElements}`);
+                throw new AuthenticationError("Authentication error", 500);
+            }
+        } else if (request.method == "POST" || request.method == "PUT") {
             this.handlePayload(request, response);
         } else {
             console.log(`Invalid request method: ${request.method}`);
@@ -262,12 +345,43 @@ export class RZOAuthAdapter extends SessionAwareAdapter {
         response.end(JSON.stringify(Row.rowToData(sessionRow)));
     }
 
+    async handleDelete(request: IncomingMessage,
+                       response: ServerResponse): Promise<void> {
+        const sessionId = getHeader(request.headers, "rzo-sessionid");
+        if (sessionId) {
+            try {
+                const sessionContext = await this.pullContext(request);
+                this.sessionCache.v.delete(sessionContext.sessionId);
+                /* For an explicit logout, we wait for the session
+                 * to be deleted.
+                 */
+                await this.sessionBackend.v.deleteSession(
+                    sessionContext.sessionId);
+                console.log(
+                    `Logged out user: ${sessionContext.userAccount}`);
+            } catch (error) {
+                console.log(
+                    `Logout action fails silently for session ID ` +
+                    `${sessionId}`);
+                console.log(error);
+            }
+        } else {
+            console.log(
+                "logout action fails silently because there is no " +
+                "'rzo-sessionid' present");
+        }
+        response.end();
+    }
+
     handle(request: IncomingMessage, response: ServerResponse,
            uriElements: string[]): void {
         try {
             switch (request.method) {
                 case "POST":
                     this.handlePayload(request, response);
+                    break;
+                case "DELETE":
+                    this.handleDelete(request, response);
                     break;
                 default:
                     throw new AdapterError(

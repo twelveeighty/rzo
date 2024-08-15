@@ -20,6 +20,19 @@
             "type": "base.rest-client.RestClientAuthenticator",
             "source": "db"
         }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "LogConfiguration",
+        "metadata": {
+            "name": "logging"
+        },
+        "spec": {
+            "defaultLevel": "Info",
+            "loggers": [
+                { "name": "client", "level": "Info" }
+            ]
+        }
     }
 ]
 

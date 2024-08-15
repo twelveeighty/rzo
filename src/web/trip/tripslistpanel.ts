@@ -128,7 +128,7 @@ export class TripsListPanel extends BasePanel implements IPanel {
 
     private loadZones(): void {
         this.service.v.queryCollection(
-            RZO.getCollection("zones"), CONTEXT.session)
+            this.logger, CONTEXT.session, RZO.getCollection("zones"))
         .then((resultSet) => {
             while (this.zones.options.length > 1) {
                 this.zones.remove(1);

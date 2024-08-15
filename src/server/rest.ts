@@ -22,7 +22,7 @@ import {
 } from "http";
 
 import {
-    ClassSpec, TypeCfg, IConfiguration, DaemonWorker, _IError, Cfg
+    ClassSpec, TypeCfg, IConfiguration, DaemonWorker, _IError, Cfg, Logger
 } from "../base/core.js";
 
 import { IAdapter, AdapterError, getHeader } from "./adapter.js";
@@ -37,8 +37,11 @@ class RestServer {
     httpServer: Server;
     config: IConfiguration;
     adapters: Map<string, IAdapter>;
+    logger: Logger;
 
-    constructor(config: IConfiguration, adapterSpecs: AdapterRefSpec[]) {
+    constructor(logger: Logger, config: IConfiguration,
+                adapterSpecs: AdapterRefSpec[]) {
+        this.logger = logger;
         this.config = config;
         this.adapters = new Map();
         for (const spec of adapterSpecs) {
@@ -54,7 +57,7 @@ class RestServer {
                     `exist or it is not an 'Adapter'`);
             }
             this.adapters.set(spec.context, <IAdapter>worker);
-            console.log(
+            this.logger.log(
                 `Adapter context '${spec.context}', worker type ` +
                 `${worker.constructor.name}`);
         }
@@ -70,10 +73,10 @@ class RestServer {
                 request.headers, "access-control-request-method");
             const requestHeaders = getHeader(
                 request.headers, "access-control-request-headers");
-            console.log(`CORS Origin: ${origin}`);
-            console.log(`CORS Access-Control-Request-Method: ` +
+            this.logger.debug(`CORS Origin: ${origin}`);
+            this.logger.debug(`CORS Access-Control-Request-Method: ` +
                         `${requestMethod}`);
-            console.log(`CORS Access-Control-Request-Headers: ` +
+            this.logger.debug(`CORS Access-Control-Request-Headers: ` +
                         `${requestHeaders}`);
             response.setHeader("Access-Control-Allow-Origin", origin);
             response.setHeader("Access-Control-Allow-Methods",
@@ -89,7 +92,7 @@ class RestServer {
     }
 
     handle(request: IncomingMessage, response: ServerResponse): void {
-        console.log(`${request.method} - ${request.url}`);
+        this.logger.info(`${request.method} - ${request.url}`);
         try {
             // Handle CORS
             if (request.method == "OPTIONS") {
@@ -128,8 +131,8 @@ class RestServer {
                 adapter.handle(request, response, uriElements);
             }
         } catch (error) {
-            console.log("Caught at handle()");
-            AdapterError.toResponse(error, response);
+            this.logger.error("Caught at handle()");
+            AdapterError.toResponse(this.logger, error, response);
         }
     }
 }
@@ -149,6 +152,8 @@ export class RestServerWorker extends DaemonWorker {
     server: Cfg<RestServer>;
     ports: number[];
     adapters: AdapterRefSpec[];
+    running: boolean;
+    logger: Logger;
 
     constructor(config: TypeCfg<RestServerWorkerSpec>,
                 blueprints: Map<string, any>) {
@@ -157,10 +162,14 @@ export class RestServerWorker extends DaemonWorker {
         this.ports = config.spec.ports;
         this.adapters = config.spec.adapters;
         this.server = new Cfg("server");
+        this.running = false;
+        this.logger = new Logger(`server/${this.name}`);
     }
 
     configure(configuration: IConfiguration): void {
-        this.server.v = new RestServer(configuration, this.adapters);
+        this.logger.configure(configuration);
+        this.server.v = new RestServer(
+            this.logger, configuration, this.adapters);
         configuration.registerAsyncTask(this);
     }
 
@@ -177,7 +186,7 @@ export class RestServerWorker extends DaemonWorker {
     }
 
     start(): Promise<any> {
-        console.log("Starting REST server...");
+        this.logger.log("Starting REST server...");
         return new Promise<void>((resolve, reject) => {
             if (!this.server.isSet()) {
                 reject(new RestServerError(
@@ -186,9 +195,10 @@ export class RestServerWorker extends DaemonWorker {
             } else {
                 let portIndex = 0;
                 this.server.v.httpServer.on("listening", () => {
-                    console.log(
+                    this.logger.log(
                         `Server '${this.name}' listening on port ` +
                         `${this.ports.at(portIndex) || "????"}`);
+                    this.running = true;
                     resolve();
                 });
                 this.server.v.httpServer.on("error", (error) => {
@@ -206,7 +216,8 @@ export class RestServerWorker extends DaemonWorker {
                                 `available one`));
                         }
                     } else {
-                        console.log(`Server '${this.name}' error: ${error}`);
+                        this.logger.log(
+                            `Server '${this.name}' error: ${error}`);
                         reject(error);
                     }
                 });
@@ -217,15 +228,15 @@ export class RestServerWorker extends DaemonWorker {
 
     stop(): Promise<any> {
         return new Promise<void>((resolve, reject) => {
-            if (this.server.isSet()) {
+            if (this.server.isSet() && this.running) {
                 this.server.v.httpServer.close((error) => {
                     if (error) {
-                        console.log(
+                        this.logger.error(
                             `Server '${this.name}' cannot close due to: ` +
                             `${error}`);
                         reject(error);
                     } else {
-                        console.log(`Server '${this.name}' closed`);
+                        this.logger.log(`Server '${this.name}' closed`);
                         resolve();
                     }
                 });

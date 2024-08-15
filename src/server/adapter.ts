@@ -21,9 +21,12 @@ import { IncomingMessage, IncomingHttpHeaders, ServerResponse } from "http";
 
 import {
     _IError, Entity, Cfg, DaemonWorker, IService, IPolicyConfiguration,
-    TypeCfg, ClassSpec, ICache, IConfiguration, Persona, Row, Query, Filter,
-    OrderBy, Collection, IResultSet, DeferredToken, JsonObject
+    TypeCfg, ClassSpec, IConfiguration, Persona, Row, Query, Filter,
+    OrderBy, Collection, IResultSet, DeferredToken, JsonObject, Logger,
+    IContext
 } from "../base/core.js";
+
+import { ICache } from "./cache.js";
 
 import { SessionContext, ISessionBackendService } from "../base/session.js";
 
@@ -47,7 +50,7 @@ function toRestError(statusCode: number, type: string, message:string,
 
 export function getHeader(headers: IncomingHttpHeaders,
                           key: string): string | undefined {
-    const value = headers[key];
+    const value = headers[key.toLowerCase()];
     if (value) {
         if (Array.isArray(value)) {
             return value[0];
@@ -136,7 +139,8 @@ export class AdapterError extends _IError {
         super(code || 500, message, options);
     }
 
-    static toResponse(exc: unknown, response: ServerResponse): void {
+    static toResponse(logger: Logger, exc: unknown,
+                      response: ServerResponse): void {
         let msg;
         let statusCode = 500;
         if (exc instanceof _IError) {
@@ -169,8 +173,8 @@ export class AdapterError extends _IError {
         } else {
             msg = toRestError(statusCode, typeof exc, `${exc}`);
         }
-        console.log(msg);
-        console.log(exc);
+        logger.error(msg);
+        logger.error(exc);
         response.statusCode = statusCode;
         response.end(msg);
     }
@@ -194,11 +198,13 @@ export type SessionAwareAdapterSpec = AdapterSpec & {
 export class BaseAdapter extends DaemonWorker implements IAdapter {
     readonly name: string;
     source: Cfg<IService>;
+    logger: Logger;
 
     constructor(config: TypeCfg<AdapterSpec>, blueprints: Map<string, any>) {
         super(config, blueprints);
         this.name = config.metadata.name;
         this.source = new Cfg(config.spec.source);
+        this.logger = new Logger(`adapter/${this.name}`);
     }
 
     get isAdapter(): boolean {
@@ -208,6 +214,7 @@ export class BaseAdapter extends DaemonWorker implements IAdapter {
     configure(configuration: IConfiguration): void {
         super.configure(configuration);
         this.source.v = configuration.getSource(this.source.name).service;
+        this.logger.configure(configuration);
     }
 
     protected async payloadHandler(payload: JsonObject,
@@ -234,11 +241,11 @@ export class BaseAdapter extends DaemonWorker implements IAdapter {
             }
             this.payloadHandler(json_obj, request, response, resource, id)
             .catch((error) => {
-                AdapterError.toResponse(error, response);
+                AdapterError.toResponse(this.logger, error, response);
             });
         });
         request.on("error", (error) => {
-            AdapterError.toResponse(error, response);
+            AdapterError.toResponse(this.logger, error, response);
         });
     }
 
@@ -307,12 +314,12 @@ export class SessionAwareAdapter extends BaseAdapter {
                 `cached sessionContext expired: ${context.expiry}`);
             this.sessionCache.v.delete(sessionId);
             // Session expired, delete it, no need to 'await' it.
-            this.sessionBackend.v.deleteSession(sessionId);
+            this.sessionBackend.v.deleteSession(this.logger, sessionId);
             throw new AdapterError("Session expired", 401);
         }
         if (!context) {
-            const row = await this.sessionBackend.v.getSessionContext(
-                sessionId);
+            const row = await this.sessionBackend.v.getSession(
+                this.logger, sessionId);
             const personaName = row.get("persona");
             const persona = this.personas.v.get(personaName);
             if (!persona) {
@@ -343,35 +350,33 @@ export class EntityAdapter extends SessionAwareAdapter {
         this.entities.v = configuration.entities;
     }
 
-    async getOne(request: IncomingMessage, response: ServerResponse,
-                 entity: Entity, id: string, version?: string) : Promise<void> {
-        try {
-            const context = await this.pullContext(request);
-            const resource = `entity/${entity.name}`;
-            this.policyConfig.v.guardResource(context, resource, "get");
-            const row = await this.source.v.getOne(entity, id, version);
-            if (row && !row.empty) {
-                this.policyConfig.v.guardRow(context, resource, "get", row);
-                response.end(JSON.stringify(Row.rowToData(row)));
-            } else {
-                respondWithRestError(
-                    response, 404, "NotFound", `${entity.name} : ${id}`);
-            }
-        } catch (error) {
-            AdapterError.toResponse(error, response);
+    async getOne(context: IContext, request: IncomingMessage,
+                 response: ServerResponse, entity: Entity, id: string,
+                 version?: string) : Promise<void> {
+        const resource = `entity/${entity.name}`;
+        this.policyConfig.v.guardResource(context, resource, "get");
+        const row = await this.source.v.getOne(
+            this.logger, context, entity, id, version);
+        if (row && !row.empty) {
+            this.policyConfig.v.guardRow(context, resource, "get", row);
+            response.end(JSON.stringify(Row.rowToData(row)));
+        } else {
+            respondWithRestError(
+                response, 404, "NotFound", `${entity.name} : ${id}`);
         }
     }
 
-    async getQuery(request: IncomingMessage, response: ServerResponse,
-                   entity: Entity, queryStr: string): Promise<void> {
+    async getQuery(context: IContext, request: IncomingMessage,
+                   response: ServerResponse, entity: Entity,
+                   queryStr: string): Promise<void> {
 
-        console.log(`Entity: ${entity.name}; query: ${queryStr}`);
+        this.logger.debug(`Entity: ${entity.name}; query: ${queryStr}`);
         try {
-            const context = await this.pullContext(request);
             const resource = `entity/${entity.name}`;
             this.policyConfig.v.guardResource(context, resource, "get");
             const query = stringToQuery(queryStr);
-            const resultSet = await this.source.v.getQuery(entity, query);
+            const resultSet = await this.source.v.getQuery(
+                this.logger, context, entity, query);
             this.policyConfig.v.guardResultSet(context, resource, resultSet);
             resultSet.rewind();
             const result: any[] = [];
@@ -381,7 +386,7 @@ export class EntityAdapter extends SessionAwareAdapter {
             }
             response.end(JSON.stringify(result));
         } catch (error) {
-            AdapterError.toResponse(error, response);
+            AdapterError.toResponse(this.logger, error, response);
         }
     }
 
@@ -395,53 +400,59 @@ export class EntityAdapter extends SessionAwareAdapter {
          * GET         e entity uuid   ?     rev=1-xxx  Get specific version
          * GET         e entity  ?   filter             Query
          */
-        if (uriElements.length == 2) {
-            try {
-                const context = await this.pullContext(request);
+        try {
+            const context = await this.pullContext(request);
+            if (uriElements.length == 2) {
                 const resource = `entity/${entity.name}`;
                 this.policyConfig.v.guardResource(context, resource, "get");
-                const maxseq = await this.source.v.getSequenceId(entity);
+                const maxseq = await this.source.v.getSequenceId(
+                    this.logger, context, entity);
                 const result = {
                     "instance_start_time": "0",
                     "update_seq": maxseq
                 };
                 response.end(JSON.stringify(result));
-            } catch (error) {
-                AdapterError.toResponse(error, response);
+            } else if (uriElements.length == 3) {
+                await this.getOne(
+                    context, request, response, entity, uriElements[2]);
+            } else if (uriElements.length == 4 && uriElements[2] == "?") {
+                const query = decodeURIComponent(uriElements[3]);
+                this.getQuery(
+                    context, request, response, entity, query);
+            } else if (uriElements.length == 5 && uriElements[3] == "?" &&
+                      uriElements[4].startsWith("rev=")) {
+                const version = uriElements[4].substring("rev=".length);
+                await this.getOne(
+                    context, request, response, entity, uriElements[2],
+                    version);
+            } else {
+                throw new AdapterError(
+                    `Invalid request: invalid URI components for GET`);
             }
-        } else if (uriElements.length == 3) {
-            this.getOne(request, response, entity, uriElements[2]);
-        } else if (uriElements.length == 4 && uriElements[2] == "?") {
-            const query = decodeURIComponent(uriElements[3]);
-            this.getQuery(request, response, entity, query);
-        } else if (uriElements.length == 5 && uriElements[3] == "?" &&
-                  uriElements[4].startsWith("rev=")) {
-            const version = uriElements[4].substring("rev=".length);
-            this.getOne(request, response, entity, uriElements[2],
-                               version);
-        } else {
-            throw new AdapterError(
-                `Invalid request: invalid URI components for GET`);
+        } catch (error) {
+            AdapterError.toResponse(this.logger, error, response);
         }
     }
 
     async delete(request: IncomingMessage, response: ServerResponse,
                  entity: Entity, id: string, version: string) : Promise<void> {
         try {
-            const resource = `entity/${entity.name}`;
             const context = await this.pullContext(request);
+            const resource = `entity/${entity.name}`;
             this.policyConfig.v.guardResource(context, resource, "delete");
-            const row = await this.source.v.getOne(entity, id, version);
+            const row = await this.source.v.getOne(
+                this.logger, context, entity, id, version);
             if (row && !row.empty) {
                 this.policyConfig.v.guardRow(context, resource, "delete", row);
-                await this.source.v.delete(entity, id, version, context);
+                await this.source.v.delete(
+                    this.logger, context, entity, id, version);
                 response.end(`{"id": "${id}}"`);
             } else {
                 respondWithRestError(
                     response, 404, "NotFound", `${entity.name} : ${id}`);
             }
         } catch(error) {
-            AdapterError.toResponse(error, response);
+            AdapterError.toResponse(this.logger, error, response);
         }
     }
 
@@ -462,9 +473,11 @@ export class EntityAdapter extends SessionAwareAdapter {
             this.policyConfig.v.guardRow(context, policyTarget, action, row);
             let output: Row;
             if (id) {
-                output = await this.source.v.put(entity, id, row, context);
+                output = await this.source.v.put(
+                    this.logger, context, entity, id, row);
             } else {
-                output = await this.source.v.post(entity, row, context);
+                output = await this.source.v.post(
+                    this.logger, context, entity, row);
             }
             response.end(JSON.stringify(Row.rowToData(output)));
         } else {
@@ -528,7 +541,7 @@ export class EntityAdapter extends SessionAwareAdapter {
                         `Invalid Entity request: ${request.method}`, 400);
             }
         } catch (error) {
-            AdapterError.toResponse(error, response);
+            AdapterError.toResponse(this.logger, error, response);
         }
     }
 }
@@ -557,7 +570,8 @@ export class CollectionAdapter extends SessionAwareAdapter {
             let resultSet: IResultSet;
             if (uriElements.length > 3) {
                 const queryStr = decodeURIComponent(uriElements[3]);
-                console.log(`Collection: ${collection.name}; query: ${queryStr}`);
+                this.logger.info(
+                    `Collection: ${collection.name}; query: ${queryStr}`);
                 const query = stringToQuery(queryStr);
                 resultSet = await collection.query(context, query);
             } else {
@@ -572,7 +586,7 @@ export class CollectionAdapter extends SessionAwareAdapter {
             }
             response.end(JSON.stringify(result));
         } catch (error) {
-            AdapterError.toResponse(error, response);
+            AdapterError.toResponse(this.logger, error, response);
         }
     }
 
@@ -606,12 +620,12 @@ export class GeneratorAdapter extends SessionAwareAdapter {
     async handleGenerator(request: IncomingMessage, response: ServerResponse,
                           uriElements: string[]): Promise<void> {
         try {
-            await this.pullContext(request);
+            const context = await this.pullContext(request);
             const nextval = await this.source.v.getGeneratorNext(
-                uriElements[1]);
+                this.logger, context, uriElements[1]);
             response.end(JSON.stringify({ "nextval": nextval }));
         } catch (error) {
-            AdapterError.toResponse(error, response);
+            AdapterError.toResponse(this.logger, error, response);
         }
     }
 
@@ -651,7 +665,8 @@ export class QueryOneAdapter extends SessionAwareAdapter {
             this.policyConfig.v.guardResource(context, resource, "get");
             const filter = new Filter();
             filter.parseParameters(decodeURIComponent(uriElements[3]));
-            const row = await this.source.v.getQueryOne(entity, filter);
+            const row = await this.source.v.getQueryOne(
+                this.logger, context, entity, filter);
             if (row && !row.empty) {
                 this.policyConfig.v.guardRow(context, resource, "get", row);
                 response.end(JSON.stringify(Row.rowToData(row)));
@@ -660,7 +675,7 @@ export class QueryOneAdapter extends SessionAwareAdapter {
                     response, 404, "NotFound", `${entity.name}`);
             }
         } catch (error) {
-            AdapterError.toResponse(error, response);
+            AdapterError.toResponse(this.logger, error, response);
         }
     }
 
@@ -689,59 +704,46 @@ export class QueryOneAdapter extends SessionAwareAdapter {
 
 export class TokenAdapter extends SessionAwareAdapter {
 
-    handleQueryToken(uriElements: string[], response: ServerResponse): void {
-        const query = uriElements[2];
-        const queryElements = query.split("&");
-        if (queryElements.length != 5) {
-            throw new AdapterError("Invalid Token GET query request", 400);
-        }
-        this.source.v.queryDeferredToken(
-            queryElements[0], queryElements[1], queryElements[2],
-            queryElements[3], queryElements[4])
-        .then((token) => {
+    async handleQueryToken(request: IncomingMessage, response: ServerResponse,
+                           uriElements: string[]): Promise<void> {
+        try {
+            const context = await this.pullContext(request);
+            const query = uriElements[2];
+            const queryElements = query.split("&");
+            if (queryElements.length != 5) {
+                throw new AdapterError("Invalid Token GET query request", 400);
+            }
+            const token = await this.source.v.queryDeferredToken(
+                this.logger, context,
+                queryElements[0], queryElements[1], queryElements[2],
+                queryElements[3], queryElements[4]);
             if (token) {
-                return JSON.stringify(token);
+                response.end(JSON.stringify(token));
             } else {
-                const statusCode = 404;
-                const msg = toRestError(
-                    statusCode, "NotFound",
+                respondWithRestError(
+                    response, 404, "NotFound",
                     `${queryElements[1]}.${queryElements[2]}: ` +
                     `${queryElements[5]}`);
-                response.statusCode = statusCode;
-                return msg;
             }
-        })
-        .then((msg) => {
-            if (msg) {
-                response.end(msg);
-            }
-        })
-        .catch((error) => {
-            AdapterError.toResponse(error, response);
-        });
+        } catch (error) {
+            AdapterError.toResponse(this.logger, error, response);
+        }
     }
 
-    handleGetToken(tokenUuid: string, response: ServerResponse): void {
-        this.source.v.getDeferredToken(tokenUuid)
-        .then((token) => {
+    async handleGetToken(request: IncomingMessage, response: ServerResponse,
+                         tokenUuid: string): Promise<void> {
+        try {
+            const context = await this.pullContext(request);
+            const token = await this.source.v.getDeferredToken(
+                this.logger, context, tokenUuid);
             if (token) {
-                return JSON.stringify(token);
+                response.end(JSON.stringify(token));
             } else {
-                const statusCode = 404;
-                const msg = toRestError(
-                    statusCode, "NotFound", tokenUuid);
-                response.statusCode = statusCode;
-                return msg;
+                respondWithRestError(response, 404, "NotFound", tokenUuid);
             }
-        })
-        .then((msg) => {
-            if (msg) {
-                response.end(msg);
-            }
-        })
-        .catch((error) => {
-            AdapterError.toResponse(error, response);
-        });
+        } catch (error) {
+            AdapterError.toResponse(this.logger, error, response);
+        }
     }
 
     protected async payloadHandler(payload: JsonObject,
@@ -754,7 +756,8 @@ export class TokenAdapter extends SessionAwareAdapter {
         if (!token.updatedby || !token.updated) {
             throw new AdapterError("Invalid Token", 400);
         }
-        const result = await this.source.v.putDeferredToken(token, context);
+        const result = await this.source.v.putDeferredToken(
+            this.logger, context, token);
         response.end(JSON.stringify({ wait: result }));
     }
 
@@ -772,9 +775,11 @@ export class TokenAdapter extends SessionAwareAdapter {
         switch (request.method) {
             case "GET":
                 if (uriElements.length == 2) {
-                    return this.handleGetToken(uriElements[1], response);
+                    this.handleGetToken(request, response, uriElements[1]);
+                    return;
                 } else if (uriElements.length == 3 && uriElements[1] == "?") {
-                    return this.handleQueryToken(uriElements, response);
+                    this.handleQueryToken(request, response, uriElements);
+                    return;
                 } else {
                     throw new AdapterError("Invalid Token GET request", 400);
                 }

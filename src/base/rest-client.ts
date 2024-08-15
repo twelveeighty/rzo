@@ -20,7 +20,8 @@
 import {
     Entity, IService, IResultSet, Query, MemResultSet, EmptyResultSet,
     Filter, Collection, IContext, Row, TypeCfg, DeferredToken, Source,
-    ClassSpec, IConfiguration, Cfg, Authenticator, IAuthenticator, Persona
+    ClassSpec, IConfiguration, Cfg, Authenticator, IAuthenticator, Persona,
+    Logger
 } from "./core.js";
 
 import { SessionContext } from "./session.js";
@@ -60,9 +61,10 @@ export class RestClient implements IService, IAuthenticator {
         this.personas.v = configuration.personas;
     }
 
-    async getDeferredToken(tokenUuid: string): Promise<DeferredToken | null> {
+    async getDeferredToken(logger: Logger, context: IContext,
+                           tokenUuid: string): Promise<DeferredToken | null> {
         const targetUrl = `${this.url}/t/${tokenUuid}`;
-        console.log(`fetch GET - ${targetUrl}`);
+        logger.info(`fetch GET - ${targetUrl}`);
         const response = await fetch(targetUrl);
         if (!response.ok) {
             if (response.status == 404) {
@@ -75,13 +77,14 @@ export class RestClient implements IService, IAuthenticator {
         return token;
     }
 
-    async queryDeferredToken(parent: string, contained: string,
-                             parentField: string, containedField: string,
+    async queryDeferredToken(logger: Logger, context: IContext, parent: string,
+                             contained: string, parentField: string,
+                             containedField: string,
                              id: string): Promise<DeferredToken | null> {
         const targetUrl =
             `${this.url}/t?${parent}&${contained}&${parentField}&` +
             `${containedField}&${id}`;
-        console.log(`fetch GET - ${targetUrl}`);
+        logger.info(`fetch GET - ${targetUrl}`);
         const response = await fetch(targetUrl);
         if (!response.ok) {
             if (response.status == 404) {
@@ -94,10 +97,10 @@ export class RestClient implements IService, IAuthenticator {
         return token;
     }
 
-    async putDeferredToken(token: DeferredToken,
-                           context: IContext): Promise<number> {
+    async putDeferredToken(logger: Logger, context: IContext,
+                     token: DeferredToken): Promise<number> {
         if (!context.sessionId) {
-            throw new RestClientError("Context and/or Session ID missing");
+            throw new RestClientError("Session ID missing");
         }
         const targetUrl = `${this.url}/t/${token.token}`;
         const payload = JSON.stringify(token);
@@ -110,7 +113,7 @@ export class RestClient implements IService, IAuthenticator {
         };
         fetchRequest.headers.set("rzo-sessionid", context.sessionId);
 
-        console.log(`fetch PUT - ${targetUrl}`);
+        logger.info(`fetch PUT - ${targetUrl}`);
         const response = await fetch(targetUrl, fetchRequest);
         if (!response.ok) {
             const body = await response.text();
@@ -121,13 +124,25 @@ export class RestClient implements IService, IAuthenticator {
         return row.has("wait") ? row.get("wait") : 0;
     }
 
-    async getGeneratorNext(generatorName: string,
-                           context?: IContext): Promise<string> {
-        if (!context?.sessionId) {
-            throw new RestClientError("Context and/or Session ID missing");
+    async getDBInfo(logger: Logger, context: IContext): Promise<Row> {
+        const targetUrl = this.url;
+        logger.info(`fetch GET - ${targetUrl}`);
+        const response = await fetch(targetUrl);
+        if (!response.ok) {
+            throw new RestClientError(
+                `fetch returned status code ${response.status}`);
+        }
+        const data = await response.json();
+        return Row.dataToRow(data);
+    }
+
+    async getGeneratorNext(logger: Logger, context: IContext,
+                           generatorName: string): Promise<string> {
+        if (!context.sessionId) {
+            throw new RestClientError("Session ID missing");
         }
         const targetUrl = this.url + "/g/" + generatorName;
-        console.log(`fetch GET - ${targetUrl}`);
+        logger.info(`fetch GET - ${targetUrl}`);
         const response = await fetch(
             targetUrl, { headers: { "rzo-sessionid": context.sessionId } });
         if (!response.ok) {
@@ -143,9 +158,10 @@ export class RestClient implements IService, IAuthenticator {
         return "" + row.get("nextval");
     }
 
-    async getSequenceId(entity: Entity): Promise<string> {
+    async getSequenceId(logger: Logger, context: IContext,
+                        entity: Entity): Promise<string> {
         const targetUrl = `${this.url}/e/${entity.name}`;
-        console.log(`fetch GET - ${targetUrl}`);
+        logger.info(`fetch GET - ${targetUrl}`);
         const response = await fetch(targetUrl);
         if (!response.ok) {
             const body = await response.text();
@@ -155,10 +171,10 @@ export class RestClient implements IService, IAuthenticator {
         return <string>(data["update_seq"]);
     }
 
-    async getQueryOne(entity: Entity, filter: Filter,
-                      context?: IContext): Promise<Row> {
-        if (!context?.sessionId) {
-            throw new RestClientError("Context and/or Session ID missing");
+    async getQueryOne(logger: Logger, context: IContext, entity: Entity,
+                      filter: Filter): Promise<Row> {
+        if (!context.sessionId) {
+            throw new RestClientError("Session ID missing");
         }
         if (filter.sealed) {
             throw new RestClientError(
@@ -171,7 +187,7 @@ export class RestClient implements IService, IAuthenticator {
         const targetUrl = `${this.url}/o/${entity.name}` +
             `${filter.toParameters(true)}`;
 
-        console.log(`fetch GET - ${targetUrl}`);
+        logger.info(`fetch GET - ${targetUrl}`);
         const response = await fetch(
             targetUrl, { headers: { "rzo-sessionid": context!.sessionId } });
         if (!response.ok) {
@@ -182,10 +198,10 @@ export class RestClient implements IService, IAuthenticator {
         return Row.dataToRow(data, entity);
     }
 
-    async getOne(entity: Entity, id: string, rev?: string,
-                 context?: IContext): Promise<Row> {
-        if (!context?.sessionId) {
-            throw new RestClientError("Context and/or Session ID missing");
+    async getOne(logger: Logger, context: IContext, entity: Entity, id: string,
+                 rev?: string): Promise<Row> {
+        if (!context.sessionId) {
+            throw new RestClientError("Session ID missing");
         }
         let targetUrl;
         if (rev) {
@@ -193,7 +209,7 @@ export class RestClient implements IService, IAuthenticator {
         } else {
             targetUrl = `${this.url}/e/${entity.name}/${id}`;
         }
-        console.log(`fetch GET - ${targetUrl}`);
+        logger.info(`fetch GET - ${targetUrl}`);
         const response = await fetch(
             targetUrl, { headers: { "rzo-sessionid": context!.sessionId } });
         if (!response.ok) {
@@ -233,10 +249,11 @@ export class RestClient implements IService, IAuthenticator {
         return result;
     }
 
-    async queryCollection(collection: Collection, context?: IContext,
+    async queryCollection(logger: Logger, context: IContext,
+                          collection: Collection,
                           query?: Query): Promise<IResultSet> {
-        if (!context?.sessionId) {
-            throw new RestClientError("Context and/or Session ID missing");
+        if (!context.sessionId) {
+            throw new RestClientError("Session ID missing");
         }
         let targetUrl = this.url + "/c/" + collection.name;
         let firstTerm = true;
@@ -262,7 +279,7 @@ export class RestClient implements IService, IAuthenticator {
         };
         fetchRequest.headers.set("rzo-sessionid", context.sessionId);
 
-        console.log(`fetch collection GET - ${targetUrl}`);
+        logger.info(`fetch collection GET - ${targetUrl}`);
         const response = await fetch(targetUrl, fetchRequest);
         if (!response.ok) {
             if (response.status == 404) {
@@ -280,14 +297,14 @@ export class RestClient implements IService, IAuthenticator {
         return new MemResultSet(jsonArray);
     }
 
-    async getQuery(entity: Entity, query: Query,
-                   context?: IContext): Promise<IResultSet> {
-        if (!context?.sessionId) {
-            throw new RestClientError("Context and/or Session ID missing");
+    async getQuery(logger: Logger, context: IContext, entity: Entity,
+             query: Query): Promise<IResultSet> {
+        if (!context.sessionId) {
+            throw new RestClientError("Session ID missing");
         }
         const targetUrl = this.url + "/e/" + entity.name +
             "?" + this.queryParams(query);
-        console.log(`fetch GET - ${targetUrl}`);
+        logger.info(`fetch GET - ${targetUrl}`);
         const response = await fetch(
             targetUrl, { headers: { "rzo-sessionid": context!.sessionId } });
         if (!response.ok) {
@@ -306,10 +323,10 @@ export class RestClient implements IService, IAuthenticator {
         return new MemResultSet(jsonArray);
     }
 
-    async put(entity: Entity, id: string, row: Row,
-              context: IContext): Promise<Row> {
+    async put(logger: Logger, context: IContext, entity: Entity, id: string,
+              row: Row): Promise<Row> {
         if (!context.sessionId) {
-            throw new RestClientError("Context and/or Session ID missing");
+            throw new RestClientError("Session ID missing");
         }
         if (entity.immutable) {
             throw new RestClientError(`Entity '${entity.name}' is immutable`);
@@ -326,7 +343,7 @@ export class RestClient implements IService, IAuthenticator {
             headers: headers
         };
         const targetUrl = this.url + "/e/" + entity.name + "/" + id;
-        console.log(`fetch PUT - ${targetUrl}`);
+        logger.info(`fetch PUT - ${targetUrl}`);
         const response = await fetch(targetUrl, fetchRequest);
         if (!response.ok) {
             const body = await response.text();
@@ -342,9 +359,10 @@ export class RestClient implements IService, IAuthenticator {
         return result;
     }
 
-    async post(entity: Entity, row: Row, context: IContext): Promise<Row> {
+    async post(logger: Logger, context: IContext, entity: Entity,
+         row: Row): Promise<Row> {
         if (!context.sessionId) {
-            throw new RestClientError("Context and/or Session ID missing");
+            throw new RestClientError("Session ID missing");
         }
         const jsonData = Row.rowToData(row);
         const payload = JSON.stringify(jsonData);
@@ -358,7 +376,7 @@ export class RestClient implements IService, IAuthenticator {
             headers: headers
         };
         const targetUrl = this.url + "/e/" + entity.name;
-        console.log(`fetch POST - ${targetUrl}`);
+        logger.info(`fetch POST - ${targetUrl}`);
         const response = await fetch(targetUrl, fetchRequest);
         if (!response.ok) {
             const body = await response.text();
@@ -374,14 +392,15 @@ export class RestClient implements IService, IAuthenticator {
         return result;
     }
 
-    async deleteImmutable(entity: Entity, id: string): Promise<void> {
+    async deleteImmutable(logger: Logger, context: IContext, entity: Entity,
+                          id: string): Promise<void> {
         throw new RestClientError("deleteImmutable() is forbidden");
     }
 
-    async delete(entity: Entity, id: string, version: string,
-                 context: IContext): Promise<void> {
+    async delete(logger: Logger, context: IContext, entity: Entity, id: string,
+                 rev: string): Promise<void> {
         if (!context.sessionId) {
-            throw new RestClientError("Context and/or Session ID missing");
+            throw new RestClientError("Session ID missing");
         }
         const headers = new Headers();
         headers.set("rzo-sessionid", context.sessionId);
@@ -390,8 +409,8 @@ export class RestClient implements IService, IAuthenticator {
             method: "delete",
             headers: headers
         };
-        const targetUrl = `${this.url}/e/${entity.name}/${id}?rev=${version}`;
-        console.log(`fetch DELETE - ${targetUrl}`);
+        const targetUrl = `${this.url}/e/${entity.name}/${id}?rev=${rev}`;
+        logger.info(`fetch DELETE - ${targetUrl}`);
         const response = await fetch(targetUrl, fetchRequest);
         if (!response.ok) {
             const body = await response.text();
@@ -403,7 +422,7 @@ export class RestClient implements IService, IAuthenticator {
         return true;
     }
 
-    async resetAuthentication(row: Row): Promise<Row> {
+    async resetAuthentication(logger: Logger, row: Row): Promise<Row> {
         /* This is the client call to:
          * server.authentication.RZOOneTimeAdapter.createOneTimeLogin()
          * GET https:/host/otl?user=WILSONB
@@ -414,7 +433,7 @@ export class RestClient implements IService, IAuthenticator {
             throw new RestClientError("Missing 'user' in passed row");
         }
         const targetUrl = `${this.url}/otl?user=${row.getString("user")}`;
-        console.log(`fetch GET - ${targetUrl}`);
+        logger.info(`fetch GET - ${targetUrl}`);
         const response = await fetch(targetUrl);
         if (!response.ok) {
             const body = await response.text();
@@ -430,7 +449,7 @@ export class RestClient implements IService, IAuthenticator {
         return result;
     }
 
-    async oneTimeLogin(row: Row): Promise<IContext> {
+    async oneTimeLogin(logger: Logger, row: Row): Promise<IContext> {
         /* This is the client call to:
          * server.authentication.RZOOneTimeAdapter.authenticate()
          * POST https:/host/otl
@@ -449,7 +468,7 @@ export class RestClient implements IService, IAuthenticator {
             headers: headers
         };
         const targetUrl = this.url + "/otl";
-        console.log(`fetch POST - ${targetUrl}`);
+        logger.info(`fetch POST - ${targetUrl}`);
         const response = await fetch(targetUrl, fetchRequest);
         if (!response.ok) {
             const body = await response.text();
@@ -470,7 +489,8 @@ export class RestClient implements IService, IAuthenticator {
         return new SessionContext(result, persona);
     }
 
-    async createLogin(row: Row, context: IContext): Promise<Row> {
+    async createLogin(logger: Logger, context: IContext,
+                      row: Row): Promise<Row> {
         /* This is the client call to:
          * server.authentication.RZOOneTimeAdapter.createLogin()
          * PUT https:/host/otl
@@ -480,7 +500,7 @@ export class RestClient implements IService, IAuthenticator {
          */
         if (!context.sessionId) {
             throw new RestClientError(
-                "One time Context and/or Session ID missing");
+                "One time Session ID missing");
         }
         const jsonData = Row.rowToData(row);
         const payload = JSON.stringify(jsonData);
@@ -494,7 +514,7 @@ export class RestClient implements IService, IAuthenticator {
             headers: headers
         };
         const targetUrl = this.url + "/otl";
-        console.log(`fetch PUT - ${targetUrl}`);
+        logger.info(`fetch PUT - ${targetUrl}`);
         const response = await fetch(targetUrl, fetchRequest);
         if (!response.ok) {
             const body = await response.text();
@@ -508,14 +528,14 @@ export class RestClient implements IService, IAuthenticator {
         return result;
     }
 
-    async login(row: Row): Promise<IContext> {
+    async login(logger: Logger, row: Row): Promise<IContext> {
         const payload = JSON.stringify(Row.rowToData(row));
         const fetchRequest = {
             method: "post",
             body: payload
         };
         const targetUrl = this.url + "/s";
-        console.log(`fetch POST - ${targetUrl}`);
+        logger.info(`fetch POST - ${targetUrl}`);
         const response = await fetch(targetUrl, fetchRequest);
         if (!response.ok) {
             const body = await response.text();
@@ -534,9 +554,9 @@ export class RestClient implements IService, IAuthenticator {
         return new SessionContext(result, persona);
     }
 
-    async logout(context: IContext): Promise<void> {
+    async logout(logger: Logger, context: IContext): Promise<void> {
         if (!context.sessionId) {
-            throw new RestClientError("Context and/or Session ID missing");
+            throw new RestClientError("Session ID missing");
         }
         const headers = new Headers();
         headers.set("rzo-sessionid", context.sessionId);
@@ -546,7 +566,7 @@ export class RestClient implements IService, IAuthenticator {
             headers: headers
         };
         const targetUrl = this.url + "/s";
-        console.log(`fetch DELETE - ${targetUrl}`);
+        logger.info(`fetch DELETE - ${targetUrl}`);
         const response = await fetch(targetUrl, fetchRequest);
         if (!response.ok) {
             const body = await response.text();

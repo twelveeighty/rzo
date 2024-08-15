@@ -19,8 +19,8 @@
 
 import {
     TypeCfg, ClassSpec, EntitySpec, Entity, Field, Source, Persona, Nobody,
-    Collection, AsyncTask, DaemonWorker, IConfiguration, IContext, ICache,
-    IPolicyConfiguration, Authenticator
+    Collection, AsyncTask, DaemonWorker, IConfiguration, IContext,
+    IPolicyConfiguration, Authenticator, Logger, LogLevel, LogThreshold
 } from "./core.js";
 
 import { ClassInfo, Reflection } from "./reflect.js";
@@ -29,6 +29,21 @@ class ConfigError extends Error {
     constructor(message: string, options?: ErrorOptions) {
         super(message, options);
     }
+}
+
+type LoggerConfigSpec = {
+    name: string;
+    level: LogLevel;
+}
+
+type LoggerSpec = {
+    name: string;
+    level: LogThreshold;
+}
+
+type LogConfigurationSpec = ClassSpec & {
+    defaultLevel: LogLevel;
+    loggers: LoggerConfigSpec[];
 }
 
 type ReflectableClass<Target> = { new(config: TypeCfg<ClassSpec>,
@@ -52,6 +67,45 @@ type CollectionClass = { new(config: TypeCfg<ClassSpec>,
 type DaemonWorkerClass = { new(config: TypeCfg<ClassSpec>,
                           blueprints: Map<string, any>): DaemonWorker; };
 
+class LogConfiguration {
+    name: string;
+    defaultThreshold: LogThreshold;
+    loggers: LoggerSpec[];
+
+    constructor() {
+        this.name = "";
+        this.defaultThreshold = 0;
+        this.loggers = [];
+    }
+
+    addLogger(spec: LoggerConfigSpec): void {
+        this.loggers.push({
+            name: spec.name, level: Logger.toThreshold(spec.level)
+        });
+    }
+
+    thresholdFor(name: string): LogThreshold {
+        for (const logger of this.loggers) {
+            if (name.startsWith(logger.name)) {
+                return logger.level;
+            }
+        }
+        return this.defaultThreshold;
+    }
+
+    sort(): void {
+        this.loggers.sort((a, b) => {
+            if (a.name == b.name) {
+                return 0;
+            } else if (a.name < b.name) {
+                return 1;
+            } else {
+                return -1;
+            }
+        });
+    }
+}
+
 /* Bootstraps the metadata configuration.
  */
 export class Configuration implements IConfiguration {
@@ -62,11 +116,11 @@ export class Configuration implements IConfiguration {
     collections: Map<string, Collection>;
     workers: Map<string, DaemonWorker>;
     classes: Map<string, any>;
-    caches: Map<string, ICache>;
     reflection: Reflection;
     json_config: TypeCfg<ClassSpec>[];
     asyncTasks: AsyncTask[];
     _policyConfig?: IPolicyConfiguration;
+    logConfiguration: LogConfiguration;
 
     constructor() {
         this.json_config = [];
@@ -76,10 +130,10 @@ export class Configuration implements IConfiguration {
         this.personas = new Map();
         this.collections = new Map();
         this.workers = new Map();
-        this.caches = new Map();
         this.reflection = new Reflection();
         this.classes = new Map();
         this.asyncTasks = [];
+        this.logConfiguration = new LogConfiguration();
     }
 
     private addClass(className: string, classNames: string[]): void {
@@ -93,6 +147,9 @@ export class Configuration implements IConfiguration {
         for (const config_j of this.json_config) {
             if (!config_j) {
                 break;
+            }
+            if (config_j.kind == "LogConfiguration") {
+                continue;
             }
             // console.log(`Object: ${config_j.metadata.name}`);
             this.addClass(config_j.spec.type, classNames);
@@ -143,6 +200,19 @@ export class Configuration implements IConfiguration {
         collection.set(instanceName, instance);
     }
 
+    setupLogging(config: TypeCfg<LogConfigurationSpec>): void {
+        this.logConfiguration.name = config.metadata.name;
+        this.logConfiguration.defaultThreshold = Logger.toThreshold(
+            config.spec.defaultLevel);
+        for (const loggerSpec of config.spec.loggers) {
+            this.logConfiguration.addLogger(loggerSpec);
+        }
+    }
+
+    getLogThreshold(name: string): LogThreshold {
+        return this.logConfiguration.thresholdFor(name);
+    }
+
     async parse() {
         await this.reflectAllClasses();
         // Create the Entities.
@@ -174,6 +244,10 @@ export class Configuration implements IConfiguration {
                 case "Worker":
                     this.instantiate<DaemonWorker,DaemonWorkerClass>(
                         config_j, this.workers);
+                    break;
+                case "LogConfiguration":
+                    this.setupLogging(
+                        config_j as TypeCfg<LogConfigurationSpec>);
                     break;
             }
         }
@@ -293,6 +367,8 @@ export class Configuration implements IConfiguration {
     private async performBootstrap() {
         await this.parse();
         this.configure();
+        this.logConfiguration.sort();
+        console.log(this.logConfiguration.loggers);
     }
 
     async bootstrap(config: TypeCfg<ClassSpec>[]) {
@@ -340,6 +416,7 @@ class ClientContext {
     }
 }
 
+export const VERSION = "1.0.0";
 export const RZO = new Configuration();
 export const NOCONTEXT = new NobodyContext();
 export const CONTEXT = new ClientContext();

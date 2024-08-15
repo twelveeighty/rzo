@@ -26,7 +26,7 @@ class SchedulerError extends _IError {
 }
 
 export interface ITaskRunner {
-    runTask(row: Row, context: IContext): void;
+    runTask(context: IContext, row: Row): void;
 }
 
 type Task = {
@@ -70,7 +70,7 @@ export class Scheduler {
         while (this._tasks.length && this._tasks[0].due <= now) {
             const task = this._tasks.shift();
             if (task) {
-                this.runner.runTask(task.row, task.context);
+                this.runner.runTask(task.context, task.row);
             }
         }
     }

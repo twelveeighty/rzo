@@ -53,20 +53,21 @@ export class Crew extends Entity {
         return crewMember;
     }
 
-    async getMembers(service: IService, person: string,
+    async getMembers(service: IService, context: IContext, person: string,
                      through: string): Promise<string[]> {
         if (through == "member") {
             const crewMemberEntity = this.getCrewMemberEntity();
             const query = new Query(["crewnum_id"], new Filter().
                                     op("personnum_id", "=", person));
-            const resultSet = await service.getQuery(crewMemberEntity, query);
+            const resultSet = await service.getQuery(
+                this.logger, context, crewMemberEntity, query);
             const result: string[] = [];
             while (resultSet.next()) {
                 result.push("" + resultSet.get("crewnum_id"));
             }
             return result;
         } else {
-            return super.getMembers(service, person, through);
+            return super.getMembers(service, context, person, through);
         }
     }
 }
@@ -85,7 +86,7 @@ export class MapLinkTargetField extends StringField {
     }
 
     async calculate(phase: Phase, state: State,
-                    context?: IContext): Promise<void> {
+                    context: IContext): Promise<void> {
         if (this.mapLinkManual && state.asString(this.mapLinkManual.name)) {
             return;
         }
@@ -120,7 +121,7 @@ export class MapLinkSrcField extends StringField {
     }
 
     async activate(phase: Phase, state: State, fieldState: FieldState,
-                   context?: IContext): Promise<SideEffects> {
+                   context: IContext): Promise<SideEffects> {
         if (phase == "set" && fieldState.dirty) {
             await this.mapLinkTarget.v.calculate(phase, state, context);
             return [this.mapLinkTarget.v.name];
@@ -146,7 +147,7 @@ export class MapLinkManualField extends StringField {
     }
 
     async validate(phase: Phase, state: State, fieldState: FieldState,
-                   context?: IContext): Promise<void> {
+                   context: IContext): Promise<void> {
         await super.validate(phase, state, fieldState, context);
         if (phase == "set" && fieldState.dirtyNotNull) {
              const strValue = fieldState.asString;
@@ -159,7 +160,7 @@ export class MapLinkManualField extends StringField {
     }
 
     async activate(phase: Phase, state: State, fieldState: FieldState,
-                   context?: IContext): Promise<SideEffects> {
+                   context: IContext): Promise<SideEffects> {
         if (phase == "set" && fieldState.dirty) {
             if (fieldState.isNotNull && fieldState.asString) {
                 await this.mapLinkTarget.v.setValue(

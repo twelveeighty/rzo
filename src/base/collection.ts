@@ -67,7 +67,7 @@ export class PersonaCollection extends Collection {
         this.matches.reverse();
     }
 
-    async createFilter(context?: IContext, filter?: Filter): Promise<Filter> {
+    async createFilter(context: IContext, filter?: Filter): Promise<Filter> {
         if (!context) {
             throw new CollectionError(`Collection '${this.name}' requires ` +
                                       `a context `);
@@ -91,9 +91,9 @@ export class PersonaCollection extends Collection {
                                           `'${persona.name}'`);
             }
             const entity = membership.entity;
-            const members = await entity.getMembers(membership.source.service!,
-                                                    userAccountId,
-                                                    membership.through);
+            const members = await entity.getMembers(
+                membership.source.service!, context, userAccountId,
+                membership.through);
             if (members.length == 0) {
                 // no members found, so we purposely return a comparison
                 // with null, which always evaluates to false
@@ -158,7 +158,7 @@ export class ContainedCollection extends Collection {
         }
     }
 
-    async createFilter(context?: IContext, filter?: Filter): Promise<Filter> {
+    async createFilter(context: IContext, filter?: Filter): Promise<Filter> {
         const forCollection = this.for.v;
         const ourTable = this.entity.v.table;
         const pTable = forCollection.entity.v.table;
@@ -222,7 +222,7 @@ export class JoinedCollection extends Collection {
         }
     }
 
-    async createQuery(context?: IContext, query?: Query): Promise<Query> {
+    async createQuery(context: IContext, query?: Query): Promise<Query> {
         const finalFilter = await this.createFilter(context, query?.filter);
         let finalFields =
             (query && !query.selectStar) ?

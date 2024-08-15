@@ -19,69 +19,77 @@
 
 import {
     Row, IService, IContext, IResultSet, EmptyResultSet, Entity, DeferredToken,
-    Collection, Filter, Query, Source, TypeCfg, ClassSpec
+    Collection, Filter, Query, Source, TypeCfg, ClassSpec, Logger
 } from "./core.js";
 
 export class FauxService implements IService {
-    async getGeneratorNext(generatorName: string,
-                           context: IContext): Promise<string> {
+    async getGeneratorNext(logger: Logger, context: IContext,
+                     generatorName: string): Promise<string> {
         return "";
     }
 
-    async getOne(entity: Entity, id: string, rev?: string,
-                 context?: IContext): Promise<Row> {
+    async getOne(logger: Logger, context: IContext, entity: Entity, id: string,
+           rev?: string): Promise<Row> {
         return new Row();
     }
 
-    async getQueryOne(entity: Entity, filter: Filter,
-                      context?: IContext): Promise<Row> {
+    async getQueryOne(logger: Logger, context: IContext, entity: Entity,
+                filter: Filter): Promise<Row> {
         return new Row();
     }
 
-    async queryCollection(collection: Collection, context?: IContext,
-                          query?: Query): Promise<IResultSet> {
+    async queryCollection(logger: Logger, context: IContext, collection: Collection,
+                    query?: Query): Promise<IResultSet> {
         return new EmptyResultSet();
     }
 
-    async getQuery(entity: Entity, query: Query,
-                   context?: IContext): Promise<IResultSet> {
+    async getQuery(logger: Logger, context: IContext, entity: Entity,
+             query: Query): Promise<IResultSet> {
         return new EmptyResultSet();
     }
 
-    async getSequenceId(entity: Entity): Promise<string> {
+    async getSequenceId(logger: Logger, context: IContext,
+                  entity: Entity): Promise<string> {
         return "";
     }
 
-    async put(entity: Entity, id: string, row: Row,
-              context: IContext): Promise<Row> {
+    async put(logger: Logger, context: IContext, entity: Entity, id: string,
+        row: Row): Promise<Row> {
         return new Row();
     }
 
-    async post(entity: Entity, row: Row, context: IContext): Promise<Row> {
+    async post(logger: Logger, context: IContext, entity: Entity,
+         row: Row): Promise<Row> {
         return new Row();
     }
 
-    async delete(entity: Entity, id: string, rev: string,
-                 context: IContext): Promise<void> {
+    async delete(logger: Logger, context: IContext, entity: Entity, id: string,
+           rev: string): Promise<void> {
     }
 
-    async deleteImmutable(entity: Entity, id: string,
-                          context?: IContext): Promise<void> {
+    async deleteImmutable(logger: Logger, context: IContext, entity: Entity,
+                    id: string): Promise<void> {
     }
 
-    async queryDeferredToken(parent: string, contained: string,
-                             parentField: string, containedField: string,
-                             id: string): Promise<DeferredToken | null> {
+    async queryDeferredToken(logger: Logger, context: IContext, parent: string,
+                       contained: string, parentField: string,
+                       containedField: string,
+                       id: string): Promise<DeferredToken | null> {
         return null;
     }
 
-    async getDeferredToken(tokenUuid: string): Promise<DeferredToken | null> {
+    async getDeferredToken(logger: Logger, context: IContext,
+                     tokenUuid: string): Promise<DeferredToken | null> {
         return null;
     }
 
-    async putDeferredToken(token: DeferredToken,
-                           context: IContext): Promise<number> {
+    async putDeferredToken(logger: Logger, context: IContext,
+                     token: DeferredToken): Promise<number> {
         return 0;
+    }
+
+    async getDBInfo(logger: Logger, context: IContext): Promise<Row> {
+        return new Row();
     }
 }
 

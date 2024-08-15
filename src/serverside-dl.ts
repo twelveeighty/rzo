@@ -22,7 +22,7 @@ import { readFile } from "node:fs/promises";
 import { argv } from 'node:process';
 
 import {
-    State, KeyValue, IService, IContext, Entity, SideEffects, Row
+    State, KeyValue, IService, IContext, Entity, SideEffects, Row, Logger
 } from "./base/core.js";
 
 import { RZO } from "./base/configuration.js";
@@ -89,6 +89,10 @@ try {
     const loadData = JSON.parse(fileData) as EntityLoad[];
 
     await RZO.load(configuration);
+
+    const logger = new Logger("client");
+    logger.configure(RZO);
+
     await RZO.startAsyncTasks();
 
     try {
@@ -99,9 +103,8 @@ try {
         if (!service) {
             throw new Error("Invalid source");
         }
-        const context = await authenticator.login(credsRow);
-        console.log(
-            `Session: ${JSON.stringify(context)}`);
+        const context = await authenticator.login(logger, credsRow);
+        logger.log(`Session: ${JSON.stringify(context)}`);
 
         for (const entityCfg of loadData) {
             if (!entityCfg) {
@@ -128,11 +131,12 @@ try {
             }
             const entity = RZO.getEntity(entityCfg.entity);
             if (operation == "post") {
-                const state = await entity.create(service, context);
+                const state = await entity.create(context, service);
                 const validations: Promise<SideEffects>[] = [];
                 for (const fieldCfg of entityCfg.values) {
-                    validations.push(entity.setValue(state, fieldCfg.k,
-                                                     fieldCfg.v, context));
+                    validations.push(
+                        entity.setValue(
+                            state, fieldCfg.k, fieldCfg.v, context));
                 }
                 await Promise.all(validations);
                 await entity.post(service, state, context);
@@ -157,7 +161,7 @@ try {
                 await entity.delete(service, state, context);
             }
         }
-        await authenticator.logout(context);
+        await authenticator.logout(logger, context);
     } finally {
         await RZO.stopAsyncTasks();
     }

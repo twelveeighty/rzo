@@ -185,7 +185,7 @@ export class PasswordField extends StringField {
     }
 
     async validate(phase: Phase, state: State, fieldState: FieldState,
-                   context?: IContext): Promise<void> {
+                   context: IContext): Promise<void> {
         await super.validate(phase, state, fieldState, context);
         if (phase == "set" && fieldState.dirtyNotNull) {
             const clearText = fieldState.asString;
@@ -222,7 +222,7 @@ export class PasswordField extends StringField {
     }
 
     async activate(phase: Phase, state: State, fieldState: FieldState,
-                   context?: IContext): Promise<SideEffects> {
+                   context: IContext): Promise<SideEffects> {
         const sideEffects =
             await super.activate(phase, state, fieldState, context);
         if (phase == "set" && fieldState.dirtyNotNull) {

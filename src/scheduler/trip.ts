@@ -50,20 +50,21 @@ export class SubjectEntity extends Entity {
         return false;
     }
 
-    async getMembers(service: IService, person: string,
+    async getMembers(service: IService, context: IContext, person: string,
                      through: string): Promise<string[]> {
         if (through == "subject") {
             const query = new Query(
                 ["_id"],
                 new Filter().op("useraccountnum_id", "=", person));
-            const resultSet = await service.getQuery(this, query);
+            const resultSet = await service.getQuery(
+                this.logger, context, this, query);
             const result: string[] = [];
             if (resultSet.next()) {
                 result.push("" + resultSet.get("_id"));
             }
             return result;
         } else {
-            return super.getMembers(service, person, through);
+            return super.getMembers(service, context, person, through);
         }
     }
 }
@@ -85,7 +86,7 @@ export class AppointmentTSField extends DateTimeField {
     }
 
     async activate(phase: Phase, state: State, fieldState: FieldState,
-                   context?: IContext): Promise<SideEffects> {
+                   context: IContext): Promise<SideEffects> {
         await super.activate(phase, state, fieldState, context);
         const triptype = state.field("triptype");
         if (phase == "set" && fieldState.dirtyNotNull && triptype.isNotNull &&
@@ -101,7 +102,7 @@ export class AppointmentTSField extends DateTimeField {
 export class ReturnTSField extends DateTimeField {
 
     async validate(phase: Phase, state: State, fieldState: FieldState,
-                   context?: IContext): Promise<void> {
+                   context: IContext): Promise<void> {
 
         await super.validate(phase, state, fieldState, context);
         if (phase == "set" && fieldState.dirtyNotNull) {
@@ -118,7 +119,7 @@ export class ReturnTSField extends DateTimeField {
 export class TripTypeField extends AliasValueList {
 
     async activate(phase: Phase, state: State, fieldState: FieldState,
-                   context?: IContext): Promise<SideEffects> {
+                   context: IContext): Promise<SideEffects> {
         await super.activate(phase, state, fieldState, context);
         if (phase == "set" && fieldState.dirtyNotNull) {
             const returnts = state.field("returnts");
@@ -140,7 +141,7 @@ export class TripTypeField extends AliasValueList {
 export class Trip extends Entity {
 
     async validate(phase: Phase, state: State,
-                   context?: IContext): Promise<void> {
+                   context: IContext): Promise<void> {
 
         await super.validate(phase, state, context);
         const returnts = state.field("returnts");

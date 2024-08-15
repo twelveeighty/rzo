@@ -44,6 +44,8 @@ export class CreateLoginPanel extends BasePanel implements IPanel {
     }
 
     initialize(): void {
+        super.initialize();
+
         this.authenticator.v = RZO.getAuthenticator("auth").service;
 
         this.form.addEventListener("submit", (evt) => {
@@ -55,7 +57,7 @@ export class CreateLoginPanel extends BasePanel implements IPanel {
     private onSubmit(evt: Event): void {
         const row = new Row(
             { "password": this.passwordTxt.value });
-        this.authenticator.v.createLogin(row, CONTEXT.session)
+        this.authenticator.v.createLogin(this.logger, CONTEXT.session, row)
         .then((session) => {
             CONTEXT.reset();
             this.controller.v.show("login-panel");
@@ -99,6 +101,7 @@ export class OneTimeLoginPanel extends BasePanel implements IPanel {
     }
 
     initialize(): void {
+        super.initialize();
         this.authenticator.v = RZO.getAuthenticator("auth").service;
 
         this.form.addEventListener("submit", (evt) => {
@@ -110,7 +113,7 @@ export class OneTimeLoginPanel extends BasePanel implements IPanel {
     private onSubmit(evt: Event): void {
         const row = new Row(
             { "username": this.userTxt.value, "code": this.codeTxt.value });
-        this.authenticator.v.oneTimeLogin(row)
+        this.authenticator.v.oneTimeLogin(this.logger, row)
         .then((session) => {
             CONTEXT.session = session;
             this.controller.v.show("create-password-panel");
@@ -154,6 +157,7 @@ export class PasswordResetPanel extends BasePanel implements IPanel {
     }
 
     initialize(): void {
+        super.initialize();
         this.authenticator.setIf(
             "Authenticator ", RZO.getAuthenticator("auth").service);
 
@@ -165,7 +169,7 @@ export class PasswordResetPanel extends BasePanel implements IPanel {
 
     private onSubmit(evt: Event): void {
         const row = new Row({ "user": this.userTxt.value });
-        this.authenticator.v.resetAuthentication(row)
+        this.authenticator.v.resetAuthentication(this.logger, row)
         .then((resultRow) => {
             this.controller.v.show(
                 "onetimelogin-panel", new PanelData("Row", resultRow));
@@ -226,6 +230,7 @@ export class LoginPanel extends BasePanel implements IPanel {
     }
 
     initialize(): void {
+        super.initialize();
         this.authenticator.v = RZO.getAuthenticator("auth").service;
 
         this.form.addEventListener("submit", (evt) => {
@@ -254,7 +259,7 @@ export class LoginPanel extends BasePanel implements IPanel {
             }
             const credsRow = new Row(
                 { "username": targetUsername, "password": targetPassword });
-            this.authenticator.v.login(credsRow)
+            this.authenticator.v.login(this.logger, credsRow)
             .then((session) => {
                 CONTEXT.session = session;
                 this.welcomeHeading.innerText = targetUsername;

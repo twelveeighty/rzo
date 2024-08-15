@@ -84,6 +84,7 @@ export class RiderViewPanel extends BasePanel implements IPanel {
     }
 
     initialize(): void {
+        super.initialize();
         this.entity.v = RZO.getEntity("rider");
         this.service.v = RZO.getSource("db").service;
         this.tripEntity.v = RZO.getEntity("trip");
@@ -102,7 +103,7 @@ export class RiderViewPanel extends BasePanel implements IPanel {
     private onCreateTrip(evt: Event): void {
         if (this.state) {
             const ridernum = this.state.value("ridernum");
-            this.tripEntity.v.create(this.service.v)
+            this.tripEntity.v.create(CONTEXT.session, this.service.v)
             .then((newTrip) => {
                 this.tripRidernumField.v.setValue(
                     newTrip, ridernum, CONTEXT.session)

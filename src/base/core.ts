@@ -37,14 +37,6 @@ export interface AsyncTask {
     stop(): Promise<any>;
 }
 
-export interface ICache {
-    get isCache(): boolean;
-    set(key: string, value: any): void;
-    get(key: string): any | null;
-    has(key: string): boolean;
-    delete(key: string): void;
-}
-
 export type PolicyAction = "get" | "put" | "post" | "delete";
 
 export interface IPolicyConfiguration {
@@ -62,7 +54,6 @@ export interface IConfiguration {
     authenticators: Map<string, Authenticator>;
     personas: Map<string, Persona>;
     collections: Map<string, Collection>;
-    caches: Map<string, ICache>;
     workers: Map<string, DaemonWorker>;
 
     getCollection(name: string): Collection;
@@ -78,6 +69,8 @@ export interface IConfiguration {
 
     set policyConfig(policyConfig: IPolicyConfiguration);
     get policyConfig(): IPolicyConfiguration | undefined;
+
+    getLogThreshold(name: string): LogThreshold;
 }
 
 export interface IContext {
@@ -93,6 +86,60 @@ export type KeyValue = {
 }
 
 export type JsonObject = { [name: string]: any };
+
+export type LogLevel = "Debug" | "Info" | "Error" | "Never";
+
+//                         Never   Error   Info  Debug
+export type LogThreshold =  0     |  9   |  99  | 999;
+
+export class Logger {
+    readonly name: string;
+    threshold: LogThreshold;
+
+    static toThreshold(level: LogLevel): LogThreshold {
+        switch (level) {
+            case "Error": return 9;
+            case "Info": return 99;
+            case "Debug": return 999;
+            default: return 0;
+        }
+    }
+
+    constructor(name: string) {
+        this.name = name;
+        this.threshold = 999;
+    }
+
+    configure(configuration: IConfiguration): void {
+        this.threshold = configuration.getLogThreshold(this.name);
+    }
+
+    log(msg: any, level?: LogThreshold): void {
+        if (level == undefined) {
+            console.log(msg);
+        } else {
+            if (level <= this.threshold) {
+                console.log(msg);
+            }
+        }
+    }
+
+    error(msg: any): void {
+        this.log(msg, 9);
+    }
+
+    info(msg: any): void {
+        this.log(msg, 99);
+    }
+
+    debug(msg: any): void {
+        this.log(msg, 999);
+    }
+
+    willLog(level: LogLevel): boolean {
+        return Logger.toThreshold(level) <= this.threshold;
+    }
+}
 
 type FilterLogical = "and" | "or";
 type FilterOperator = "=" | "!=" | "<>" | ">" | "<" | ">=" | "<=" | "<@";
@@ -702,36 +749,44 @@ export class MemResultSet implements IResultSet {
 }
 
 export interface IService {
-    getGeneratorNext(generatorName: string, context?: IContext): Promise<string>;
-    getOne(entity: Entity, id: string, rev?: string,
-           context?: IContext): Promise<Row>;
-    getQueryOne(entity: Entity, filter: Filter,
-                context?: IContext): Promise<Row>;
-    queryCollection(collection: Collection,
-                    context?: IContext, query?: Query): Promise<IResultSet>;
-    getQuery(entity: Entity, query: Query,
-             context?: IContext): Promise<IResultSet>;
-    getSequenceId(entity: Entity): Promise<string>;
-    put(entity: Entity, id: string, row: Row, context: IContext): Promise<Row>;
-    post(entity: Entity, row: Row, context: IContext): Promise<Row>;
-    delete(entity: Entity, id: string, rev: string,
-           context: IContext): Promise<void>;
-    deleteImmutable(entity: Entity, id: string,
-                    context?: IContext): Promise<void>;
-    queryDeferredToken(parent: string, contained: string,
-                       parentField: string, containedField: string,
+    getGeneratorNext(logger: Logger, context: IContext,
+                     generatorName: string): Promise<string>;
+    getOne(logger: Logger, context: IContext, entity: Entity, id: string,
+           rev?: string): Promise<Row>;
+    getQueryOne(logger: Logger, context: IContext, entity: Entity,
+                filter: Filter): Promise<Row>;
+    queryCollection(logger: Logger, context: IContext, collection: Collection,
+                    query?: Query): Promise<IResultSet>;
+    getQuery(logger: Logger, context: IContext, entity: Entity,
+             query: Query): Promise<IResultSet>;
+    getSequenceId(logger: Logger, context: IContext,
+                  entity: Entity): Promise<string>;
+    put(logger: Logger, context: IContext, entity: Entity, id: string,
+        row: Row): Promise<Row>;
+    post(logger: Logger, context: IContext, entity: Entity,
+         row: Row): Promise<Row>;
+    delete(logger: Logger, context: IContext, entity: Entity, id: string,
+           rev: string): Promise<void>;
+    deleteImmutable(logger: Logger, context: IContext, entity: Entity,
+                    id: string): Promise<void>;
+    queryDeferredToken(logger: Logger, context: IContext, parent: string,
+                       contained: string, parentField: string,
+                       containedField: string,
                        id: string): Promise<DeferredToken | null>;
-    getDeferredToken(tokenUuid: string): Promise<DeferredToken | null>;
-    putDeferredToken(token: DeferredToken, context: IContext): Promise<number>;
+    getDeferredToken(logger: Logger, context: IContext,
+                     tokenUuid: string): Promise<DeferredToken | null>;
+    putDeferredToken(logger: Logger, context: IContext,
+                     token: DeferredToken): Promise<number>;
+    getDBInfo(logger: Logger, context: IContext): Promise<Row>;
 }
 
 export interface IAuthenticator {
     get isAuthenticator(): boolean;
-    resetAuthentication(row: Row): Promise<Row>;
-    oneTimeLogin(row: Row): Promise<IContext>;
-    createLogin(row: Row, context: IContext): Promise<Row>;
-    login(row: Row): Promise<IContext>;
-    logout(context: IContext): Promise<void>;
+    resetAuthentication(logger: Logger, row: Row): Promise<Row>;
+    oneTimeLogin(logger: Logger, row: Row): Promise<IContext>;
+    createLogin(logger: Logger, context: IContext, row: Row): Promise<Row>;
+    login(logger: Logger, row: Row): Promise<IContext>;
+    logout(logger: Logger, context: IContext): Promise<void>;
 }
 
 type Metadata = {
@@ -1261,6 +1316,7 @@ export class Field {
     default: string;
     indexed: IndexType;
     maxlength?: number;
+    logger: Logger;
 
     constructor(entity: Entity, config: FieldCfg) {
         this.entity = entity;
@@ -1271,6 +1327,7 @@ export class Field {
         this.type = config.type;
         this.indexed = config.indexed ?? "none";
         this.maxlength = config.maxlength;
+        this.logger = new Logger(`field/${this.entity.name}/${this.name}`);
     }
 
     get fqName(): string {
@@ -1303,7 +1360,7 @@ export class Field {
     }
 
     async setValue(state: State, value: any,
-                   context?: IContext): Promise<SideEffects> {
+                   context: IContext): Promise<SideEffects> {
         this.undefinedCheck(value);
         const fieldState = state.field(this.name);
         this.applyValue(state, fieldState, value);
@@ -1315,8 +1372,8 @@ export class Field {
         return state.value(this.name);
     }
 
-    async create(state: State, service?: IService,
-                 context?: IContext): Promise<void> {
+    async create(state: State, context: IContext,
+                 service?: IService): Promise<void> {
         if (this.default) {
             state.field(this.name).value = this.transform(this.default);
         }
@@ -1341,10 +1398,11 @@ export class Field {
     }
 
     configure(configuration: IConfiguration) {
+        this.logger.configure(configuration);
     }
 
     async validate(phase: Phase, state: State, fieldState: FieldState,
-                   context?: IContext): Promise<void> {
+                   context: IContext): Promise<void> {
         if (this.required && fieldState.isNull) {
             switch (phase) {
                 case "create":
@@ -1360,7 +1418,7 @@ export class Field {
     }
 
     async activate(phase: Phase, state: State, fieldState: FieldState,
-                   context?: IContext): Promise<SideEffects> {
+                   context: IContext): Promise<SideEffects> {
         return null;
     }
 
@@ -1522,7 +1580,7 @@ export class StringField extends Field {
     }
 
     async validate(phase: Phase, state: State, fieldState: FieldState,
-                   context?: IContext): Promise<void> {
+                   context: IContext): Promise<void> {
         await super.validate(phase, state, fieldState, context);
         if (this.maxlength && fieldState.isNotNull) {
             const strState = fieldState.asString;
@@ -1708,7 +1766,8 @@ export class DateTimeField extends DateField {
 
 export class CreationTimestamp extends DateTimeField {
 
-    async create(state: State, service?: IService): Promise<void> {
+    async create(state: State, context: IContext,
+                 service?: IService): Promise<void> {
         state.field(this.name).value = new Date();
     }
 
@@ -1810,7 +1869,7 @@ export class AncestryField extends StringField {
     }
 
     async hasChildren(id: string, ancestry: string, state: State,
-                      context?: IContext): Promise<boolean> {
+                      context: IContext): Promise<boolean> {
         const filter = new Filter()
             .op(this.name, "<@", ancestry)
             .op("_id", "!=", id);
@@ -1824,7 +1883,7 @@ export class AncestryField extends StringField {
     }
 
     async checkParent(ancestry: string, state: State,
-                      context?: IContext): Promise<boolean> {
+                      context: IContext): Promise<boolean> {
         const filter = new Filter().op(`${this.name}`, "=", ancestry);
         this.entity.addRegionToFilter(state, filter);
         const resultSet = await this.collection.v.query(
@@ -1833,7 +1892,7 @@ export class AncestryField extends StringField {
     }
 
     async validate(phase: Phase, state: State, fieldState: FieldState,
-                   context?: IContext): Promise<void> {
+                   context: IContext): Promise<void> {
         await super.validate(phase, state, fieldState, context);
         /*
          * From       To        Result
@@ -1933,6 +1992,7 @@ export class ForeignKey extends StringField {
     }
 
     configure(configuration: IConfiguration) {
+        super.configure(configuration);
         // console.log(`Connecting ForeignKey ${this.fqName}`);
         this.targetEntity.setIf(
             `Invalid ForeignKey: ${this.fqName}: entity `,
@@ -1956,7 +2016,7 @@ export class ForeignKey extends StringField {
     }
 
     async validate(phase: Phase, state: State, fieldState: FieldState,
-                   context?: IContext): Promise<void> {
+                   context: IContext): Promise<void> {
 
         if (phase == "create" || phase == "update") {
             await Promise.all([
@@ -1984,7 +2044,7 @@ export class ForeignKey extends StringField {
     }
 
     async activate(phase: Phase, state: State, fieldState: FieldState,
-                   context?: IContext): Promise<SideEffects> {
+                   context: IContext): Promise<SideEffects> {
 
         const sideEffects =
             await super.activate(phase, state, fieldState, context);
@@ -2090,7 +2150,7 @@ export class CrossoverForeignKey extends ForeignKey {
     }
 
     async activate(phase: Phase, state: State, fieldState: FieldState,
-                   context?: IContext): Promise<SideEffects> {
+                   context: IContext): Promise<SideEffects> {
 
         await super.activate(phase, state, fieldState, context);
 
@@ -2145,9 +2205,10 @@ export class SiblingSequenceKey extends ForeignKey {
     }
 
     async nextSequence(fieldName: string, filter: Filter, increment: number,
-                       service: IService): Promise<BigInt> {
+                       service: IService, context: IContext): Promise<BigInt> {
         const query = new Query([`MAX(${fieldName})`], filter);
-        const resultSet = await service.getQuery(this.entity, query);
+        const resultSet = await service.getQuery(
+            this.logger, context, this.entity, query);
         if (!resultSet.next()) {
             throw new CoreError("MAX query must always return one row");
         }
@@ -2159,7 +2220,7 @@ export class SiblingSequenceKey extends ForeignKey {
     }
 
     async activate(phase: Phase, state: State, fieldState: FieldState,
-                   context?: IContext): Promise<SideEffects> {
+                   context: IContext): Promise<SideEffects> {
 
         await super.activate(phase, state, fieldState, context);
 
@@ -2172,7 +2233,8 @@ export class SiblingSequenceKey extends ForeignKey {
                     const service = this.collection.v.source.v.service;
                     const targetField = this.entity.getField(sequence.field);
                     const nextVal = await this.nextSequence(
-                        sequence.field, filter, sequence.increment, service);
+                        sequence.field, filter, sequence.increment, service,
+                        context);
                     target.value = targetField.transform(nextVal);
                 }
             }
@@ -2211,7 +2273,7 @@ export class UniqueSiblingSequence extends IntegerField {
     }
 
     async validate(phase: Phase, state: State, fieldState: FieldState,
-                   context?: IContext): Promise<void> {
+                   context: IContext): Promise<void> {
         await super.validate(phase, state, fieldState, context);
         const idName = this.key.v.idName;
         if (phase == "set" && context && fieldState.dirtyNotNull &&
@@ -2224,7 +2286,8 @@ export class UniqueSiblingSequence extends IntegerField {
                 filter.op("_id", "!=", state.id);
             }
             const query = new Query(["COUNT(*)"], filter);
-            const resultSet = await service.getQuery(this.entity, query);
+            const resultSet = await service.getQuery(
+                this.logger, context, this.entity, query);
             if (!resultSet.next()) {
                 throw new CoreError("COUNT query must always return one row");
             }
@@ -2247,6 +2310,7 @@ export class Entity {
     contains: ContainedEntity[];
     changeLogs: FieldChangeLogEntity[];
     regionalizedBy?: Field;
+    logger: Logger;
 
     static getFieldClass(kind: string,
                          blueprints: Map<string, any>): FieldClass {
@@ -2296,11 +2360,12 @@ export class Entity {
             this.coreFields.set(
                 field_name, this.loadField(field, blueprints, "core"));
         }
+        this.logger = new Logger(`entity/${this.name}`);
     }
 
     async query(service: IService, query: Query,
                 context: IContext): Promise<IResultSet> {
-        return service.getQuery(this, query, context);
+        return service.getQuery(this.logger, context, this, query);
     }
 
     async queryOne(service: IService, pairs: KeyValue[],
@@ -2319,7 +2384,8 @@ export class Entity {
                 filter.op(keyName, "=", "" + match.v, true);
             }
         }
-        const row = await service.getQueryOne(this, filter, context);
+        const row = await service.getQueryOne(
+            this.logger, context, this, filter);
         if (row.empty) {
             throw new CoreError(
                 `Record not found: ${this.name} : ${filter.where}`);
@@ -2333,7 +2399,8 @@ export class Entity {
 
     async load(service: IService, context: IContext,
                id: string, rev?: string): Promise<State> {
-        const row = await service.getOne(this, id, rev, context);
+        const row = await service.getOne(
+            this.logger, context, this, id, rev);
         if (row.empty) {
             throw new CoreError(`Record not found: ${this.name} = ${id}`);
         }
@@ -2363,14 +2430,14 @@ export class Entity {
         }
     }
 
-    async create(service?: IService, context?: IContext): Promise<State> {
+    async create(context: IContext, service?: IService): Promise<State> {
         const state = new State(this);
         const promises: Promise<void>[] = [];
         for (const field of this.keyFields.values()) {
-            promises.push(field.create(state, service, context));
+            promises.push(field.create(state, context, service));
         }
         for (const field of this.coreFields.values()) {
-            promises.push(field.create(state, service, context));
+            promises.push(field.create(state, context, service));
         }
         await Promise.all(promises);
         return state;
@@ -2401,27 +2468,30 @@ export class Entity {
 
     async put(service: IService, state: State,
               context: IContext): Promise<Row> {
-        await this.validate("update", state);
+        await this.validate("update", state, context);
         const row = this.toRow(state);
-        return await service.put(this, state.id, row, context);
+        return await service.put(
+            this.logger, context, this, state.id, row);
     }
 
     async post(service: IService, state: State,
                context: IContext): Promise<Row> {
-        await this.validate("create", state);
+        await this.validate("create", state, context);
         const row = this.toRow(state);
-        return await service.post(this, row, context);
+        return await service.post(this.logger, context, this, row);
     }
 
     async delete(service: IService, state: State,
                  context: IContext): Promise<void> {
-        await this.validate("delete", state);
+        await this.validate("delete", state, context);
         if (state.hasId()) {
-            await service.delete(this, state.id, state.rev, context);
+            await service.delete(
+                this.logger, context, this, state.id, state.rev);
         }
     }
 
     configure(configuration: IConfiguration) {
+        this.logger.configure(configuration);
         for (const field of this.keyFields.values()) {
             field.configure(configuration);
         }
@@ -2458,7 +2528,7 @@ export class Entity {
     }
 
     async setValue(state: State, name: string, value: any,
-                  context?: IContext): Promise<SideEffects> {
+                  context: IContext): Promise<SideEffects> {
         return this.getField(name).setValue(state, value, context);
     }
 
@@ -2519,7 +2589,7 @@ export class Entity {
      * as defined by 'through'.
      * Returns empty [] if none exist, never null.
      */
-    async getMembers(service: IService, person: string,
+    async getMembers(service: IService, context: IContext, person: string,
                      through: string): Promise<string[]> {
         throw new CoreError(`Entity ${this.name} does not support` +
                             `membership through ${through}`);
@@ -2540,7 +2610,7 @@ export class Entity {
     }
 
     async validate(phase: Phase, state: State,
-                   context?: IContext): Promise<void> {
+                   context: IContext): Promise<void> {
         if (phase == "update" && !state.hasId()) {
             throw new CoreError(`${this.name} is missing its '_id' for update`);
         }
@@ -2567,9 +2637,9 @@ export class ImmutableEntity extends Entity {
 
     async delete(service: IService, state: State,
                  context: IContext): Promise<void> {
-        await this.validate("delete", state);
+        await this.validate("delete", state, context);
         if (state.hasId()) {
-            await service.deleteImmutable(this, state.id);
+            await service.deleteImmutable(this.logger, context, this, state.id);
         }
     }
 }
@@ -2688,7 +2758,7 @@ export class AliasValueList extends StringField {
     }
 
     async validate(phase: Phase, state: State, fieldState: FieldState,
-                   context?: IContext): Promise<void> {
+                   context: IContext): Promise<void> {
         await super.validate(phase, state, fieldState, context);
         if (phase != "delete" && fieldState.isNotNull) {
             if (!this.values.has(fieldState.asString)) {
@@ -2740,11 +2810,12 @@ export class GeneratorField extends StringField {
         this.generatorName = `${this.entity.name}_${this.name}_seq`;
     }
 
-    async create(state: State, service?: IService,
-                 context?: IContext): Promise<void> {
+    async create(state: State, context: IContext,
+                 service?: IService): Promise<void> {
         if (service && context) {
             const nextVal =
-                await service.getGeneratorNext(this.generatorName, context);
+                await service.getGeneratorNext(
+                    this.logger, context, this.generatorName);
 
             let result = this.generatorSpec.format;
             if (result.includes("$YY")) {
@@ -2780,7 +2851,7 @@ export class UniqueField extends StringField {
     }
 
     async validate(phase: Phase, state: State, fieldState: FieldState,
-                   context?: IContext): Promise<void> {
+                   context: IContext): Promise<void> {
         await super.validate(phase, state, fieldState, context);
         if (phase == "set" && fieldState.dirtyNotNull) {
             const service = this.source.v.service;
@@ -2791,7 +2862,7 @@ export class UniqueField extends StringField {
             }
             const query = new Query(["COUNT(*)"], filter);
             const resultSet = await service.getQuery(
-                this.entity, query, context);
+                this.logger, context, this.entity, query);
             if (!resultSet.next() || resultSet.get("count") > 0) {
                 throw new CoreError(
                     `${this.fqName}: value '${fieldState.value}' is already ` +
@@ -3005,7 +3076,8 @@ export class AmountField extends Field {
         return super.hasChanged(oldValue, newValue);
     }
 
-    async create(state: State, service?: IService): Promise<void> {
+    async create(state: State, context: IContext,
+                 service?: IService): Promise<void> {
         if (this.required) {
             state.field(this.name).value = new BigDecimal("0");
         }
@@ -3047,7 +3119,8 @@ export class SummaryField extends AmountField {
             [this.fieldName],
             new Filter().op(this.parentIdName.v, "=", token.id)
         );
-        const resultSet = await service.getQuery(this.containedEntity.v, query);
+        const resultSet = await service.getQuery(
+            this.logger, context, this.containedEntity.v, query);
         let totalN = BigDecimal.toN("0");
         while (resultSet.next()) {
             const amountN = BigDecimal.toN(resultSet.get(this.fieldName));
@@ -3075,7 +3148,7 @@ export class SummaryField extends AmountField {
             updatedby: context.userAccountId,
             updated: new Date()
         };
-        service.putDeferredToken(token, context)
+        service.putDeferredToken(this.logger, context, token)
         .then((waitMillis) => {
             if (!waitMillis) {
                 console.log(
@@ -3086,9 +3159,9 @@ export class SummaryField extends AmountField {
             console.log(
                 `Deferred ${this.fqName} update with token: ${token.token}`);
             setTimeout(() => {
-                service.queryDeferredToken(token.parent, token.contained,
-                                           token.parentfield,
-                                           token.containedfield, token.id)
+                service.queryDeferredToken(
+                    this.logger, context, token.parent, token.contained,
+                    token.parentfield, token.containedfield, token.id)
                 .then((currToken) => {
                     if (currToken) {
                         // Only if the current token is the same as 'our' token
@@ -3134,6 +3207,7 @@ export class Collection {
     orderBy: OrderBy[];
     entity: Cfg<Entity>;
     source: Cfg<Source>;
+    logger: Logger;
 
     constructor(config: TypeCfg<CollectionSpec>, blueprints: Map<string, any>) {
         this.name = config.metadata.name;
@@ -3146,9 +3220,11 @@ export class Collection {
             this.fields = CoreColumns.addToEntity(config.spec.fields);
         }
         this.orderBy = config.spec.orderBy || [];
+        this.logger = new Logger(`collection/${this.name}`);
     }
 
     configure(configuration: IConfiguration): void {
+        this.logger.configure(configuration);
         this.entity.setIf(
             `Collection '${this.name}' references invalid entity `,
             configuration.entities.get(this.entity.name)
@@ -3159,11 +3235,11 @@ export class Collection {
         );
     }
 
-    async createFilter(context?: IContext, filter?: Filter): Promise<Filter> {
+    async createFilter(context: IContext, filter?: Filter): Promise<Filter> {
         return filter || new Filter();
     }
 
-    async createQuery(context?: IContext, query?: Query): Promise<Query> {
+    async createQuery(context: IContext, query?: Query): Promise<Query> {
         const finalFilter = await this.createFilter(context, query?.filter);
         const finalFields = (query && !query.selectStar) ? query.fields :
             this.fields;
@@ -3172,13 +3248,14 @@ export class Collection {
         return new Query(finalFields, finalFilter, finalOrderBy);
     }
 
-    async query(context?: IContext, query?: Query): Promise<IResultSet> {
+    async query(context: IContext, query?: Query): Promise<IResultSet> {
         if (this.via == "collection") {
-            return this.source.v.service.queryCollection(this, context, query);
+            return this.source.v.service.queryCollection(
+                this.logger, context, this, query);
         } else {
             const finalQuery = await this.createQuery(context, query);
             return this.source.v.service.getQuery(
-                this.entity.v, finalQuery, context);
+                this.logger, context, this.entity.v, finalQuery);
         }
     }
 }

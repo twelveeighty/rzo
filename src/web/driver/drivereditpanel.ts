@@ -17,7 +17,7 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { RZO } from "../../base/configuration.js";
+import { RZO, CONTEXT } from "../../base/configuration.js";
 
 import * as X from "../common.js";
 import { IPanel, FormPanel, Control, PanelData } from "../panel.js";
@@ -65,6 +65,7 @@ export class DriverEditPanel extends FormPanel implements IPanel {
     }
 
     initialize(): void {
+        super.initialize();
         this.entity.v = RZO.getEntity("driver");
         this.service.v = RZO.getSource("db").service;
         this.initUI();
@@ -74,7 +75,8 @@ export class DriverEditPanel extends FormPanel implements IPanel {
         if (panelData) {
             this.state = panelData.state;
         } else {
-            this.state = await this.entity.v.create(this.service.v);
+            this.state = await this.entity.v.create(
+                CONTEXT.session, this.service.v);
         }
         this.fromState();
         this.toggleUI(true);

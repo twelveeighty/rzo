@@ -19,7 +19,7 @@
 
 import {
     Row, _IError, TypeCfg, ClassSpec, DaemonWorker, Cfg, IConfiguration,
-    IService, Entity
+    IService, Entity, Logger
 } from "../base/core.js";
 
 class ElectionError extends _IError {
@@ -30,8 +30,9 @@ class ElectionError extends _IError {
 
 export interface IElectorService extends IService {
     get isElectorService(): boolean;
-    castBallot(serverId: string, rowId: number, interval: string): Promise<Row>;
-    leaderPing(serverId: string, rowId: number): Promise<Row>;
+    castBallot(logger: Logger, serverId: string, rowId: number,
+               interval: string): Promise<Row>;
+    leaderPing(logger: Logger, serverId: string, rowId: number): Promise<Row>;
 }
 
 type LeaderElectorSpec = ClassSpec & {
@@ -53,6 +54,7 @@ export class LeaderElector extends DaemonWorker {
     private _reelectTimerId: NodeJS.Timeout | null;
     private _leader: boolean | null;
     private onChangeCallbacks: OnChangeCallback[];
+    private logger: Logger;
 
     constructor(config: TypeCfg<LeaderElectorSpec>, blueprints: Map<string, any>) {
         super(config, blueprints);
@@ -70,7 +72,8 @@ export class LeaderElector extends DaemonWorker {
         }
         this._castVoteTimerId = null;
         this._reelectTimerId = null;
-        console.log(`::Leader Election:: Server ID = ${this.serverId}`);
+        this.logger = new Logger("server/election");
+        this.logger.log(`::Leader Election:: Server ID = ${this.serverId}`);
     }
 
     get leader(): boolean {
@@ -78,6 +81,7 @@ export class LeaderElector extends DaemonWorker {
     }
 
     configure(configuration: IConfiguration): void {
+        this.logger.configure(configuration);
         const dbSource = configuration.getSource(this.service.name);
         if (!(<any>dbSource.service).isElectorService) {
             throw new ElectionError(
@@ -95,12 +99,12 @@ export class LeaderElector extends DaemonWorker {
     private async leaderCastVote(): Promise<void> {
         if (!this._leader) {
             const row = await this.service.v.castBallot(
-                this.serverId, this._spec.leaderElectRowId,
+                this.logger, this.serverId, this._spec.leaderElectRowId,
                 this._spec.leaderCastVoteInterval);
             if (row && !row.empty && row.getString("leader") == this.serverId) {
                 this._leader = true;
                 const lastping = row.get("lastping") as Date;
-                console.log(
+                this.logger.info(
                     `::Leader Election:: Server ${this.serverId} has become ` +
                     `Leader at local time [${lastping.toString()}], ` +
                     `UTC: [${lastping.toUTCString()}]`);
@@ -108,7 +112,7 @@ export class LeaderElector extends DaemonWorker {
                     setTimeout(callback, 0, this._leader || false);
                 }
             } else {
-                console.log(
+                this.logger.debug(
                     `::Leader Election:: Server ${this.serverId} is not the ` +
                     `Leader`);
             }
@@ -118,11 +122,11 @@ export class LeaderElector extends DaemonWorker {
     private async leaderReelect(): Promise<void> {
         if (this._leader) {
             const row = await this.service.v.leaderPing(
-                this.serverId, this._spec.leaderElectRowId);
+                this.logger, this.serverId, this._spec.leaderElectRowId);
             if (!row || row.empty || row.getString("leader") != this.serverId) {
                 this._leader = false;
                 const now = new Date();
-                console.log(
+                this.logger.info(
                     `::Leader Election:: Server ${this.serverId} lost Leader ` +
                     `at local (server) time [${now.toString()}], ` +
                     `UTC: [${now.toUTCString()}]`);
@@ -131,7 +135,7 @@ export class LeaderElector extends DaemonWorker {
                 }
             } else {
                 const lastping = row.get("lastping") as Date;
-                console.log(
+                this.logger.debug(
                     `::Leader Election:: Server ${this.serverId} remains ` +
                     `Leader at local time [${lastping.toString()}], ` +
                     `UTC: [${lastping.toUTCString()}]`);
@@ -148,13 +152,13 @@ export class LeaderElector extends DaemonWorker {
         this._castVoteTimerId = setInterval(() => {
             this.leaderCastVote();
         }, this._spec.leaderCastVoteFrequency);
-        console.log(
+        this.logger.log(
             `LeaderElection '${this.name}' CastVote loop started ` +
             `with frequency: ${this._spec.leaderCastVoteFrequency}`);
         this._reelectTimerId = setInterval(() => {
             this.leaderReelect();
         }, this._spec.leaderReelectFrequency);
-        console.log(
+        this.logger.log(
             `LeaderElection '${this.name}' Reelect loop started ` +
             `with frequency: ${this._spec.leaderReelectFrequency}`);
     }
@@ -162,11 +166,13 @@ export class LeaderElector extends DaemonWorker {
     async stop(): Promise<any> {
         if (this._castVoteTimerId) {
             clearInterval(this._castVoteTimerId);
-            console.log(`LeaderElection '${this.name}' CastVote loop stopped`);
+            this.logger.log(
+                `LeaderElection '${this.name}' CastVote loop stopped`);
         }
         if (this._reelectTimerId) {
             clearInterval(this._reelectTimerId);
-            console.log(`LeaderElection '${this.name}' Reelect loop stopped`);
+            this.logger.log(
+                `LeaderElection '${this.name}' Reelect loop stopped`);
         }
     }
 }

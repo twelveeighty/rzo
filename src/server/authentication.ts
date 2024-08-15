@@ -23,7 +23,7 @@ import { randomInt } from "node:crypto";
 
 import {
     _IError, Row, Filter, Cfg, Entity, TypeCfg, IConfiguration, Nobody,
-    JsonObject, Persona, SideEffects
+    JsonObject, Persona, SideEffects, IService, Logger
 } from "../base/core.js";
 
 import { NOCONTEXT } from "../base/configuration.js";
@@ -45,6 +45,53 @@ class AuthenticationError extends _IError {
 
 type OneTimeAdapterSpec = SessionAwareAdapterSpec & {
     persona: string;
+}
+
+export async function rzoAuthenticate(logger: Logger, service: IService,
+                                      loginEntity: Entity,
+                                      row: Row): Promise<string> {
+    if (row.has("username") && row.has("password")) {
+        const useraccountnum = row.getString("username");
+        const passwd = row.getString("password");
+        if (useraccountnum && passwd) {
+            const filter = new Filter()
+                .op("useraccountnum", "=", useraccountnum);
+            const authRow = await service.getQueryOne(
+                logger, NOCONTEXT, loginEntity, filter);
+            if (row.empty) {
+                console.log(
+                    `Login attempt blocked due no login found for ` +
+                    `username: ${useraccountnum}`);
+                throw new AuthenticationError("Authentication error", 403);
+            }
+            const passwordHash = authRow.get("password");
+            const components = passwordHash.split("/");
+            if (components.length != 3) {
+                console.log(
+                    `Login attempt blocked due to hashed value found ` +
+                    `stored for username: ${useraccountnum} does not ` +
+                    `have three components, separated by /`);
+                throw new AuthenticationError("Authentication error", 403);
+            }
+            // [0:algorithm]/[1:salt]/[2:digest]
+            const digest = await PasswordField.digest(
+                components[0], passwd, components[1]);
+            if (components[2] != digest) {
+                console.log(
+                    `Login attempt blocked due to password mismatch for ` +
+                    `username: ${useraccountnum}`);
+                throw new AuthenticationError("Authentication error", 403);
+            }
+            console.log(
+                `Authentication successful for username: ` +
+                `${useraccountnum}`);
+            return authRow.getString("useraccountnum_id");
+        } else {
+            throw new AuthenticationError("Cannot parse authentication");
+        }
+    } else {
+        throw new AuthenticationError("Cannot parse payload");
+    }
 }
 
 export class RZOOneTimeAdapter extends SessionAwareAdapter {
@@ -77,7 +124,7 @@ export class RZOOneTimeAdapter extends SessionAwareAdapter {
         const filter = new Filter()
             .op("useraccountnum", "=", userNum);
         const userRow = await this.source.v.getQueryOne(
-            this.userAccountEntity.v, filter);
+            this.logger, NOCONTEXT, this.userAccountEntity.v, filter);
         if (userRow.empty) {
             console.log(
                 `Cannot create One Time Login because the requested usernum ` +
@@ -86,10 +133,11 @@ export class RZOOneTimeAdapter extends SessionAwareAdapter {
         }
         // Delete any existing onetimelogin, if present
         const existingRow = await this.source.v.getQueryOne(
-            this.oneTimeEntity.v, filter);
+            this.logger, NOCONTEXT, this.oneTimeEntity.v, filter);
         if (!existingRow.empty) {
             await this.source.v.deleteImmutable(
-                this.oneTimeEntity.v, existingRow.get("_id"));
+                this.logger, NOCONTEXT, this.oneTimeEntity.v,
+                existingRow.get("_id"));
         }
 
         // Create a random number between 111000 and 999900 (as a string)
@@ -102,17 +150,19 @@ export class RZOOneTimeAdapter extends SessionAwareAdapter {
         // Set the expiry to be 5 minutes from now
         const expiry = new Date(Date.now() + RZOOneTimeAdapter.FIVEMINUTES);
         // Create the onetimelogin entity
-        const state = await this.oneTimeEntity.v.create(this.source.v);
+        const state = await this.oneTimeEntity.v.create(
+            NOCONTEXT, this.source.v);
         const validations: Promise<SideEffects>[] = [];
         validations.push(
-            this.oneTimeEntity.v.setValue(state, "useraccountnum", userNum));
+            this.oneTimeEntity.v.setValue(
+                state, "useraccountnum", userNum, NOCONTEXT));
         validations.push(
-            this.oneTimeEntity.v.setValue(state, "code", code));
+            this.oneTimeEntity.v.setValue(state, "code", code, NOCONTEXT));
         validations.push(
-            this.oneTimeEntity.v.setValue(state, "expiry", expiry));
+            this.oneTimeEntity.v.setValue(state, "expiry", expiry, NOCONTEXT));
         await Promise.all(validations);
         await this.oneTimeEntity.v.post(this.source.v, state, NOCONTEXT);
-        console.log(
+        this.logger.log(
             `One Time Login created for User: ${userNum}, Email: ${email}, ` +
             `Code: ${code}, Expiry: ${expiry}`);
         response.end(JSON.stringify(
@@ -128,33 +178,34 @@ export class RZOOneTimeAdapter extends SessionAwareAdapter {
                 const filter = new Filter()
                     .op("useraccountnum", "=", useraccountnum);
                 const authRow = await this.source.v.getQueryOne(
-                    this.oneTimeEntity.v, filter);
+                    this.logger, NOCONTEXT, this.oneTimeEntity.v, filter);
                 if (row.empty) {
-                    console.log(
+                    this.logger.error(
                         `OTL Login attempt blocked due no OTL found for ` +
                         `username: ${useraccountnum}`);
                     throw new AuthenticationError("Authentication error", 403);
                 }
                 const code = authRow.get("code");
                 if (code != inputCode) {
-                    console.log(
+                    this.logger.error(
                         `OTL Login attempt blocked due to code mismatch for ` +
                         `username: ${useraccountnum}`);
                     throw new AuthenticationError("Authentication error", 403);
                 }
                 const expiry = authRow.get("expiry");
                 if (Date.now() > expiry) {
-                    console.log(
+                    this.logger.error(
                         `OTL Login expired: ${expiry}, ` +
                         `username: ${useraccountnum}`);
                     throw new AuthenticationError("Authentication error", 403);
                 }
-                console.log(
+                this.logger.info(
                     `OTL Authentication successful for username: ` +
                     `${useraccountnum}`);
                 const userId = authRow.getString("useraccountnum_id");
                 const sessionRow =
-                    await this.sessionBackend.v.createSessionContext(
+                    await this.sessionBackend.v.createSession(
+                        this.logger,
                         userId,
                         new Date(Date.now() + RZOOneTimeAdapter.FIVEMINUTES),
                         this.persona.v);
@@ -168,12 +219,13 @@ export class RZOOneTimeAdapter extends SessionAwareAdapter {
                 this.policyConfig.v.guardResource(
                     sessionContext, "entity/login", "delete");
                 const loginRow = await this.source.v.getQueryOne(
-                    this.loginEntity.v, filter);
+                    this.logger, sessionContext, this.loginEntity.v, filter);
                 if (!loginRow.empty) {
                     this.policyConfig.v.guardRow(
                         sessionContext, "entity/login", "delete", loginRow);
                     await this.source.v.deleteImmutable(
-                        this.loginEntity.v, loginRow.get("_id"));
+                        this.logger, sessionContext, this.loginEntity.v,
+                        loginRow.get("_id"));
                 }
                 response.end(JSON.stringify(Row.rowToData(sessionRow)));
             } else {
@@ -198,20 +250,23 @@ export class RZOOneTimeAdapter extends SessionAwareAdapter {
          * clear text.
          */
         const state = await this.loginEntity.v.create(
-            this.source.v, sessionContext);
+            sessionContext, this.source.v);
         const validations: Promise<SideEffects>[] = [];
         validations.push(
             this.loginEntity.v.setValue(
-                state, "useraccountnum", sessionContext.userAccount));
+                state, "useraccountnum", sessionContext.userAccount,
+                sessionContext));
         validations.push(
-            this.loginEntity.v.setValue(state, "password", passwd));
+            this.loginEntity.v.setValue(
+                state, "password", passwd, sessionContext));
         await Promise.all(validations);
         const resultRow = await this.loginEntity.v.post(
             this.source.v, state, sessionContext);
         // Delete the One Time session
         this.sessionCache.v.delete(sessionContext.sessionId);
         // Session expired, delete it, no need to 'await' it.
-        this.sessionBackend.v.deleteSession(sessionContext.sessionId);
+        this.sessionBackend.v.deleteSession(
+            this.logger, sessionContext.sessionId);
         resultRow.delete("password");
         response.end(JSON.stringify(Row.rowToData(resultRow)));
     }
@@ -246,7 +301,7 @@ export class RZOOneTimeAdapter extends SessionAwareAdapter {
                 if (userNum) {
                     this.createOneTimeLogin(userNum, response)
                     .catch((error) => {
-                        AdapterError.toResponse(error, response);
+                        AdapterError.toResponse(this.logger, error, response);
                     });
                 } else {
                     console.log(`Missing user in uriElements: ${uriElements}`);
@@ -287,7 +342,7 @@ export class RZOAuthAdapter extends SessionAwareAdapter {
                 const filter = new Filter()
                     .op("useraccountnum", "=", useraccountnum);
                 const authRow = await this.source.v.getQueryOne(
-                    this.loginEntity.v, filter);
+                    this.logger, NOCONTEXT, this.loginEntity.v, filter);
                 if (row.empty) {
                     console.log(
                         `Login attempt blocked due no login found for ` +
@@ -329,9 +384,10 @@ export class RZOAuthAdapter extends SessionAwareAdapter {
                                    response: ServerResponse, resource?: string,
                                    id?: string): Promise<void> {
         const row = Row.dataToRow(payload);
-        const userId = await this.authenticate(row);
-        const sessionRow =
-            await this.sessionBackend.v.createSessionContext(userId);
+        const userId = await rzoAuthenticate(
+            this.logger, this.source.v, this.loginEntity.v, row);
+        const sessionRow = await this.sessionBackend.v.createSession(
+            this.logger, userId);
 
         const personaName = sessionRow.get("persona");
         const persona = this.personas.v.get(personaName);
@@ -356,7 +412,7 @@ export class RZOAuthAdapter extends SessionAwareAdapter {
                  * to be deleted.
                  */
                 await this.sessionBackend.v.deleteSession(
-                    sessionContext.sessionId);
+                    this.logger, sessionContext.sessionId);
                 console.log(
                     `Logged out user: ${sessionContext.userAccount}`);
             } catch (error) {
@@ -388,7 +444,7 @@ export class RZOAuthAdapter extends SessionAwareAdapter {
                         `Invalid Login request method: ${request.method}`);
             }
         } catch (error) {
-            AdapterError.toResponse(error, response);
+            AdapterError.toResponse(this.logger, error, response);
         }
     }
 }

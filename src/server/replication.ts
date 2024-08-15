@@ -20,11 +20,20 @@
 import { IncomingMessage, ServerResponse } from "http";
 
 import {
-    _IError, IService, JsonObject, Entity, Row, DaemonWorker, Cfg, TypeCfg,
-    IConfiguration
+    _IError, IService, JsonObject, Entity, Row, Cfg, TypeCfg, IConfiguration,
+    Persona, State, IContext, Logger
 } from "../base/core.js";
 
-import { IAdapter, AdapterError, AdapterSpec, getHeader } from "./adapter.js";
+import { NOCONTEXT } from "../base/configuration.js";
+
+import { SessionContext } from "../base/session.js";
+
+import {
+    AdapterError, getHeader, SessionAwareAdapter, SessionAwareAdapterSpec
+} from "./adapter.js";
+
+import { rzoAuthenticate } from "./authentication.js";
+
 
 class ReplicationError extends _IError {
     constructor(message: string, code?: number, options?: ErrorOptions) {
@@ -34,16 +43,19 @@ class ReplicationError extends _IError {
 
 export interface IReplicableService extends IService {
     get isReplicable(): boolean;
-    getReplicationLogs(entity: Entity, id: string): Promise<ReplicationState>;
-    putReplicationState(destination: Destination,
-                     repState: ReplicationState): Promise<ReplicationResponse>;
-    getChangesNormal(entity: Entity,
+    createInMemorySession(logger: Logger, userId: string, expiryOverride?: Date,
+                          personaOverride?: Persona): Promise<State>;
+    getReplicationLogs(logger: Logger, entity: Entity,
+                       id: string): Promise<ReplicationState>;
+    putReplicationState(logger: Logger, destination: Destination,
+                        repState: ReplicationState): Promise<ReplicationResponse>;
+    getChangesNormal(logger: Logger, entity: Entity,
                      query: ChangesFeedQuery): Promise<NormalChangeFeed>;
-    getRevsDiffRequest(entity: Entity,
+    getRevsDiffRequest(logger: Logger, entity: Entity,
                        diffRequest: RevsDiffRequest): Promise<RevsDiffResponse>;
-    getAllLeafRevs(entity: Entity, id: string, query: RevsQuery,
+    getAllLeafRevs(logger: Logger, entity: Entity, id: string, query: RevsQuery,
                    multipart: boolean, boundary?: string): Promise<string>;
-    postBulkDocs(entity: Entity,
+    postBulkDocs(logger: Logger, entity: Entity,
                  docsRequest: BulkDocsRequest): Promise<ReplicationResponse[]>;
 }
 
@@ -127,6 +139,18 @@ export type PurgedDoc = {
     _id: string;
     _rev: string;
     purged_hash: string;
+}
+
+type CouchServerVendor = {
+    name: string;
+    version: string;
+}
+
+type CouchServerInfo = {
+    couchdb: string;
+    uuid: string;
+    vendor: CouchServerVendor;
+    version: string;
 }
 
 export class Destination {
@@ -449,70 +473,60 @@ export class ChangesFeedQuery {
     }
 }
 
-export class ReplicationAdapter extends DaemonWorker implements IAdapter {
-    readonly name: string;
-    source: Cfg<IReplicableService>;
+export class ReplicationAdapter extends SessionAwareAdapter {
     entities: Cfg<Map<string, Entity>>;
+    loginEntity: Cfg<Entity>;
+    replSource: Cfg<IReplicableService>;
 
-    constructor(config: TypeCfg<AdapterSpec>, blueprints: Map<string, any>) {
+    constructor(config: TypeCfg<SessionAwareAdapterSpec>,
+                blueprints: Map<string, any>) {
         super(config, blueprints);
-        this.name = config.metadata.name;
-        this.source = new Cfg(config.spec.source);
         this.entities = new Cfg("entities");
-    }
-
-    get isAdapter(): boolean {
-        return true;
+        this.loginEntity = new Cfg("loginentity");
+        this.replSource = new Cfg(config.spec.source);
     }
 
     configure(configuration: IConfiguration): void {
         super.configure(configuration);
-        const service: unknown =
-            configuration.getSource(this.source.name).service;
+        const service: unknown = this.source.v;
         if (!((<any>service).isReplicable)) {
             throw new ReplicationError(
-                `Source ${this.source.name} is not a replicable source`);
+                `Source ${this.replSource.name} is not a replicable source`);
         }
-        this.source.v = <IReplicableService>service;
+        this.replSource.v = <IReplicableService>service;
         this.entities.v = configuration.entities;
+        this.loginEntity.v = configuration.getEntity("login");
     }
 
-    handleGetReplicateRevs(entity: Entity, request: IncomingMessage,
-                           response: ServerResponse,
-                           uriElements: string[]): void {
+    async handleGetReplicateRevs(entity: Entity, request: IncomingMessage,
+                                 response: ServerResponse,
+                                 uriElements: string[]): Promise<void> {
         /*
          *     0   1       2          3                4
+         * GET r entity    id                     Fetch lastest version
          * GET r entity    id         ?           openrevs=['']
          *                                        Fetch specific versions
          */
         const id = uriElements[2];
         const multipart =
             getHeader(request.headers, "accept") == "multipart/mixed";
-        const revsQuery = new RevsQuery(uriElements[4]);
-        const boundary = Entity.generateId().replaceAll("-", "");
-        this.source.v.getAllLeafRevs(entity, id, revsQuery, multipart,
-                                              boundary)
-        .then((result) => {
-            if (multipart) {
-                response.setHeader("Content-Type",
-                        `multipart/mixed; boundary="${boundary}"`);
-                return result;
-            } else {
-                return result;
-            }
-        })
-        .then((msg) => {
-            response.end(msg);
-        })
-        .catch((error) => {
-            console.log(error);
-            AdapterError.toResponse(error, response);
-        });
+        const revsQuery =
+            new RevsQuery(uriElements.length > 4 ? uriElements[4] : "");
+        const boundary = multipart ?
+            Entity.generateId().replaceAll("-", "") : "";
+        const result = await this.replSource.v.getAllLeafRevs(
+            this.logger, entity, id, revsQuery, multipart, boundary);
+        if (multipart) {
+            response.setHeader(
+                "Content-Type", `multipart/mixed; boundary="${boundary}"`);
+        }
+        response.end(result);
     }
 
-    handleGetReplicateChanges(entity: Entity, request: IncomingMessage,
-                              response: ServerResponse,
-                              uriElements: string[]): void {
+    async handleGetReplicateChanges(context: IContext, entity: Entity,
+                                    request: IncomingMessage,
+                                    response: ServerResponse,
+                                    uriElements: string[]): Promise<void> {
         /*
          *        0   1       2          3                4
          * GET    r entity _changes      ?         feed=continues&...
@@ -520,27 +534,23 @@ export class ReplicationAdapter extends DaemonWorker implements IAdapter {
          */
         const changesQuery = new ChangesFeedQuery(uriElements[4]);
         if (changesQuery.feed == "normal") {
-            this.source.v.getChangesNormal(entity, changesQuery)
-            .then((feed) => {
-                return JSON.stringify(feed);
-            })
-            .then((msg) => {
-                response.end(msg);
-            })
-            .catch((error) => {
-                AdapterError.toResponse(error, response);
-            });
+            const feed = await this.replSource.v.getChangesNormal(
+                this.logger, entity, changesQuery);
+            response.end(JSON.stringify(feed));
         } else {
             throw new ReplicationError("Not yet implemented");
         }
     }
 
-    handleGetReplicate(entity: Entity, request: IncomingMessage,
-                       response: ServerResponse, uriElements: string[]): void {
+    async handleGetReplicate(entityName: string, request: IncomingMessage,
+                             response: ServerResponse,
+                             uriElements: string[]): Promise<void> {
         /* https:/host/
          *             0   1       2          3                4
          *
          * GET         r entity                           Get max(seq) info
+         *
+         * GET         r entity    id                     Get lastest version
          *
          * GET         r entity    id         ?           openrevs=['']
          *                                                  Fetch specific
@@ -550,159 +560,214 @@ export class ReplicationAdapter extends DaemonWorker implements IAdapter {
          * GET         r entity _changes      ?           feed=continues&...
          *                                                  Changes feed
          */
-        if (uriElements.length == 2) {
-            this.source.v.getSequenceId(entity)
-            .then((maxseq) => {
+        try {
+            const context = await this.authenticate(request);
+            const entity = this.entities.v.get(entityName);
+            if (!entity) {
+                throw new ReplicationError(
+                    `Invalid entity: ${entityName}`, 404);
+            }
+            const resource = `entity/${entity.name}`;
+            this.policyConfig.v.guardResource(context, resource, "get");
+            if (uriElements.length == 2) {
+                const maxseq = await this.replSource.v.getSequenceId(
+                    this.logger, context, entity);
                 const result = {
                     "instance_start_time": "0",
                     "update_seq": maxseq
                 };
                 response.end(JSON.stringify(result));
-            })
-            .catch((error) => {
-                AdapterError.toResponse(error, response);
-            });
-        } else if (uriElements.length == 4 && uriElements[2] == "_local") {
-            this.source.v.getReplicationLogs(entity,
-                                                      uriElements[3])
-            .then((state) => {
+            } else if (uriElements.length == 4 && uriElements[2] == "_local") {
+                const state = await this.replSource.v.getReplicationLogs(
+                    this.logger, entity, uriElements[3])
                 response.end(JSON.stringify(state));
-            })
-            .catch((error) => {
-                AdapterError.toResponse(error, response);
-            });
-        } else if (uriElements.length == 5 && uriElements[2] == "_changes") {
-            this.handleGetReplicateChanges(entity, request, response,
-                                           uriElements);
-        } else if (uriElements.length == 5 && uriElements[3] == "?") {
-            this.handleGetReplicateRevs(entity, request, response, uriElements);
-        } else {
-            throw new ReplicationError(`Invalid request: invalid URI ` +
-                                      `components for Replicate GET`);
+            } else if (uriElements.length == 5 &&
+                       uriElements[2] == "_changes") {
+                await this.handleGetReplicateChanges(
+                    context, entity, request, response, uriElements);
+            } else if (uriElements.length == 3 ||
+                       (uriElements.length == 5 && uriElements[3] == "?")) {
+                await this.handleGetReplicateRevs(
+                    entity, request, response, uriElements);
+            } else {
+                throw new ReplicationError(
+                    `Invalid request: invalid URI components for ` +
+                    `Replicate GET`);
+            }
+        } catch (error) {
+            AdapterError.toResponse(this.logger, error, response);
         }
     }
 
-    handleRevsDiff(entity: Entity, payload: string): Promise<RevsDiffResponse> {
-        const diffRequest = JSON.parse(payload) as RevsDiffRequest;
-        return this.source.v.getRevsDiffRequest(entity, diffRequest);
-    }
-
-    handleBulkDocs(entity: Entity,
-                   payload: string): Promise<ReplicationResponse[]> {
-        const docs = JSON.parse(payload) as BulkDocsRequest;
-        return this.source.v.postBulkDocs(entity, docs);
-    }
-
-    handlePostReplicate(entity: Entity, request: IncomingMessage,
-                        response: ServerResponse, uriElements: string[]): void {
+    protected async payloadHandler(payload: JsonObject,
+                                   request: IncomingMessage,
+                                   response: ServerResponse, resource?: string,
+                                   id?: string): Promise<void> {
         /* https:/host/
          *             0   1       2
          * POST        r entity _revs_diff     Calculate Revision Difference
          * POST        r entity _bulk_docs     Upload Batch of Documents
-         */
-        if (uriElements.length != 3 || (uriElements[2] != "_revs_diff" &&
-               uriElements[2] != "_bulk_docs")) {
-            throw new ReplicationError(`Invalid request: invalid URI ` +
-                                      `components for replicate POST`);
-        }
-        const chunks: Uint8Array[] = [];
-        request.on("data", (chunk) => {
-            chunks.push(chunk);
-        });
-        request.on("end", () => {
-            try {
-                const payload = Buffer.concat(chunks).toString();
-                let processorResult: Promise<any>;
-                if (uriElements[2] == "_revs_diff") {
-                    processorResult = this.handleRevsDiff(entity, payload);
-                } else {
-                    processorResult = this.handleBulkDocs(entity, payload);
-                }
-                processorResult
-                .then((response) => {
-                    return JSON.stringify(response);
-                })
-                .then((msg) => {
-                    response.end(msg);
-                })
-                .catch((error) => {
-                    AdapterError.toResponse(error, response);
-                });
-            } catch (error) {
-                AdapterError.toResponse(error, response);
-            }
-        });
-        request.on("error", (error) => {
-            AdapterError.toResponse(error, response);
-        });
-    }
-
-    handlePutReplicate(entity: Entity, request: IncomingMessage,
-                       response: ServerResponse, uriElements: string[]): void {
-        /* https:/host/
+         *
          *             0   1       2        3
          * PUT         r entity _local replicationid    Insert replication log
+         *                      ^ not passed in
          */
-        if (uriElements.length == 4 && uriElements[2] == "_local") {
+        await this.authenticate(request);
+        if (this.logger.willLog("Debug")) {
+            this.logger.debug(JSON.stringify(payload));
+        }
+        if (!resource || !id) {
+            throw new ReplicationError(
+                "Missing resource and/or id for ReplicationAdapter");
+        }
+        const entity = this.entities.v.get(resource!);
+        if (!entity) {
+            throw new ReplicationError(`Invalid entity: ${resource}`, 404);
+        }
+        if (request.method == "POST") {
+            if (id == "_revs_diff") {
+                const diffResponse = await this.replSource.v.getRevsDiffRequest(
+                    this.logger, entity, payload as RevsDiffRequest);
+                response.end(JSON.stringify(diffResponse));
+            } else if (id == "_bulk_docs") {
+                const bulkResponse = await this.replSource.v.postBulkDocs(
+                    this.logger, entity, payload as BulkDocsRequest);
+                response.end(JSON.stringify(bulkResponse));
+            } else {
+                throw new ReplicationError(
+                    "ReplicationAdapter POST must be either _revs_diff or " +
+                    "_bulk_docs");
+            }
+        } else if (request.method == "PUT") {
             const destination = new Destination(entity);
-            const chunks: Uint8Array[] = [];
-            request.on("data", (chunk) => {
-                chunks.push(chunk);
-            });
-            request.on("end", () => {
-                try {
-                    const payload = Buffer.concat(chunks).toString();
-                    const repState = JSON.parse(payload) as ReplicationState;
-                    this.source.v.putReplicationState(
-                        destination, repState)
-                    .then((response) => {
-                        return JSON.stringify(response);
-                    })
-                    .then((msg) => {
-                        response.end(msg);
-                    })
-                    .catch((error) => {
-                        AdapterError.toResponse(error, response);
-                    });
-                } catch (error) {
-                    AdapterError.toResponse(error, response);
-                }
-            });
-            request.on("error", (error) => {
-                AdapterError.toResponse(error, response);
-            });
+            const repLogResponse = await this.replSource.v.putReplicationState(
+                        this.logger, destination, payload as ReplicationState);
+            response.end(JSON.stringify(repLogResponse));
         } else {
-            throw new ReplicationError(`Invalid request: invalid URI ` +
-                                      `components for replicate PUT`);
+            // This should never happen
+            response.end();
+        }
+    }
+
+    protected async authenticate(
+        request: IncomingMessage): Promise<SessionContext> {
+        const authHeader = getHeader(request.headers, "Authorization");
+        if (!authHeader) {
+            console.log(
+                `Replication auth failed: no Authorization header present`);
+            throw new ReplicationError("Unauthorized", 401);
+        }
+        if (!authHeader.toUpperCase().startsWith("BASIC ")) {
+            console.log(
+                `Replication auth failed: Authorization header ` +
+                `[${authHeader}] does not start with 'Basic' ` +
+                `(case insensitive)`);
+            throw new ReplicationError("Unauthorized", 401);
+        }
+        const authBasic: Cfg<string[]> = new Cfg("basic");
+        try {
+            const authB64 = authHeader.substring("BASIC ".length);
+            authBasic.v = atob(authB64).split(":", 2);
+        } catch (error) {
+            console.log(
+                `Replication auth failed: Authorization header ` +
+                `[${authHeader}] holds an invalid Base64 value`);
+            console.log(error);
+            throw new ReplicationError("Unauthorized", 401);
+        }
+        const userName = authBasic.v[0];
+        // Check the cache for this username
+        const cached = this.sessionCache.v.get(userName);
+        if (cached) {
+            // Refresh the timeout for the cached value
+            this.sessionCache.v.set(userName, cached);
+            return cached;
+        }
+        const row = new Row(
+            { "username": authBasic.v[0], "password": authBasic.v[1] });
+
+       const userId = await rzoAuthenticate(
+           this.logger, this.replSource.v, this.loginEntity.v, row);
+        /* The session backend will persist this API session, but since we
+         * can not track the sessionId, we force a short expiry on this
+         * persistent session and rely on the local cache instead.
+         * This means that every (load-balanced) server will create its
+         * own session and track it independently.
+         */
+        const sessionRow = await this.sessionBackend.v.createSession(
+            this.logger, userId, new Date(Date.now() + 30000));
+
+        const personaName = sessionRow.get("persona");
+        const persona = this.personas.v.get(personaName);
+        if (!persona) {
+            throw new ReplicationError(
+                `Invalid persona: ${personaName}`, 403);
+        }
+
+        const sessionContext = new SessionContext(sessionRow, persona);
+        this.sessionCache.v.set(userName, sessionContext);
+        return sessionContext;
+    }
+
+    async handleServerInfo(response: ServerResponse): Promise<void> {
+        try {
+            const row = await this.replSource.v.getDBInfo(
+                this.logger, NOCONTEXT);
+            const couchServerInfo: CouchServerInfo = {
+                couchdb: "Welcome",
+                uuid: row.get("uuid"),
+                vendor: { name: "RZO", version: row.get("version") },
+                version: row.get("version")
+            };
+            response.end(JSON.stringify(couchServerInfo));
+        } catch (error) {
+            AdapterError.toResponse(this.logger, error, response);
         }
     }
 
     handle(request: IncomingMessage, response: ServerResponse,
            uriElements: string[]): void {
-        if (uriElements.length <= 1) {
-            throw new ReplicationError("Missing entity in request", 400);
-        }
-        const entityName = uriElements[1];
-        const entity = this.entities.v.get(entityName);
-        if (!entity) {
-            throw new ReplicationError(`Invalid entity: ${entityName}`, 404);
-        }
-        switch (request.method) {
-            case "HEAD":
-                response.end();
+        this.logger.info(`${request.method} - ${request.url}`);
+        try {
+            if (uriElements.length <= 1) {
+                this.handleServerInfo(response);
                 return;
-            case "GET":
-                return this.handleGetReplicate(
-                    entity, request, response, uriElements);
-            case "POST":
-                return this.handlePostReplicate(
-                    entity, request, response, uriElements);
-            case "PUT":
-                return this.handlePutReplicate(
-                    entity, request, response, uriElements);
-            default:
-                throw new ReplicationError(
-                    `Invalid Replicate request: ${request.method}`);
+            }
+            const entityName = uriElements[1];
+            if (request.method == "HEAD") {
+                const entity = this.entities.v.get(entityName);
+                if (!entity) {
+                    throw new ReplicationError(
+                        `Invalid entity: ${entityName}`, 404);
+                }
+                this.logger.log(`Verify Peer '${entityName}'`);
+                response.end();
+            } else {
+                switch (request.method) {
+                    case "GET":
+                        this.handleGetReplicate(
+                            entityName, request, response, uriElements);
+                        break;
+                    case "POST":
+                        this.handlePayload(
+                            request, response, entityName, uriElements.at(2));
+                        break;
+                    case "PUT":
+                        if (uriElements.at(2) != "_local" ||
+                            uriElements.length < 4) {
+                            throw new ReplicationError(
+                                "Invalid Replication PUT uri");
+                        }
+                        this.handlePayload(
+                            request, response, entityName, uriElements.at(3));
+                        break;
+                    default:
+                        throw new ReplicationError(
+                            `Invalid Replicate request: ${request.method}`);
+                }
+            }
+        } catch (error) {
+            AdapterError.toResponse(this.logger, error, response);
         }
     }
 }

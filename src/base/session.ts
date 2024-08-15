@@ -17,7 +17,7 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { IContext, Persona, Row, Nobody } from "../base/core.js";
+import { IContext, Persona, Row, Nobody, Logger } from "../base/core.js";
 
 type SubjectType = {
     subject: string;
@@ -26,11 +26,11 @@ type SubjectType = {
 
 export interface ISessionBackendService {
     get isSessionBackendService(): boolean;
-    getSessionContext(id: string): Promise<Row>;
-    createSessionContext(userId: string, expiryOverride?: Date,
-                         personaOverride?: Persona): Promise<Row>;
-    deleteSession(id: string): Promise<void>;
-    deleteSessionsUpTo(expiry: Date): Promise<void>;
+    getSession(logger: Logger, id: string): Promise<Row>;
+    createSession(logger: Logger, userId: string, expiryOverride?: Date,
+                  personaOverride?: Persona): Promise<Row>;
+    deleteSession(logger: Logger, id: string): Promise<void>;
+    deleteSessionsUpTo(logger: Logger, expiry: Date): Promise<void>;
 }
 
 export function serializeSubjectMap(map: Map<string, string>): string {

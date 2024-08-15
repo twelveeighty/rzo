@@ -17,7 +17,7 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { Cfg, IAuthenticator } from "../base/core.js";
+import { Cfg, IAuthenticator, Logger } from "../base/core.js";
 
 import { RZO, CONTEXT } from "../base/configuration.js";
 
@@ -35,8 +35,10 @@ export class NavigationPanel implements IPanel {
     controller?: PanelController;
     authenticator: Cfg<IAuthenticator>;
     loggedIn: boolean;
+    logger: Logger;
 
     constructor() {
+        this.logger = new Logger("client");
         this.navTrips = X.a("nav-trips-a");
         this.navRiders = X.a("nav-riders-a");
         this.navDrivers = X.a("nav-drivers-a");
@@ -71,7 +73,7 @@ export class NavigationPanel implements IPanel {
 
     private onLogout(evt: Event): void {
         if (this.loggedIn) {
-            this.authenticator.v.logout(CONTEXT.session)
+            this.authenticator.v.logout(this.logger, CONTEXT.session)
             .then(() => {
                 CONTEXT.reset();
                 this.controller!.broadcast("logged-out");
@@ -91,6 +93,7 @@ export class NavigationPanel implements IPanel {
     }
 
     initialize(): void {
+        this.logger.configure(RZO);
         this.authenticator.v = RZO.getAuthenticator("auth").service;
 
         this.navTrips.addEventListener("click", (evt) => {

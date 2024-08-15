@@ -63,7 +63,7 @@ export class RiderEditPanel extends FormPanel implements IPanel {
     private loadZones(): void {
         const riderZoneSel = this.getSelect("rider-zone-sel");
         this.service.v.queryCollection(
-            RZO.getCollection("zones"), CONTEXT.session)
+            this.logger, CONTEXT.session, RZO.getCollection("zones"))
         .then((resultSet) => {
             while (riderZoneSel.options.length > 1) {
                 riderZoneSel.remove(1);
@@ -92,6 +92,7 @@ export class RiderEditPanel extends FormPanel implements IPanel {
     }
 
     initialize(): void {
+        super.initialize();
         this.entity.v = RZO.getEntity("rider");
         this.service.v = RZO.getSource("db").service;
         this.initUI();
@@ -101,7 +102,8 @@ export class RiderEditPanel extends FormPanel implements IPanel {
         if (panelData) {
             this.state = panelData.state;
         } else {
-            this.state = await this.entity.v.create(this.service.v);
+            this.state = await this.entity.v.create(
+                CONTEXT.session, this.service.v);
         }
         this.fromState();
         this.toggleUI(true);

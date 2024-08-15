@@ -29,8 +29,11 @@ import {
     Entity, IResultSet, IConfiguration, Query, AsyncTask,
     EmptyResultSet, MemResultSet, Row, TypeCfg, ClassSpec, Collection,
     IContext, Filter, Source, _IError, Nobody, DeferredToken,
-    CoreColumns, SummaryField, Persona, Cfg, IService, SideEffects
+    CoreColumns, SummaryField, Persona, Cfg, IService, SideEffects, State,
+    Logger
 } from "../base/core.js";
+
+import { VERSION, NOCONTEXT } from "../base/configuration.js";
 
 import {
     ISessionBackendService, SessionContext, serializeSubjectMap
@@ -82,6 +85,8 @@ export class PgClient implements IReplicableService, IElectorService,
     private _scheduler: Scheduler;
     private _pool: Pool<pg.Client>;
     private _spec: PgClientSourceSpec;
+    private electionLogger: Logger;
+    private deferredLogger: Logger;
 
     static VC_COL_DEFS = [
         "seq", "_id as vc_id", "updated as vc_updated",
@@ -109,6 +114,8 @@ export class PgClient implements IReplicableService, IElectorService,
         }
         this._scheduler = new Scheduler(30000, this);
         this._pool = new Pool();
+        this.electionLogger = new Logger("server/election");
+        this.deferredLogger = new Logger("server/deferred");
     }
 
     configure(configuration: IConfiguration) {
@@ -124,6 +131,8 @@ export class PgClient implements IReplicableService, IElectorService,
         });
         this.sessionEntity.v = configuration.getEntity("session");
         this.userEntity.v = configuration.getEntity("useraccount");
+        this.electionLogger.configure(configuration);
+        this.deferredLogger.configure(configuration);
     }
 
     get isReplicable(): boolean {
@@ -152,12 +161,12 @@ export class PgClient implements IReplicableService, IElectorService,
     }
 
     private catchupInitialization(): void {
-        console.log("Running catch-up initialization");
+        this.deferredLogger.log("Running catch-up initialization");
         const now = new Date();
         let statement = "select * from deferredtoken where updated < \$1";
         const parameters = [now];
 
-        this.log(statement, parameters);
+        this.log(this.deferredLogger, statement, parameters);
         this._pool.query(statement, parameters).then((result) => {
             if (result.rows.length > 0) {
                 // Capture all the results before we delete these rows, to
@@ -166,61 +175,65 @@ export class PgClient implements IReplicableService, IElectorService,
                 // Delete these rows, to avoid other parallel servers
                 // picking these up.
                 statement = "delete from deferredtoken where updated < \$1";
-                this.log(statement, parameters);
+                this.log(this.deferredLogger, statement, parameters);
                 this._pool.query(statement, parameters).then(() => {
                     while (resultSet.next()) {
                         const token = resultSet.getRow().raw() as DeferredToken;
                         const context = new DeferredContext(token.updatedby);
-                        this.performTokenUpdate(token, context, true);
+                        this.performTokenUpdate(
+                            this.deferredLogger, context, token, true);
                     }
                 });
             } else {
-                console.log("No catch-up tasks to do");
+                this.deferredLogger.log("No catch-up tasks to do");
             }
         });
     }
 
-    private log(statement: string, parameters?: any[]): void {
-        console.log(statement);
+    private log(logger: Logger, statement: string, parameters?: any[]): void {
+        logger.debug(statement);
         if (parameters && parameters.length) {
-            console.log(parameters);
+            logger.debug(parameters);
         }
     }
 
-    async getSessionContext(id: string): Promise<Row> {
-        const row = await this.getOne(this.sessionEntity.v, id);
+    async getSession(logger: Logger, id: string): Promise<Row> {
+        const row = await this.getOne(
+            logger, NOCONTEXT, this.sessionEntity.v, id);
         if (!row || row.empty) {
             throw new PgClientError("Session expired", 401);
         }
         if (row.get("expiry") <= Date.now()) {
             // no need to await the deletion
-            this.deleteImmutable(this.sessionEntity.v, id);
+            this.deleteImmutable(
+                logger, NOCONTEXT, this.sessionEntity.v, id);
             throw new PgClientError("Session expired", 401);
         }
         return row;
     }
 
-    async createSessionContext(userId: string, expiryOverride?: Date,
-                               personaOverride?: Persona): Promise<Row> {
-        const serverContext = new SessionContext();
-        const useraccount = await this.getOne(this.userEntity.v, userId);
+    async createInMemorySession(logger: Logger, userId: string,
+                                expiryOverride?: Date,
+                                personaOverride?: Persona): Promise<State> {
+        const useraccount = await this.getOne(
+            logger, NOCONTEXT, this.userEntity.v, userId);
         if (!useraccount || useraccount.empty) {
             throw new PgClientError(`useraccount not found: ${userId}`, 404);
         }
         const persona = personaOverride ||
             this.configuration.v.getPersona(useraccount.get("persona"));
-        const session = await this.sessionEntity.v.create(this);
+        const session = await this.sessionEntity.v.create(NOCONTEXT, this);
         await this.sessionEntity.v.setValue(
                 session,
                 "useraccountnum", useraccount.get("useraccountnum"),
-                serverContext)
+                NOCONTEXT)
         const validations: Promise<SideEffects>[] = [];
         if (personaOverride) {
             validations.push(
                 this.sessionEntity.v.setValue(
                     session,
                     "persona", personaOverride.name,
-                    serverContext)
+                    NOCONTEXT)
             );
         }
         const expiry = expiryOverride ||
@@ -229,7 +242,7 @@ export class PgClient implements IReplicableService, IElectorService,
             this.sessionEntity.v.setValue(
                 session,
                 "expiry", expiry,
-                serverContext)
+                NOCONTEXT)
         );
         const subjectMap: Map<string, string> = new Map();
         const memberships =
@@ -239,7 +252,8 @@ export class PgClient implements IReplicableService, IElectorService,
                 const membershipEntity =
                     this.configuration.v.getEntity(membership.entity);
                 const members =
-                    await membershipEntity.getMembers(this, userId, "subject");
+                    await membershipEntity.getMembers(
+                        this, NOCONTEXT, userId, "subject");
                 if (members.length > 0) {
                     subjectMap.set(membership.entity, members[0]);
                 }
@@ -250,35 +264,43 @@ export class PgClient implements IReplicableService, IElectorService,
                 this.sessionEntity.v.setValue(
                 session,
                 "subjectMap", serializeSubjectMap(subjectMap),
-                serverContext)
+                NOCONTEXT)
             );
         }
         await Promise.all(validations);
+        return session;
+    }
+
+    async createSession(logger: Logger, userId: string, expiryOverride?: Date,
+                        personaOverride?: Persona): Promise<Row> {
+        const session = await this.createInMemorySession(
+            logger, userId, expiryOverride, personaOverride);
         const sessionRow =
-            await this.sessionEntity.v.post(this, session, serverContext);
+            await this.sessionEntity.v.post(this, session, NOCONTEXT);
         return sessionRow;
     }
 
-    async deleteSession(id: string): Promise<void> {
-        await this.deleteImmutable(this.sessionEntity.v, id);
+    async deleteSession(logger: Logger, id: string): Promise<void> {
+        await this.deleteImmutable(
+            logger, NOCONTEXT, this.sessionEntity.v, id);
     }
 
-    async deleteSessionsUpTo(expiry: Date): Promise<void> {
+    async deleteSessionsUpTo(logger: Logger, expiry: Date): Promise<void> {
         const statement =
             `delete from ${this.sessionEntity.v.table} where expiry <= \$1`;
         const parameters = [expiry];
-        this.log(statement, parameters);
+        this.log(logger, statement, parameters);
         await this._pool.query(statement, parameters);
     }
 
-    async castBallot(serverId: string, rowId: number,
+    async castBallot(logger: Logger, serverId: string, rowId: number,
                      interval: string): Promise<Row> {
         const statement =
             `update leaderelect set lastping = now(), leader = $1 ` +
             `where id = $2 and lastping < (now() - interval '${interval}') ` +
             `returning leader, lastping`;
         const parameters = [serverId, rowId];
-        this.log(statement, parameters);
+        this.log(logger, statement, parameters);
         const result = await this._pool.query(statement, parameters);
         if (result.rows.length === 0) {
             return new Row();
@@ -286,12 +308,13 @@ export class PgClient implements IReplicableService, IElectorService,
         return Row.dataToRow(result.rows[0]);
     }
 
-    async leaderPing(serverId: string, rowId: number): Promise<Row> {
+    async leaderPing(logger: Logger, serverId: string,
+                     rowId: number): Promise<Row> {
         const statement =
             `update leaderelect set lastping = now() ` +
             `where id = $1 and leader = $2 returning leader, lastping`;
         const parameters = [rowId, serverId];
-        this.log(statement, parameters);
+        this.log(logger, statement, parameters);
         const result = await this._pool.query(statement, parameters);
         if (result.rows.length === 0) {
             return new Row();
@@ -299,7 +322,7 @@ export class PgClient implements IReplicableService, IElectorService,
         return Row.dataToRow(result.rows[0]);
     }
 
-    async getChangesNormal(entity: Entity,
+    async getChangesNormal(logger: Logger, entity: Entity,
                            query: ChangesFeedQuery): Promise<NormalChangeFeed> {
         if (query.style != "all_docs") {
             throw new PgClientError(
@@ -322,7 +345,7 @@ export class PgClient implements IReplicableService, IElectorService,
             `where ${whereClause}`;
         let parameters = query.since != "0" ?
             [ChangesFeedQuery.parseNumber(query.since)] : [];
-        this.log(statement, parameters);
+        this.log(logger, statement, parameters);
         const result = await this._pool.query(statement, parameters);
         if (result.rows.length == 0) {
             throw new PgClientError(
@@ -351,7 +374,7 @@ export class PgClient implements IReplicableService, IElectorService,
             `where ` + whereClause + " order by seq";
         const client = await this._pool.connect();
         try {
-            this.log(statement, parameters);
+            this.log(logger, statement, parameters);
             const cursor = client.query(new Cursor(statement, parameters));
             const rows = await cursor.read(this._spec.pageSize);
             let count = 0;
@@ -463,8 +486,9 @@ export class PgClient implements IReplicableService, IElectorService,
         return ancestors.includes(rev);
     }
 
-    async getAllLeafRevs(entity: Entity, id: string, query: RevsQuery,
-                       multipart: boolean, boundary?: string): Promise<string> {
+    async getAllLeafRevs(logger: Logger, entity: Entity, id: string,
+                         query: RevsQuery, multipart: boolean,
+                         boundary?: string): Promise<string> {
         // For a given ID, we assume that there is never a large number
         // of versions present.
         const statement =
@@ -475,7 +499,7 @@ export class PgClient implements IReplicableService, IElectorService,
             `where vc._id = \$1 ` +
             `order by vc.versiondepth desc`;
         const parameters = [id];
-        this.log(statement, parameters);
+        this.log(logger, statement, parameters);
         const results = await this._pool.query(statement, parameters);
         const resultSet = new MemResultSet(results.rows);
         const winner = this.winningRev(resultSet, true);
@@ -585,7 +609,7 @@ export class PgClient implements IReplicableService, IElectorService,
         return undefined;
     }
 
-    async postBulkDocs(entity: Entity,
+    async postBulkDocs(logger: Logger, entity: Entity,
                  docsRequest: BulkDocsRequest): Promise<ReplicationResponse[]> {
         if (docsRequest["new_edits"] === undefined ||
                 docsRequest["new_edits"]) {
@@ -623,7 +647,7 @@ export class PgClient implements IReplicableService, IElectorService,
                     row.get("updatedby") : Nobody.ID;
                 try {
                     statement = "BEGIN";
-                    this.log(statement);
+                    this.log(logger, statement);
                     await client.query(statement);
 
                     if (!mandatory.every((column) => cols.includes(column))) {
@@ -665,7 +689,7 @@ export class PgClient implements IReplicableService, IElectorService,
                         `order by versiondepth desc`;
                     parameters = [id];
 
-                    this.log(statement, parameters);
+                    this.log(logger, statement, parameters);
                     const qResponse = await client.query(statement, parameters);
                     const vcResultSet = new MemResultSet(qResponse.rows);
 
@@ -703,7 +727,7 @@ export class PgClient implements IReplicableService, IElectorService,
                         `values ` +
                         `(${vcRow.columnNumbers.join()}) `;
                     parameters = vcRow.values();
-                    this.log(statement, parameters);
+                    this.log(logger, statement, parameters);
                     await client.query(statement, parameters);
 
                     // The posted rev is *always* a leaf, therefore now check
@@ -735,7 +759,7 @@ export class PgClient implements IReplicableService, IElectorService,
                             `values ` +
                             `(${vRow.columnNumbers.join()}) `;
                         parameters = vRow.values();
-                        this.log(statement, parameters);
+                        this.log(logger, statement, parameters);
                         await client.query(statement, parameters);
                     }
 
@@ -744,7 +768,7 @@ export class PgClient implements IReplicableService, IElectorService,
                             `update ${entity.table}_vc ` +
                             `set isleaf = false where seq = \$1`;
                         parameters = [vcParentRow.get("seq")];
-                        this.log(statement, parameters);
+                        this.log(logger, statement, parameters);
                         await client.query(statement, parameters);
                     }
 
@@ -773,8 +797,9 @@ export class PgClient implements IReplicableService, IElectorService,
                         if (oldWinnerRev != winnerRev) {
                             // Replace entity X with Y
                             await this.replaceEntityVersion(
-                                client, timestamp, entity, id, oldWinnerRev,
-                                winnerRev, inConflict, userAccountId);
+                                logger, client, timestamp, entity, id,
+                                oldWinnerRev, winnerRev, inConflict,
+                                userAccountId);
                         } else {
                             // Update inconflict on X if needed
                             if (oldInConflict != inConflict) {
@@ -783,28 +808,28 @@ export class PgClient implements IReplicableService, IElectorService,
                                     `set inconflict = \$1 ` +
                                     `where _id = \$2`;
                                 parameters = [inConflict, id];
-                                this.log(statement, parameters);
+                                this.log(logger, statement, parameters);
                                 await client.query(statement, parameters);
                             }
                         }
                     } else if (oldWinnerRev) {
                         // Remove entity X and all its ChangeLogs
                         await this.deleteEntity(
-                            client, timestamp, entity, id, oldWinnerRev,
+                            logger, client, timestamp, entity, id, oldWinnerRev,
                             userAccountId);
                     } else if (winnerRev) {
                         // Create Y as entity, set inconflict if needed.
                         await this.electEntityVersion(
-                            client, timestamp, entity, id, winnerRev,
+                            logger, client, timestamp, entity, id, winnerRev,
                             inConflict, userAccountId);
                     }
                     statement = "COMMIT";
-                    this.log(statement);
+                    this.log(logger, statement);
                     await client.query(statement);
                 } catch (error) {
                     console.log(error);
                     statement = "ROLLBACK";
-                    this.log(statement);
+                    this.log(logger, statement);
                     await client.query(statement);
 
                     let msg = "sorry";
@@ -822,7 +847,7 @@ export class PgClient implements IReplicableService, IElectorService,
         return result;
     }
 
-    async getRevsDiffRequest(entity: Entity,
+    async getRevsDiffRequest(logger: Logger, entity: Entity,
                      diffRequest: RevsDiffRequest): Promise<RevsDiffResponse> {
         const ids = Object.keys(diffRequest);
         const versions: string[] = [];
@@ -838,7 +863,7 @@ export class PgClient implements IReplicableService, IElectorService,
         const statement =
             `select _id, _rev from ${entity.table}_vc where ` +
             `_id in (${idInList}) and _rev in (${versionInList})`;
-        this.log(statement);
+        this.log(logger, statement);
         const results = await this._pool.query(statement);
         // This query obviously can return more rows than intended if a given
         // version is identical between two different records. However, we
@@ -859,7 +884,7 @@ export class PgClient implements IReplicableService, IElectorService,
         return response;
     }
 
-    async putReplicationState(destination: Destination,
+    async putReplicationState(logger: Logger, destination: Destination,
                     repState: ReplicationState): Promise<ReplicationResponse> {
         const row = destination.replicationStateToRow(repState);
         // remove the seq column for inserts
@@ -871,7 +896,7 @@ export class PgClient implements IReplicableService, IElectorService,
             `(${row.columns.join()}) ` +
             `values (${row.columnNumbers.join()})`;
         const parameters = row.values();
-        this.log(statement, parameters);
+        this.log(logger, statement, parameters);
         await this._pool.query(statement, parameters);
         const response = {
             "id": row.get("replicationid"),
@@ -881,13 +906,13 @@ export class PgClient implements IReplicableService, IElectorService,
         return response;
     }
 
-    async getReplicationLogs(entity: Entity,
+    async getReplicationLogs(logger: Logger, entity: Entity,
                              id: string): Promise<ReplicationState> {
         const statement =
             `select * from ${Destination.TABLE} where entity = \$1 and ` +
             `replicationid = \$2 order by seq desc`;
         const parameters = [entity.name, id];
-        this.log(statement, parameters);
+        this.log(logger, statement, parameters);
         const result = await this._pool.query(statement, parameters);
         if (result.rows.length === 0) {
             throw new PgClientError(
@@ -897,11 +922,11 @@ export class PgClient implements IReplicableService, IElectorService,
         return Destination.rowsToReplicationState(result.rows);
     }
 
-    async getGeneratorNext(generatorName: string,
-                           context?: IContext): Promise<string> {
+    async getGeneratorNext(logger: Logger, context: IContext,
+                           generatorName: string): Promise<string> {
         const dbid = "RZOID" in env ? "" + env.RZOID : "";
         const statement = `select nextval('${generatorName}')`;
-        this.log(statement);
+        logger.debug(statement);
         const result = await this._pool.query(statement);
         if (result.rows.length === 0) {
             throw new PgClientError(`No rows returned for sequence ` +
@@ -913,9 +938,11 @@ export class PgClient implements IReplicableService, IElectorService,
         return "" + result.rows[0].nextval;
     }
 
-    async getSequenceId(entity: Entity): Promise<string> {
-        const statement = `select max(seq) from ${entity.table}_vc`;
-        this.log(statement);
+    async getSequenceId(logger: Logger, context: IContext,
+                  entity: Entity): Promise<string> {
+        const statement =
+            `select coalesce(max(seq), 0) "max" from ${entity.table}_vc`;
+        this.log(logger, statement);
         const result = await this._pool.query(statement);
         if (result.rows.length === 0) {
             throw new PgClientError(`No rows returned for max(seq) ` +
@@ -924,8 +951,8 @@ export class PgClient implements IReplicableService, IElectorService,
         return "" + result.rows[0].max;
     }
 
-    async getOne(entity: Entity, id: string, rev?: string,
-                 context?: IContext): Promise<Row> {
+    async getOne(logger: Logger, context: IContext, entity: Entity, id: string,
+                 rev?: string): Promise<Row> {
         let statement: string;
         let parameters: any[];
         if (rev) {
@@ -937,7 +964,7 @@ export class PgClient implements IReplicableService, IElectorService,
             statement = `select * from ${entity.table} where _id = \$1`;
             parameters = [id];
         }
-        this.log(statement, parameters);
+        this.log(logger, statement, parameters);
         const result = await this._pool.query(statement, parameters);
         if (result.rows.length === 0) {
             return new Row();
@@ -945,11 +972,11 @@ export class PgClient implements IReplicableService, IElectorService,
         return Row.dataToRow(result.rows[0]);
     }
 
-    async getQueryOne(entity: Entity, filter: Filter,
-                      context?: IContext): Promise<Row> {
+    async getQueryOne(logger: Logger, context: IContext, entity: Entity,
+                      filter: Filter): Promise<Row> {
         const statement =
             `select * from ${entity.table} where (${filter.where}) limit 1`;
-        this.log(statement);
+        this.log(logger, statement);
         const result = await this._pool.query(statement);
         if (result.rows.length === 0) {
             return new Row();
@@ -957,7 +984,8 @@ export class PgClient implements IReplicableService, IElectorService,
         return Row.dataToRow(result.rows[0]);
     }
 
-    async queryCollection(collection: Collection, context?: IContext,
+    async queryCollection(logger: Logger, context: IContext,
+                          collection: Collection,
                           query?: Query): Promise<IResultSet> {
         // It doesn't make much sense to call queryCollection() for a
         // database client, but we'll simply loop back to the collection
@@ -965,11 +993,11 @@ export class PgClient implements IReplicableService, IElectorService,
         // throw an Error here, but as long as the collection itself doesn't
         // call queryCollection() and cause a recursion, we're OK.
         const finalQuery = await collection.createQuery(context, query);
-        return this.getQuery(collection.entity.v, finalQuery);
+        return this.getQuery(logger, context, collection.entity.v, finalQuery);
     }
 
-    async getQuery(entity: Entity, query: Query,
-                   context?: IContext): Promise<IResultSet> {
+    async getQuery(logger: Logger, context: IContext, entity: Entity,
+                   query: Query): Promise<IResultSet> {
         const fields = query.fields.join();
         const fromClause =
             query.hasFromClause ? query.fromClause : `from ${entity.table}`;
@@ -985,13 +1013,13 @@ export class PgClient implements IReplicableService, IElectorService,
             });
             statement += ` order by ${orders.join()}`;
         }
-        this.log(statement);
+        this.log(logger, statement);
         const client = await this._pool.connect();
         try {
             const cursor = client.query(new Cursor(statement, []));
             const rows = await cursor.read(this._spec.pageSize);
             if (rows.length == 0) {
-                console.log(`No rows returned for query: ${statement}`);
+                this.log(logger, `No rows returned for query: ${statement}`);
                 return new EmptyResultSet();
             }
             const resultSet = new MemResultSet(rows);
@@ -1002,8 +1030,8 @@ export class PgClient implements IReplicableService, IElectorService,
         }
     }
 
-    async put(entity: Entity, id: string, row: Row,
-              context: IContext): Promise<Row> {
+    async put(logger: Logger, context: IContext, entity: Entity, id: string,
+              row: Row): Promise<Row> {
         if (entity.immutable) {
             throw new PgClientError(
                 `Entity '${entity.name}' is immutable`, 400);
@@ -1034,7 +1062,7 @@ export class PgClient implements IReplicableService, IElectorService,
         try {
             let parameters: any[];
             statement = "BEGIN";
-            this.log(statement);
+            this.log(logger, statement);
             await client.query(statement);
 
             statement =
@@ -1042,7 +1070,7 @@ export class PgClient implements IReplicableService, IElectorService,
                 `inner join ${entity.table}_vc as vc using (_id, _rev) ` +
                 `where e._id = \$1`;
             parameters = [id];
-            this.log(statement, parameters);
+            this.log(logger, statement, parameters);
             const result = await client.query(statement, parameters);
             if (result.rows.length === 0) {
                 throw new PgClientError(`Entity not found: ` +
@@ -1071,7 +1099,7 @@ export class PgClient implements IReplicableService, IElectorService,
                 parameters.push(id);
                 statement = `select _id from ${entity.table} ` +
                     `where ${keyWhere.join(" and ")} limit 1`;
-                this.log(statement, parameters);
+                this.log(logger, statement, parameters);
                 const result = await client.query(statement, parameters);
                 if (result.rows.length) {
                     throw new PgClientError(
@@ -1090,7 +1118,7 @@ export class PgClient implements IReplicableService, IElectorService,
                         `(${logRow.columns.join()}) ` +
                         `values (${logRow.columnNumbers.join()})`;
                     parameters = logRow.values();
-                    this.log(statement, parameters);
+                    this.log(logger, statement, parameters);
                     await client.query(statement, parameters);
                 }
             }
@@ -1101,7 +1129,7 @@ export class PgClient implements IReplicableService, IElectorService,
             parameters = row.values().concat(id);
             statement = `update ${entity.table} set ${setList.join(", ")} ` +
                 `where _id = \$${setList.length + 1}`;
-            this.log(statement, parameters);
+            this.log(logger, statement, parameters);
             await client.query(statement, parameters);
 
             // _v table, re-add 'id' and remove 'inconflict' from the row.
@@ -1111,7 +1139,7 @@ export class PgClient implements IReplicableService, IElectorService,
                 `(${row.columns.join()}) ` +
                 `values (${row.columnNumbers.join()})`;
             parameters = row.values();
-            this.log(statement, parameters);
+            this.log(logger, statement, parameters);
             await client.query(statement, parameters);
 
             // _vc table: update old version and insert new version with
@@ -1120,7 +1148,7 @@ export class PgClient implements IReplicableService, IElectorService,
                 `update ${entity.table}_vc set isleaf = false where ` +
                 `_id = \$1 and _rev = \$2`;
             parameters = [id, oldVersion];
-            this.log(statement, parameters);
+            this.log(logger, statement, parameters);
             await client.query(statement, parameters);
 
             const version = row.get("_rev");
@@ -1142,15 +1170,15 @@ export class PgClient implements IReplicableService, IElectorService,
                 false,
                 false
             ];
-            this.log(statement, parameters);
+            this.log(logger, statement, parameters);
             await client.query(statement, parameters);
 
             statement = "COMMIT";
-            this.log(statement);
+            this.log(logger, statement);
             await client.query(statement);
         } catch (err: any) {
             statement = "ROLLBACK";
-            this.log(statement);
+            this.log(logger, statement);
             await client.query(statement);
             throw err;
         } finally {
@@ -1159,14 +1187,15 @@ export class PgClient implements IReplicableService, IElectorService,
         return row;
     }
 
-    async post(entity: Entity, row: Row, context: IContext): Promise<Row> {
+    async post(logger: Logger, context: IContext, entity: Entity,
+               row: Row): Promise<Row> {
         const client = await this._pool.connect();
         const timestamp = new Date();
         let statement: string;
         try {
             let parameters: any[];
             statement = "BEGIN";
-            this.log(statement);
+            this.log(logger, statement);
             await client.query(statement);
 
             // Check dups by key
@@ -1180,7 +1209,7 @@ export class PgClient implements IReplicableService, IElectorService,
                 }
                 statement = `select _id from ${entity.table} ` +
                     `where ${keyWhere.join(" and ")} limit 1`;
-                this.log(statement, parameters);
+                this.log(logger, statement, parameters);
                 const result = await client.query(statement, parameters);
                 if (result.rows.length) {
                     throw new PgClientError(
@@ -1194,7 +1223,7 @@ export class PgClient implements IReplicableService, IElectorService,
             statement = `insert into ${entity.table} (${row.columns.join()}) ` +
                 `values (${row.columnNumbers.join()})`;
             parameters = row.values();
-            this.log(statement, parameters);
+            this.log(logger, statement, parameters);
             await client.query(statement, parameters);
 
             for (const changeLog of entity.changeLogs) {
@@ -1206,7 +1235,7 @@ export class PgClient implements IReplicableService, IElectorService,
                     `(${logRow.columns.join()}) ` +
                     `values (${logRow.columnNumbers.join()})`;
                 parameters = logRow.values();
-                this.log(statement, parameters);
+                this.log(logger, statement, parameters);
                 await client.query(statement, parameters);
             }
 
@@ -1217,7 +1246,7 @@ export class PgClient implements IReplicableService, IElectorService,
                     `(${row.columns.join()}) ` +
                     `values (${row.columnNumbers.join()})`;
                 parameters = row.values();
-                this.log(statement, parameters);
+                this.log(logger, statement, parameters);
                 await client.query(statement, parameters);
 
                 // _vc table
@@ -1238,16 +1267,16 @@ export class PgClient implements IReplicableService, IElectorService,
                     false,
                     false
                 ];
-                this.log(statement, parameters);
+                this.log(logger, statement, parameters);
                 await client.query(statement, parameters);
             }
 
             statement = "COMMIT";
-            this.log(statement);
+            this.log(logger, statement);
             await client.query(statement);
         } catch (err: any) {
             statement = "ROLLBACK";
-            this.log(statement);
+            this.log(logger, statement);
             await client.query(statement);
             throw err;
         } finally {
@@ -1256,17 +1285,18 @@ export class PgClient implements IReplicableService, IElectorService,
         return row;
     }
 
-    private async electEntityVersion(client: pg.Client, timestamp: Date,
-                                 entity: Entity, id: string, rev: string,
-                                 inconflict: boolean,
-                                 userAccountId: string): Promise<Row> {
+    private async electEntityVersion(logger: Logger, client: pg.Client,
+                                     timestamp: Date, entity: Entity,
+                                     id: string, rev: string,
+                                     inconflict: boolean,
+                                     userAccountId: string): Promise<Row> {
         let statement: string;
         let parameters: any[];
 
         statement = `select * from ${entity.table}_v ` +
                     `where _id = \$1 and _rev = \$2`;
         parameters = [id, rev];
-        this.log(statement, parameters);
+        this.log(logger, statement, parameters);
         let result = await client.query(statement, parameters);
 
         if (result.rows.length === 0) {
@@ -1282,7 +1312,7 @@ export class PgClient implements IReplicableService, IElectorService,
         statement = `update ${entity.table} set ${updateSet.join(", ")} ` +
             `where _id = \$${updateSet.length + 1}`;
         parameters = row.values().concat(id);
-        this.log(statement, parameters);
+        this.log(logger, statement, parameters);
         result = await client.query(statement, parameters);
 
         // If the update didn't affect any rows, do an insert.
@@ -1291,23 +1321,24 @@ export class PgClient implements IReplicableService, IElectorService,
                         `(${row.columns.join()}) ` +
                         `values (${row.columnNumbers.join()})`;
             parameters = row.values();
-            this.log(statement, parameters);
+            this.log(logger, statement, parameters);
             await client.query(statement, parameters);
         }
         return row;
     }
 
-    private async replaceEntityVersion(client: pg.Client, timestamp: Date,
-                                 entity: Entity, id: string, fromRev: string,
-                                 toRev: string, inconflict: boolean,
-                                 userAccountId: string): Promise<void> {
+    private async replaceEntityVersion(logger: Logger, client: pg.Client,
+                                       timestamp: Date, entity: Entity,
+                                       id: string, fromRev: string,
+                                       toRev: string, inconflict: boolean,
+                                       userAccountId: string): Promise<void> {
         let statement: string;
         let parameters: any[];
 
         statement = `select * from ${entity.table}_v ` +
                     `where _id = \$1 and _rev = \$2`;
         parameters = [id, fromRev];
-        this.log(statement, parameters);
+        this.log(logger, statement, parameters);
         let result = await client.query(statement, parameters);
 
         if (result.rows.length === 0) {
@@ -1318,27 +1349,29 @@ export class PgClient implements IReplicableService, IElectorService,
         const oldRow = Row.dataToRow(result.rows[0]);
 
         const row = await this.electEntityVersion(
-            client, timestamp, entity, id, toRev, inconflict, userAccountId);
+            logger, client, timestamp, entity, id, toRev, inconflict,
+            userAccountId);
 
         for (const changeLog of entity.changeLogs) {
             if (changeLog.shouldTrigger(oldRow, row)) {
                 const logRow =
-                    changeLog.createChangeLogRow(row, userAccountId, timestamp,
-                                                 oldRow);
+                    changeLog.createChangeLogRow(
+                        row, userAccountId, timestamp, oldRow);
 
                 statement = `insert into ${changeLog.table} ` +
                     `(${logRow.columns.join()}) ` +
                     `values (${logRow.columnNumbers.join()})`;
                 parameters = logRow.values();
-                this.log(statement, parameters);
+                this.log(logger, statement, parameters);
                 await client.query(statement, parameters);
             }
         }
     }
 
-    private async cascadeDelete(client: pg.Client, timestamp: Date,
-                               entity: Entity, id: string, version: string,
-                               userAccountId: string): Promise<void> {
+    private async cascadeDelete(logger: Logger, client: pg.Client,
+                                timestamp: Date, entity: Entity, id: string,
+                                version: string,
+                                userAccountId: string): Promise<void> {
         let statement: string;
         let parameters: any[];
 
@@ -1361,7 +1394,7 @@ export class PgClient implements IReplicableService, IElectorService,
                 `_id in (select _id from ${parentKey.entity.table} ` +
                 `  where ${parentIdName} = \$1)`;
             parameters = [id];
-            this.log(statement, parameters);
+            this.log(logger, statement, parameters);
             await client.query(statement, parameters);
         }
 
@@ -1386,7 +1419,7 @@ export class PgClient implements IReplicableService, IElectorService,
                 `and vc.isleaf = true and vc.isdeleted = false ` +
                 `order by vc._id`;
             parameters = [id];
-            this.log(statement, parameters);
+            this.log(logger, statement, parameters);
             const result = await client.query(statement, parameters);
 
             const resultSet = new MemResultSet(result.rows);
@@ -1439,7 +1472,7 @@ export class PgClient implements IReplicableService, IElectorService,
                     true,
                     false
                 ];
-                this.log(statement, parameters);
+                this.log(logger, statement, parameters);
                 await client.query(statement, parameters);
 
                 // Mark the _vc row as isleaf = false
@@ -1447,7 +1480,7 @@ export class PgClient implements IReplicableService, IElectorService,
                     `update ${contained.table}_vc set isleaf = false ` +
                     `where _id = \$1 and _rev = \$2`;
                 parameters = [containedId, containedVersion];
-                this.log(statement, parameters);
+                this.log(logger, statement, parameters);
                 await client.query(statement, parameters);
             }
 
@@ -1455,14 +1488,14 @@ export class PgClient implements IReplicableService, IElectorService,
             statement =
                 `delete from ${contained.table} where ${parentIdName} = \$1`;
             parameters = [id];
-            this.log(statement, parameters);
+            this.log(logger, statement, parameters);
             await client.query(statement, parameters);
         }
     }
 
-    private async deleteEntity(client: pg.Client, timestamp: Date,
-                               entity: Entity, id: string, version: string,
-                               userAccountId: string,
+    private async deleteEntity(logger: Logger, client: pg.Client,
+                               timestamp: Date, entity: Entity, id: string,
+                               version: string, userAccountId: string,
                                cascade?: boolean): Promise<void> {
         let statement: string;
         let parameters: any[];
@@ -1471,7 +1504,7 @@ export class PgClient implements IReplicableService, IElectorService,
         statement =
             `delete from ${entity.table} where _id = \$1 and _rev = \$2`;
         parameters = [id, version];
-        this.log(statement, parameters);
+        this.log(logger, statement, parameters);
         await client.query(statement, parameters);
 
         // The ChangeLogs for the parent entity.
@@ -1480,20 +1513,20 @@ export class PgClient implements IReplicableService, IElectorService,
             statement =
                 `delete from ${changeLog.table} where _id = \$1`;
             parameters = [id];
-            this.log(statement, parameters);
+            this.log(logger, statement, parameters);
             await client.query(statement, parameters);
         }
 
         if (cascade) {
             await this.cascadeDelete(
-                client, timestamp, entity, id, version, userAccountId);
+                logger, client, timestamp, entity, id, version, userAccountId);
         }
     }
 
-    private async handleVCDelete(client: pg.Client, timestamp: Date,
+    private async handleVCDelete(logger: Logger, context: IContext,
+                                 client: pg.Client, timestamp: Date,
                                  entity: Entity, id: string, version: string,
-                                 ancestry: string,
-                                 context: IContext): Promise<void> {
+                                 ancestry: string): Promise<void> {
         let statement: string;
         let parameters: any[];
         // Query the _v table for the targeted version
@@ -1501,6 +1534,7 @@ export class PgClient implements IReplicableService, IElectorService,
             `select * from ${entity.table}_v ` +
             `where _id = \$1 and _rev = \$2`;
         parameters = [id, version];
+        this.log(logger, statement, parameters);
         const vResult = await client.query(statement, parameters);
         let targetedEntityRow: Row;
         if (vResult.rows.length) {
@@ -1541,7 +1575,7 @@ export class PgClient implements IReplicableService, IElectorService,
             true,
             false
         ];
-        this.log(statement, parameters);
+        this.log(logger, statement, parameters);
         await client.query(statement, parameters);
 
         // Update the existing _vc row and mark as non-leaf,
@@ -1556,11 +1590,12 @@ export class PgClient implements IReplicableService, IElectorService,
             id,
             version
         ];
-        this.log(statement, parameters);
+        this.log(logger, statement, parameters);
         await client.query(statement, parameters);
     }
 
-    async deleteImmutable(entity: Entity, id: string): Promise<void> {
+    async deleteImmutable(logger: Logger, context: IContext, entity: Entity,
+                          id: string): Promise<void> {
         if (!entity.immutable) {
             throw new PgClientError(
                 `Entity ${entity.name} is not immutable`, 500);
@@ -1568,12 +1603,12 @@ export class PgClient implements IReplicableService, IElectorService,
         const statement =
             `delete from ${entity.table} where _id = \$1`;
         const parameters = [id];
-        this.log(statement, parameters);
+        this.log(logger, statement, parameters);
         await this._pool.query(statement, parameters);
     }
 
-    async delete(entity: Entity, id: string, version: string,
-                 context: IContext): Promise<void> {
+    async delete(logger: Logger, context: IContext, entity: Entity, id: string,
+                 rev: string): Promise<void> {
         const client = await this._pool.connect();
         let statement: string;
         const timestamp = new Date();
@@ -1581,7 +1616,7 @@ export class PgClient implements IReplicableService, IElectorService,
             let parameters: any[];
 
             statement = "BEGIN";
-            this.log(statement);
+            this.log(logger, statement);
             await client.query(statement);
 
             // Query all leaves for this id that are not deleted.
@@ -1589,24 +1624,25 @@ export class PgClient implements IReplicableService, IElectorService,
                 `select * from ${entity.table}_vc ` +
                 `where _id = \$1 and isleaf = true and isdeleted = false`;
             parameters = [id];
-            this.log(statement, parameters);
+            this.log(logger, statement, parameters);
             const vcResult = await client.query(statement, parameters);
             const vcResultSet = new MemResultSet(vcResult.rows);
 
             // Check to make sure our targeted _rev actually exists.
             const targetedVCRow = vcResultSet.find((row) =>
-                                                row.get("_rev") == version);
+                                                row.get("_rev") == rev);
 
             if (!targetedVCRow) {
                 throw new PgClientError(
                     `Record not found: Entity ${entity.name}, id: ${id}, ` +
-                    `version: ${version}`, 404);
+                    `version: ${rev}`, 404);
             }
 
             const ancestry = targetedVCRow.get("ancestry");
 
-            await this.handleVCDelete(client, timestamp, entity, id, version,
-                                ancestry, context);
+            await this.handleVCDelete(
+                logger, context, client, timestamp, entity, id, rev,
+                ancestry);
 
             // Query the current elected winner, if any
             statement =
@@ -1637,7 +1673,7 @@ export class PgClient implements IReplicableService, IElectorService,
                                 `set inconflict = \$1 ` +
                                 `where _id = \$2 and _rev = \$3`;
                             parameters = [newConflict, id, newWinner];
-                            this.log(statement, parameters);
+                            this.log(logger, statement, parameters);
                             await client.query(statement, parameters);
                         }
                     } else {
@@ -1646,15 +1682,15 @@ export class PgClient implements IReplicableService, IElectorService,
                         // newWinner to the entity table and then update
                         // changeLogs and recalculate.
                         await this.replaceEntityVersion(
-                            client, timestamp, entity, id, oldWinner, newWinner,
-                            newConflict, context.userAccountId);
+                            logger, client, timestamp, entity, id, oldWinner,
+                            newWinner, newConflict, context.userAccountId);
                     }
                 } else {
                     // Result: this is an actual delete, since there is no
                     // more 'entity' winner. Delete oldWinner then cascade it
                     // to all 'contained' entities and changeLogs for oldWinner.
                     await this.deleteEntity(
-                        client, timestamp, entity, id, oldWinner,
+                        logger, client, timestamp, entity, id, oldWinner,
                         context.userAccountId, true);
                 }
             } else {
@@ -1667,17 +1703,17 @@ export class PgClient implements IReplicableService, IElectorService,
                     // Let's just bail out for now with an error.
                     throw new PgClientError(
                         `Deletion of entity ${entity.name}, id: ${id} ` +
-                        `rev: ${version} results in winning version ` +
+                        `rev: ${rev} results in winning version ` +
                         `${newWinner} which wasn't the current winner`, 409);
                 }
             }
 
             statement = "COMMIT";
-            this.log(statement);
+            this.log(logger, statement);
             await client.query(statement);
         } catch (err: any) {
             statement = "ROLLBACK";
-            this.log(statement);
+            this.log(logger, statement);
             await client.query(statement);
             throw err;
         } finally {
@@ -1685,11 +1721,12 @@ export class PgClient implements IReplicableService, IElectorService,
         }
     }
 
-    async getDeferredToken(tokenUuid: string): Promise<DeferredToken | null> {
+    async getDeferredToken(logger: Logger, context: IContext,
+                           tokenUuid: string): Promise<DeferredToken | null> {
         const statement =
             `select * from deferredtoken where token = \$1`;
         const parameters = [tokenUuid];
-        this.log(statement, parameters);
+        this.log(logger, statement, parameters);
         const result = await this._pool.query(statement, parameters);
         if (result.rows.length === 0) {
             return null;
@@ -1697,8 +1734,9 @@ export class PgClient implements IReplicableService, IElectorService,
         return result.rows[0] as DeferredToken;
     }
 
-    async queryDeferredToken(parent: string, contained: string,
-                             parentField: string, containedField: string,
+    async queryDeferredToken(logger: Logger, context: IContext, parent: string,
+                             contained: string, parentField: string,
+                             containedField: string,
                              id: string): Promise<DeferredToken | null> {
         const statement =
             `select * from deferredtoken where ` +
@@ -1711,7 +1749,7 @@ export class PgClient implements IReplicableService, IElectorService,
             containedField,
             id
         ];
-        this.log(statement, parameters);
+        this.log(logger, statement, parameters);
         const result = await this._pool.query(statement, parameters);
         if (result.rows.length === 0) {
             return null;
@@ -1719,12 +1757,13 @@ export class PgClient implements IReplicableService, IElectorService,
         return result.rows[0] as DeferredToken;
     }
 
-    private performTokenUpdate(token: DeferredToken, context: IContext,
+    private performTokenUpdate(logger: Logger, context: IContext,
+                               token: DeferredToken,
                                skipDelete?: boolean): void {
         if (!skipDelete) {
             const statement = `delete from deferredtoken where token = \$1`;
             const parameters = [token.token];
-            this.log(statement, parameters);
+            this.log(logger, statement, parameters);
             this._pool.query(statement, parameters);
             // Note: this delete command runs parallel to the following
             // statements.
@@ -1740,15 +1779,16 @@ export class PgClient implements IReplicableService, IElectorService,
         }
     }
 
-    runTask(row: Row, context: IContext): void {
+    runTask(context: IContext, row: Row): void {
         const tokenUuid = row.get("token");
         // Only if the current token is the same as 'our' token
         // do we take action. Otherwise, a further update has
         // occurred and we simply exit without doing anything.
-        this.getDeferredToken(tokenUuid)
+        this.getDeferredToken(this.deferredLogger, context, tokenUuid)
         .then((currToken) => {
             if (currToken) {
-                this.performTokenUpdate(currToken, context);
+                this.performTokenUpdate(
+                    this.deferredLogger, context, currToken);
             } else {
                 console.log(
                     `Deferred token ${tokenUuid} no longer exists`);
@@ -1760,13 +1800,13 @@ export class PgClient implements IReplicableService, IElectorService,
         });
     }
 
-    async putDeferredToken(token: DeferredToken,
-                           context: IContext): Promise<number> {
+    async putDeferredToken(logger: Logger, context: IContext,
+                           token: DeferredToken): Promise<number> {
         if (!token.token || !token.updatedby || !token.updated) {
             throw new PgClientError("Invalid Token", 400);
         }
         const existingToken = await this.queryDeferredToken(
-            token.parent, token.contained, token.parentfield,
+            logger, context, token.parent, token.contained, token.parentfield,
             token.containedfield, token.id);
         if (existingToken && existingToken.updated) {
             // if this put comes in less than 30s after the previous put,
@@ -1797,7 +1837,7 @@ export class PgClient implements IReplicableService, IElectorService,
             token.containedfield,
             token.id
         ];
-        this.log(statement, parameters);
+        this.log(logger, statement, parameters);
         const result = await this._pool.query(statement, parameters);
         if (!result.rowCount) {
             // No update was performed, do an insert instead.
@@ -1816,12 +1856,26 @@ export class PgClient implements IReplicableService, IElectorService,
                 token.updatedby,
                 token.updated
             ];
-            this.log(statement, parameters);
+            this.log(logger, statement, parameters);
             await this._pool.query(statement, parameters);
         }
         // Schedule the execution of the token expiry
         this._scheduler.schedule(Row.dataToRow(token), context);
         return 0;
+    }
+
+    async getDBInfo(logger: Logger, context: IContext): Promise<Row> {
+        const info = {
+            uuid: "00000000000000000000000000000000",
+            version: VERSION
+        };
+        const statement = "select db_uuid()";
+        this.log(logger, statement);
+        const result = await this._pool.query(statement);
+        if (result.rows.length > 0) {
+            info.uuid = result.rows[0].db_uuid;
+        }
+        return new Row(info);
     }
 }
 

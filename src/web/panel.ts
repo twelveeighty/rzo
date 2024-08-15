@@ -18,9 +18,10 @@
 */
 
 import {
-    State, Row, Entity, IService, Cfg, IContext, SideEffects, StringField
+    State, Row, Entity, IService, Cfg, IContext, SideEffects, StringField,
+    Logger
 } from "../base/core.js";
-import { CONTEXT } from "../base/configuration.js";
+import { RZO, CONTEXT } from "../base/configuration.js";
 
 import { TOASTER } from "./toaster.js";
 import * as X from "./common.js";
@@ -93,11 +94,17 @@ export class BasePanel {
     entity: Cfg<Entity>;
     service: Cfg<IService>;
     controller: Cfg<PanelController>;
+    logger: Logger;
 
     constructor() {
+        this.logger = new Logger("client");
         this.entity = new Cfg("entity");
         this.service = new Cfg("service");
         this.controller = new Cfg("controller");
+    }
+
+    initialize(): void {
+        this.logger.configure(RZO);
     }
 
     register(controller: PanelController): void {
@@ -137,7 +144,7 @@ export class Control {
     }
 
     setValue(entity: Entity, state: State,
-             context?: IContext): Promise<SideEffects> {
+             context: IContext): Promise<SideEffects> {
         return entity.setValue(
             state, this.attribute, this.element.value, context)
         .catch((err) => {

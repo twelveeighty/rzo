@@ -18,7 +18,7 @@
 */
 
 import { Field, Cfg, Row } from "../../base/core.js";
-import { RZO } from "../../base/configuration.js";
+import { RZO, CONTEXT } from "../../base/configuration.js";
 
 import * as X from "../common.js";
 import { TOASTER } from "../toaster.js";
@@ -81,6 +81,7 @@ export class TripViewPanel extends BasePanel implements IPanel {
     }
 
     initialize(): void {
+        super.initialize();
         this.entity.v = RZO.getEntity("trip");
         this.service.v = RZO.getSource("db").service;
         this.appointmentTsField.v = RZO.getField("trip.appointmentts");
@@ -169,7 +170,8 @@ export class TripViewPanel extends BasePanel implements IPanel {
 
     async show(panelData?: PanelData): Promise<void> {
         if (panelData) {
-            this.service.v.getOne(this.entity.v, panelData.asString)
+            this.service.v.getOne(
+                this.logger, CONTEXT.session, this.entity.v, panelData.asString)
             .then((row) => {
                 this.row = row;
                 this.rowToUI(this.row);

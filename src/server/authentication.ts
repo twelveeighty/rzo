@@ -273,7 +273,9 @@ export class RZOOneTimeAdapter extends SessionAwareAdapter {
 
     protected async payloadHandler(payload: JsonObject,
                                    request: IncomingMessage,
-                                   response: ServerResponse, resource?: string,
+                                   response: ServerResponse,
+                                   uriElements: string[],
+                                   resource?: string,
                                    id?: string): Promise<void> {
         const row = Row.dataToRow(payload);
         if (request.method == "POST") {
@@ -312,7 +314,7 @@ export class RZOOneTimeAdapter extends SessionAwareAdapter {
                 throw new AuthenticationError("Authentication error", 500);
             }
         } else if (request.method == "POST" || request.method == "PUT") {
-            this.handlePayload(request, response);
+            this.handlePayload(request, response, uriElements);
         } else {
             console.log(`Invalid request method: ${request.method}`);
             throw new AuthenticationError("Authentication error", 500);
@@ -381,7 +383,9 @@ export class RZOAuthAdapter extends SessionAwareAdapter {
 
     protected async payloadHandler(payload: JsonObject,
                                    request: IncomingMessage,
-                                   response: ServerResponse, resource?: string,
+                                   response: ServerResponse,
+                                   uriElements: string[],
+                                   resource?: string,
                                    id?: string): Promise<void> {
         const row = Row.dataToRow(payload);
         const userId = await rzoAuthenticate(
@@ -434,7 +438,7 @@ export class RZOAuthAdapter extends SessionAwareAdapter {
         try {
             switch (request.method) {
                 case "POST":
-                    this.handlePayload(request, response);
+                    this.handlePayload(request, response, uriElements);
                     break;
                 case "DELETE":
                     this.handleDelete(request, response);
@@ -461,7 +465,9 @@ export class BootstrapSessionAdapter extends RZOAuthAdapter {
 
     protected async payloadHandler(payload: JsonObject,
                                    request: IncomingMessage,
-                                   response: ServerResponse, resource?: string,
+                                   response: ServerResponse,
+                                   uriElements: string[],
+                                   resource?: string,
                                    id?: string): Promise<void> {
         const userId = await this.authenticate(Row.dataToRow(payload));
         if (userId != Nobody.ID) {

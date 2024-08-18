@@ -219,13 +219,16 @@ export class BaseAdapter extends DaemonWorker implements IAdapter {
 
     protected async payloadHandler(payload: JsonObject,
                                    request: IncomingMessage,
-                                   response: ServerResponse, resource?: string,
+                                   response: ServerResponse,
+                                   uriElements: string[],
+                                   resource?: string,
                                    id?: string): Promise<void> {
         response.end();
     }
 
     protected handlePayload(request: IncomingMessage, response: ServerResponse,
-                            resource?: string, id?: string): void {
+                            uriElements: string[], resource?: string,
+                            id?: string): void {
         const chunks: Uint8Array[] = [];
         request.on("data", (chunk) => {
             chunks.push(chunk);
@@ -239,7 +242,8 @@ export class BaseAdapter extends DaemonWorker implements IAdapter {
             } else {
                 json_obj = parsed;
             }
-            this.payloadHandler(json_obj, request, response, resource, id)
+            this.payloadHandler(
+                json_obj, request, response, uriElements, resource, id)
             .catch((error) => {
                 AdapterError.toResponse(this.logger, error, response);
             });
@@ -458,7 +462,9 @@ export class EntityAdapter extends SessionAwareAdapter {
 
     protected async payloadHandler(payload: JsonObject,
                                    request: IncomingMessage,
-                                   response: ServerResponse, resource?: string,
+                                   response: ServerResponse,
+                                   uriElements: string[],
+                                   resource?: string,
                                    id?: string): Promise<void> {
         const entity = this.entities.v.get(resource!);
         if (!entity) {
@@ -521,7 +527,8 @@ export class EntityAdapter extends SessionAwareAdapter {
                         entity, request, response, uriElements);
                     break;
                 case "POST":
-                    this.handlePayload(request, response, entityName);
+                    this.handlePayload(
+                        request, response, uriElements, entityName);
                     break;
                 case "DELETE":
                     this.handleDeleteEntity(
@@ -529,8 +536,9 @@ export class EntityAdapter extends SessionAwareAdapter {
                     break;
                 case "PUT":
                     if (uriElements.length == 3) {
-                        this.handlePayload(request, response, entityName,
-                                           uriElements[2]);
+                        this.handlePayload(
+                            request, response, uriElements, entityName,
+                            uriElements[2]);
                     } else {
                         throw new AdapterError(
                             `Invalid request: invalid URI components for PUT`);
@@ -748,7 +756,9 @@ export class TokenAdapter extends SessionAwareAdapter {
 
     protected async payloadHandler(payload: JsonObject,
                                    request: IncomingMessage,
-                                   response: ServerResponse, resource?: string,
+                                   response: ServerResponse,
+                                   uriElements: string[],
+                                   resource?: string,
                                    id?: string): Promise<void> {
         const context = await this.pullContext(request);
         const token = payload as DeferredToken;
@@ -785,7 +795,8 @@ export class TokenAdapter extends SessionAwareAdapter {
                 }
             case "PUT":
                 if (uriElements.length == 2) {
-                    this.handlePayload(request, response, "", uriElements[1]);
+                    this.handlePayload(
+                        request, response, uriElements, "", uriElements[1]);
                 } else {
                     throw new AdapterError("Invalid Token PUT request", 400);
                 }

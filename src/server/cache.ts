@@ -174,6 +174,7 @@ export class CacheWorker extends APICacheWorker implements ICache {
     }
 
     configure(configuration: IConfiguration): void {
+        super.configure(configuration);
         this.leaderElector.setIfCast(
             `Invalid Cache: leaderElector `,
             configuration.workers.get(this.leaderElector.name),

@@ -45,18 +45,47 @@ export interface IReplicableService extends IService {
     get isReplicable(): boolean;
     createInMemorySession(logger: Logger, userId: string, expiryOverride?: Date,
                           personaOverride?: Persona): Promise<State>;
-    getReplicationLogs(logger: Logger, entity: Entity,
-                       id: string): Promise<ReplicationState>;
-    putReplicationState(logger: Logger, destination: Destination,
-                        repState: ReplicationState): Promise<ReplicationResponse>;
+    getReplicationState(logger: Logger, entity: Entity,
+                       id: string): Promise<JsonObject | null>;
+    putReplicationState(logger: Logger, entity: Entity, id: string,
+                        repState: JsonObject): Promise<ReplicationResponse>;
     getChangesNormal(logger: Logger, entity: Entity,
                      query: ChangesFeedQuery): Promise<NormalChangeFeed>;
     getRevsDiffRequest(logger: Logger, entity: Entity,
                        diffRequest: RevsDiffRequest): Promise<RevsDiffResponse>;
     getAllLeafRevs(logger: Logger, entity: Entity, id: string, query: RevsQuery,
                    multipart: boolean, boundary?: string): Promise<string>;
+    postBulkGet(logger: Logger, entity: Entity, request: BulkGetRequest,
+                query: RevsQuery): Promise<BulkGetResponse>;
     postBulkDocs(logger: Logger, entity: Entity,
                  docsRequest: BulkDocsRequest): Promise<ReplicationResponse[]>;
+}
+
+export type BulkGetRequest = {
+    docs: [
+        { id: string; rev?: string; }
+    ];
+}
+
+type BulkGetError = {
+    id: string;
+    rev: string;
+    error: string;
+    reason: string;
+}
+
+type BulkGetResult = {
+    ok?: JsonObject;
+    error?: BulkGetError;
+}
+
+export type BulkGetResponseObj = {
+    id: string;
+    docs: BulkGetResult[];
+}
+
+export type BulkGetResponse = {
+    results: BulkGetResponseObj[];
 }
 
 export type DocRevisions = {
@@ -69,30 +98,6 @@ export type DeletedDoc = {
     _rev: string;
     _deleted: boolean;
     _revisions: DocRevisions;
-};
-
-type ReplicationSession = {
-    doc_write_failures?: number;
-    docs_read?: number;
-    docs_written?: number;
-    end_last_seq?: number;
-    end_time?: string;
-    missing_checked?: number;
-    missing_found?: number;
-    recorded_seq: number;
-    session_id: string;
-    start_last_seq?: number;
-    start_time?: string;
-}
-
-export type ReplicationState = {
-    _id: string;
-    _rev: string;
-    _revisions?: DocRevisions;
-    history: ReplicationSession[];
-    replication_id_version: number;
-    session_id: string;
-    source_last_seq: number;
 }
 
 export type ReplicationResponse = {
@@ -122,13 +127,13 @@ export type NormalChangeFeed = {
 
 export type RevsDiffRequest = {
     [name: string]: string[];
-};
+}
 
 export type RevsDiffResponse = {
     [name: string]: {
         missing: string[];
     };
-};
+}
 
 export type BulkDocsRequest = {
     docs: JsonObject[];
@@ -153,153 +158,26 @@ type CouchServerInfo = {
     version: string;
 }
 
-export class Destination {
-    static TABLE = "local_replication";
+export const STATE_TABLE = "local_replication";
 
-    entity: Entity;
-
-    constructor(entity: Entity) {
-        this.entity = entity;
-    }
-
-    get columns(): string[] {
-        return [
-            "seq",
-            "_rev",
-            "entity",
-            "replicationid",
-            "replication_id_version",
-            "doc_write_failures",
-            "docs_read",
-            "docs_written",
-            "end_last_seq",
-            "end_time",
-            "missing_checked",
-            "missing_found",
-            "recorded_seq",
-            "session_id",
-            "start_last_seq",
-            "start_time"
-        ];
-    }
-
-    static formatUTC(rowData: unknown): string {
-        if (!(rowData instanceof Date)) {
-            throw new ReplicationError("Invalid date object encountered");
-        }
-        const rowDate = rowData as Date;
-        return rowDate.toUTCString();
-    }
-
-    static rowsToReplicationState(rows: any[]): ReplicationState {
-        if (!rows.length) {
-            throw new ReplicationError(`No logs found`, 404);
-        }
-        const firstRow = rows[0];
-        const sessions: ReplicationSession[] = [];
-        const state: ReplicationState = {
-            "_id": firstRow["replicationid"],
-            "_rev": firstRow["_rev"],
-            "history": sessions,
-            "replication_id_version": firstRow["replication_id_version"],
-            "session_id": firstRow["session_id"],
-            "source_last_seq": firstRow["recorded_seq"]
-        }
-        rows.forEach((row) => {
-            sessions.push({
-                "doc_write_failures": row["doc_write_failures"],
-                "docs_read": row["docs_read"],
-                "docs_written": row["docs_written"],
-                "end_last_seq": row["end_last_seq"],
-                "end_time": Destination.formatUTC(row["end_time"]),
-                "missing_checked": row["missing_checked"],
-                "missing_found": row["missing_found"],
-                "recorded_seq": row["recorded_seq"],
-                "session_id": row["session_id"],
-                "start_last_seq": row["start_last_seq"],
-                "start_time": Destination.formatUTC(row["start_time"])
-            });
-        });
-        return state;
-    }
-
-    optional(session: JsonObject, name: string,
-             convert?: (value: any) => any): any {
-        if (Object.hasOwn(session, name) && session[name]) {
-            if (convert) {
-                return convert(session[name]);
-            }
-            return session[name];
-        }
-        return null;
-    }
-
-    replicationStateToRow(repState: ReplicationState): Row {
-        const session = repState.history.find(
-            (session) => session.recorded_seq == repState.source_last_seq);
-        if (!session) {
-            throw new ReplicationError(
-                `Cannot find session for source_last_seq = ` +
-                `${repState.source_last_seq}`);
-        }
-        const row = Row.emptyRow(this.columns);
-        row.put("entity", this.entity.name);
-        row.put("replicationid", repState._id);
-        row.put("replication_id_version", repState.replication_id_version);
-        row.put("doc_write_failures",
-                this.optional(session, "doc_write_failures"));
-        row.put("docs_read",
-                this.optional(session, "docs_read"));
-        row.put("docs_written",
-                this.optional(session, "docs_written"));
-        row.put("end_last_seq",
-                this.optional(session, "end_last_sequence"));
-        row.put("end_time",
-                this.optional(session, "end_time", (input) => new Date(input)));
-        row.put("missing_checked",
-                this.optional(session, "missing_checked"));
-        row.put("missing_found",
-                this.optional(session, "missing_found"));
-        row.put("recorded_seq", session.recorded_seq);
-        row.put("session_id", session.session_id);
-        row.put("start_last_seq",
-                this.optional(session, "start_last_seq"));
-        row.put("start_time",
-                this.optional(session, "start_time",
-                              (input) => new Date(input)));
-        return row;
-    }
-
-    static creationDDL(dropFirst?: boolean): string {
-        const drop   = `
-drop table if exists ${Destination.TABLE};
-`       ;
-        const create = `
-create table ${Destination.TABLE} (
+export function stateTableDDL(dropFirst?: boolean): string {
+    const drop   = `
+drop table if exists ${STATE_TABLE};
+`   ;
+    const create = `
+create table ${STATE_TABLE} (
    seq                     bigserial primary key,
-   _rev                    varchar(43) not null,
    entity                  varchar(46) not null,
-   replicationid           varchar(128) not null,
-   replication_id_version  integer not null,
-   doc_write_failures      integer not null,
-   docs_read               integer not null,
-   docs_written            integer not null,
-   end_last_seq            integer not null,
-   end_time                timestamptz not null,
-   missing_checked         integer not null,
-   missing_found           integer not null,
-   recorded_seq            integer not null,
-   session_id              text not null,
-   start_last_seq          integer not null,
-   start_time              timestamptz not null
+   _id                     text not null,
+   _rev                    varchar(43) not null,
+   contents                jsonb not null
 );
-create index ${Destination.TABLE}_entity
-   on ${Destination.TABLE} (entity, replicationid, seq desc);
+create index ${STATE_TABLE}_entity
+   on ${STATE_TABLE} (entity, _id);
 
-`       ;
-        const fullCreate = dropFirst ? drop + create : create;
-        return fullCreate;
-    }
+`   ;
+    const fullCreate = dropFirst ? drop + create : create;
+    return fullCreate;
 }
 
 export class RevsQuery {
@@ -507,7 +385,7 @@ export class ReplicationAdapter extends SessionAwareAdapter {
          * GET r entity    id         ?           openrevs=['']
          *                                        Fetch specific versions
          */
-        const id = uriElements[2];
+        const id = decodeURIComponent(uriElements[2]);
         const multipart =
             getHeader(request.headers, "accept") == "multipart/mixed";
         const revsQuery =
@@ -516,6 +394,12 @@ export class ReplicationAdapter extends SessionAwareAdapter {
             Entity.generateId().replaceAll("-", "") : "";
         const result = await this.replSource.v.getAllLeafRevs(
             this.logger, entity, id, revsQuery, multipart, boundary);
+        if (this.logger.willLog("Debug")) {
+            if (multipart) {
+                this.logger.debug("multipart response requested");
+            }
+            this.logger.debug(result);
+        }
         if (multipart) {
             response.setHeader(
                 "Content-Type", `multipart/mixed; boundary="${boundary}"`);
@@ -555,7 +439,8 @@ export class ReplicationAdapter extends SessionAwareAdapter {
          * GET         r entity    id         ?           openrevs=['']
          *                                                  Fetch specific
          *                                                  versions
-         * GET         r entity _local   replicationid    Get replication logs
+         *
+         * GET         r entity _local        id          Get replication logs
          *
          * GET         r entity _changes      ?           feed=continues&...
          *                                                  Changes feed
@@ -578,9 +463,17 @@ export class ReplicationAdapter extends SessionAwareAdapter {
                 };
                 response.end(JSON.stringify(result));
             } else if (uriElements.length == 4 && uriElements[2] == "_local") {
-                const state = await this.replSource.v.getReplicationLogs(
-                    this.logger, entity, uriElements[3])
-                response.end(JSON.stringify(state));
+                const state = await this.replSource.v.getReplicationState(
+                    this.logger, entity, decodeURIComponent(uriElements[3]))
+                if (state) {
+                    response.end(JSON.stringify(state));
+                } else {
+                    response.statusCode = 404;
+                    response.end(JSON.stringify({
+                        "error": "not_found",
+                        "reason": "missing"
+                    }));
+                }
             } else if (uriElements.length == 5 &&
                        uriElements[2] == "_changes") {
                 await this.handleGetReplicateChanges(
@@ -599,14 +492,61 @@ export class ReplicationAdapter extends SessionAwareAdapter {
         }
     }
 
+    async handleBulkGet(entity: Entity, payload: JsonObject,
+                        response: ServerResponse,
+                        uriElements: string[]): Promise<void> {
+        /* https:/host/
+         *             0   1       2        3            4
+         * POST        r entity _bulk_get   ?   revs=true&latest=true
+         *                                        PouchDB calls this instead
+         *                                        of the Multipart API, i.e.
+         *                                        GetReplicateRevs()
+         */
+        const revsQuery = new RevsQuery(
+            uriElements.length >= 5 ? uriElements[4] : "");
+        const bulk = await this.replSource.v.postBulkGet(
+            this.logger, entity, payload as BulkGetRequest, revsQuery);
+        if (this.logger.willLog("Info")) {
+            this.logger.info("Replication _bulk_get outbound:");
+            for (const obj of bulk.results) {
+                const id = obj.id;
+                for (const doc of obj.docs) {
+                    if (doc.ok) {
+                        this.logger.info(
+                            `OK Entity ${entity.name} id = ${id} ; rev = ` +
+                            `${doc.ok["_rev"]}`);
+                    }
+                    if (doc.error) {
+                        this.logger.info(
+                            `ERROR Entity ${entity.name} id = ${id} ; rev = ` +
+                            `${doc.error.rev} ; reason = ${doc.error.reason}`);
+                    }
+                }
+            }
+        }
+        const result = JSON.stringify(bulk);
+        if (this.logger.willLog("Debug")) {
+            this.logger.debug(result);
+        }
+        response.end(result);
+    }
+
     protected async payloadHandler(payload: JsonObject,
                                    request: IncomingMessage,
-                                   response: ServerResponse, resource?: string,
+                                   response: ServerResponse,
+                                   uriElements: string[],
+                                   resource?: string,
                                    id?: string): Promise<void> {
         /* https:/host/
          *             0   1       2
          * POST        r entity _revs_diff     Calculate Revision Difference
          * POST        r entity _bulk_docs     Upload Batch of Documents
+         *
+         *             0   1       2        3            4
+         * POST        r entity _bulk_get   ?   revs=true&latest=true
+         *                                        PouchDB calls this instead
+         *                                        of the Multipart API, i.e.
+         *                                        GetReplicateRevs()
          *
          *             0   1       2        3
          * PUT         r entity _local replicationid    Insert replication log
@@ -633,15 +573,17 @@ export class ReplicationAdapter extends SessionAwareAdapter {
                 const bulkResponse = await this.replSource.v.postBulkDocs(
                     this.logger, entity, payload as BulkDocsRequest);
                 response.end(JSON.stringify(bulkResponse));
+            } else if (id == "_bulk_get") {
+                await this.handleBulkGet(
+                    entity, payload, response, uriElements);
             } else {
                 throw new ReplicationError(
                     "ReplicationAdapter POST must be either _revs_diff or " +
                     "_bulk_docs");
             }
         } else if (request.method == "PUT") {
-            const destination = new Destination(entity);
             const repLogResponse = await this.replSource.v.putReplicationState(
-                        this.logger, destination, payload as ReplicationState);
+                        this.logger, entity, id, payload);
             response.end(JSON.stringify(repLogResponse));
         } else {
             // This should never happen
@@ -725,6 +667,14 @@ export class ReplicationAdapter extends SessionAwareAdapter {
         }
     }
 
+    decodeOptionalURIComponent(input?: string) {
+        if (input !== undefined) {
+            return decodeURIComponent(input);
+        } else {
+            return input;
+        }
+    }
+
     handle(request: IncomingMessage, response: ServerResponse,
            uriElements: string[]): void {
         this.logger.info(`${request.method} - ${request.url}`);
@@ -750,16 +700,20 @@ export class ReplicationAdapter extends SessionAwareAdapter {
                         break;
                     case "POST":
                         this.handlePayload(
-                            request, response, entityName, uriElements.at(2));
+                            request, response, uriElements, entityName,
+                            this.decodeOptionalURIComponent(
+                                uriElements.at(2)));
                         break;
                     case "PUT":
-                        if (uriElements.at(2) != "_local" ||
-                            uriElements.length < 4) {
+                        if (uriElements.length < 4 ||
+                            uriElements.at(2) != "_local") {
                             throw new ReplicationError(
                                 "Invalid Replication PUT uri");
                         }
                         this.handlePayload(
-                            request, response, entityName, uriElements.at(3));
+                            request, response, uriElements, entityName,
+                            this.decodeOptionalURIComponent(
+                                uriElements.at(3)));
                         break;
                     default:
                         throw new ReplicationError(

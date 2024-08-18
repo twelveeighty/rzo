@@ -19,7 +19,7 @@
 
 import { Entity, IConfiguration } from "../base/core.js";
 import { CreatorFactory } from "../base/core-ddl.js";
-import { Destination } from "./replication.js";
+import { stateTableDDL } from "./replication.js";
 
 export class PgCreator {
     config: IConfiguration;
@@ -90,7 +90,7 @@ insert into leaderelect values (1, now(), '00000000-0000-1000-8000-000000000000'
             this.createTableDDL(version, entity);
         }
         // Create the replication artifacts
-        this.output.push(Destination.creationDDL(true));
+        this.output.push(stateTableDDL(true));
         // Create the NOBODY account
         this.output.push(`
 insert into useraccount (

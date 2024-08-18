@@ -30,7 +30,7 @@ import {
     EmptyResultSet, MemResultSet, Row, TypeCfg, ClassSpec, Collection,
     IContext, Filter, Source, _IError, Nobody, DeferredToken,
     CoreColumns, SummaryField, Persona, Cfg, IService, SideEffects, State,
-    Logger
+    Logger, JsonObject
 } from "../base/core.js";
 
 import { VERSION, NOCONTEXT } from "../base/configuration.js";
@@ -42,10 +42,10 @@ import {
 import { ITaskRunner, Scheduler } from "../base/scheduler.js";
 
 import {
-    Destination, ReplicationState, ReplicationResponse, ChangesFeedQuery,
+    STATE_TABLE, ReplicationResponse, ChangesFeedQuery,
     NormalChangeFeed, ChangeRecord, RevsDiffResponse, RevsDiffRequest,
     IReplicableService, RevsQuery, DeletedDoc, DocRevisions, PurgedDoc,
-    BulkDocsRequest
+    BulkDocsRequest, BulkGetRequest, BulkGetResponse, BulkGetResponseObj
 } from "./replication.js";
 
 import { IElectorService, LeaderElector } from "./election.js";
@@ -486,6 +486,135 @@ export class PgClient implements IReplicableService, IElectorService,
         return ancestors.includes(rev);
     }
 
+    async postBulkGet(logger: Logger, entity: Entity, request: BulkGetRequest,
+                      query: RevsQuery): Promise<BulkGetResponse> {
+        /* We make some simplifications in handling the generic _bulk_get
+         * API call. Since this is part of the Replication interface, we assume
+         * the following:
+         *      - The ?revs=true parameter is always assumed to be present
+         *        (and set to 'true').
+         *      - The ?latest=true parameter is always present (and set to
+         *        'true'). Curiously, this is not even documented as a possible
+         *        parameter in the CouchDB API documentation, but PouchDB sets
+         *        this during replication calls.
+         * Note that these assumptions make the passed RevsQuery parameter
+         * irrelevant. We keep it for future expansions.
+         */
+        const results: BulkGetResponseObj[] = [];
+        let statement: string;
+        let parameters: any[];
+        for (const docReq of request.docs) {
+            const outerIdObj: BulkGetResponseObj = { id: docReq.id, docs: [] };
+            results.push(outerIdObj);
+            // Get all (possibly conflicting) leaf records
+            statement =
+                `select ${this.fullyQualifiedVCCols("vc").join()}, v.* ` +
+                `from ${entity.table}_vc as vc ` +
+                `left join ${entity.table}_v as v on (vc._id = v._id and ` +
+                `vc._rev = v._rev) ` +
+                `where vc._id = \$1 and vc.isleaf = \$2 ` +
+                `order by vc.versiondepth desc`;
+            parameters = [docReq.id, true];
+            this.log(logger, statement, parameters);
+            const leafResults = await this._pool.query(statement, parameters);
+            let docReqRevFound = false;
+            // These leaf results are always returned
+            for (const dbRow of leafResults.rows) {
+                const row = Row.dataToRow(dbRow);
+                const revHashes = Entity.asString(
+                    row.get("ancestry")).split(".").reverse();
+                /* 1. Check to see if we had _v match on the original query
+                 * 2. add _revisions column
+                 * 3. Remove all _vc columns
+                 */
+                if (!row.has("_id") || !row.get("_id")) {
+                    throw new PgClientError(
+                        `Cannot find leaf record for entity ${entity.name}, ` +
+                        `id = ${docReq.id}, rev = ${row.get("vc_rev")}`);
+                }
+                row.add("_revisions", {
+                    start: row.get("versiondepth"),
+                    ids: revHashes
+                });
+                for (const name of PgClient.VC_COL_ALIASES) {
+                    row.delete(name);
+                }
+                if (docReq.rev && row.get("_rev") == docReq.rev) {
+                    docReqRevFound = true;
+                }
+                outerIdObj.docs.push({ ok: row.raw() });
+            }
+
+            /* If a specific revision was queried, check if we've already
+             * handled that with the leaf version(s), otherwise try to locate
+             * it.
+             */
+            if (docReq.rev && !docReqRevFound) {
+                statement =
+                    `select ${this.fullyQualifiedVCCols("vc").join()}, v.* ` +
+                    `from ${entity.table}_vc as vc ` +
+                    `left join ${entity.table}_v as v on (vc._id = v._id and ` +
+                    `vc._rev = v._rev) ` +
+                    `where vc._id = \$1 and vc._rev = \$2 `;
+                parameters = [docReq.id, docReq.rev];
+                this.log(logger, statement, parameters);
+                const reqResults = await this._pool.query(
+                    statement, parameters);
+                if (reqResults.rows.length) {
+                    const row = Row.dataToRow(reqResults.rows[0]);
+                    const revHashes = Entity.asString(
+                        row.get("ancestry")).split(".").reverse();
+                    const revisions = {
+                        start: row.get("versiondepth"),
+                        ids: revHashes
+                    };
+                    if (!row.has("_id") || !row.get("_id")) {
+                        /* This is a stub, or otherwise missing payload.
+                         * Add a stub record with _revisions
+                         */
+                        const stub = {
+                            _id: docReq.id,
+                            _rev: docReq.rev,
+                            _revisions: revisions
+                        };
+                        outerIdObj.docs.push({ ok: stub });
+                    } else {
+                        row.add("_revisions", revisions);
+                        for (const name of PgClient.VC_COL_ALIASES) {
+                            row.delete(name);
+                        }
+                        outerIdObj.docs.push({ ok: row.raw() });
+                    }
+                } else {
+                    // The requested version is not found
+                    outerIdObj.docs.push(
+                        {
+                            error: {
+                                id: docReq.id,
+                                rev: docReq.rev,
+                                error: "not_found",
+                                reason: "missing"
+                            }
+                        }
+                    );
+                }
+            } else if (!outerIdObj.docs.length) {
+                // We have not found any matches or leafs
+                outerIdObj.docs.push(
+                    {
+                        error: {
+                            id: docReq.id,
+                            rev: docReq.rev || "undefined",
+                            error: "not_found",
+                            reason: "missing"
+                        }
+                    }
+                );
+            }
+        }
+        return { results: results };
+    }
+
     async getAllLeafRevs(logger: Logger, entity: Entity, id: string,
                          query: RevsQuery, multipart: boolean,
                          boundary?: string): Promise<string> {
@@ -501,6 +630,11 @@ export class PgClient implements IReplicableService, IElectorService,
         const parameters = [id];
         this.log(logger, statement, parameters);
         const results = await this._pool.query(statement, parameters);
+        if (!results.rows.length) {
+            throw new PgClientError(
+                `No rows returned for entity ${entity.name}, ` +
+                `id ${id}`, 404);
+        }
         const resultSet = new MemResultSet(results.rows);
         const winner = this.winningRev(resultSet, true);
         if (!winner) {
@@ -884,42 +1018,79 @@ export class PgClient implements IReplicableService, IElectorService,
         return response;
     }
 
-    async putReplicationState(logger: Logger, destination: Destination,
-                    repState: ReplicationState): Promise<ReplicationResponse> {
-        const row = destination.replicationStateToRow(repState);
-        // remove the seq column for inserts
-        row.delete("seq");
-        // calculate the new version
-        const version = CoreColumns.newVersion(row, "PUT", md5);
-        row.updateOrAdd("_rev", version);
-        const statement = `insert into ${Destination.TABLE} ` +
-            `(${row.columns.join()}) ` +
-            `values (${row.columnNumbers.join()})`;
-        const parameters = row.values();
-        this.log(logger, statement, parameters);
-        await this._pool.query(statement, parameters);
-        const response = {
-            "id": row.get("replicationid"),
-            "ok": true,
-            "rev": version
-        };
-        return response;
+    async putReplicationState(logger: Logger, entity: Entity, id: string,
+                              repState: JsonObject):
+                                  Promise<ReplicationResponse> {
+        const _id = `_local/${id}`;
+        let _rev = "0-0";
+        const client = await this._pool.connect();
+        let statement: string;
+        try {
+            let parameters: any[];
+            statement = "BEGIN";
+            this.log(logger, statement);
+            await client.query(statement);
+
+            let oldRev: string | null = null;
+            // Update if exists, otherwise Create
+            statement =
+                `select entity, _id, _rev from ${STATE_TABLE} where ` +
+                `entity = \$1 and _id = \$2 limit 1`;
+            parameters = [entity.name, _id];
+            this.log(logger, statement, parameters);
+            const result = await client.query(statement, parameters);
+            if (result.rows.length) {
+                oldRev = result.rows[0]._rev;
+            }
+            const newVersionDepth = oldRev ?
+                CoreColumns.versionDepth(oldRev) + 1 : 1;
+            const versionHash = md5(JSON.stringify(repState));
+
+            _rev = `${newVersionDepth}-${versionHash}`;
+
+            if (oldRev) {
+                statement =
+                    `update ${STATE_TABLE} set _rev = \$1, contents = \$2 ` +
+                    `where entity = \$3 and _id = \$4`;
+                parameters = [_rev, repState, entity.name, _id];
+            } else {
+                statement =
+                    `insert into ${STATE_TABLE} ` +
+                    `(entity, _id, _rev, contents) values ` +
+                    `(\$1, \$2, \$3, \$4)`;
+                parameters = [entity.name, _id, _rev, repState];
+            }
+
+            this.log(logger, statement, parameters);
+            await this._pool.query(statement, parameters);
+
+            statement = "COMMIT";
+            this.log(logger, statement);
+            await client.query(statement);
+        } catch (err: any) {
+            statement = "ROLLBACK";
+            this.log(logger, statement);
+            await client.query(statement);
+            throw err;
+        } finally {
+            client.release();
+        }
+
+        return { "id": _id, "ok": true, "rev": _rev };
     }
 
-    async getReplicationLogs(logger: Logger, entity: Entity,
-                             id: string): Promise<ReplicationState> {
+    async getReplicationState(logger: Logger, entity: Entity,
+                             id: string): Promise<JsonObject | null> {
         const statement =
-            `select * from ${Destination.TABLE} where entity = \$1 and ` +
-            `replicationid = \$2 order by seq desc`;
+            `select * from ${STATE_TABLE} where entity = \$1 and ` +
+            `_id = \$2`;
         const parameters = [entity.name, id];
         this.log(logger, statement, parameters);
         const result = await this._pool.query(statement, parameters);
         if (result.rows.length === 0) {
-            throw new PgClientError(
-                `No rows returned for entity ${entity.name}, ` +
-                `id ${id}`, 404);
+            return null;
         }
-        return Destination.rowsToReplicationState(result.rows);
+        return result.rows[0].contents;
     }
 
     async getGeneratorNext(logger: Logger, context: IContext,
@@ -1555,8 +1726,8 @@ export class PgClient implements IReplicableService, IElectorService,
             targetedEntityRow = Row.dataToRow(purgedDoc);
         }
         // insert a new row into _vc
-        const delVersion = CoreColumns.newVersion(targetedEntityRow, "DELETE",
-                                                  md5);
+        const delVersion = CoreColumns.newVersion(
+            targetedEntityRow, "DELETE", md5);
         const delHash = CoreColumns.versionHash(delVersion);
         const delAncestry = `${ancestry}.${delHash}`;
         statement =

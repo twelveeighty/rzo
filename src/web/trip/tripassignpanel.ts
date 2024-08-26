@@ -18,7 +18,7 @@
 */
 
 import {
-    Field, State, Filter, Query, Collection, Cfg, Row
+    Field, State, Filter, Query, Collection, Cfg, Row, ServiceSource
 } from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
 
@@ -81,7 +81,8 @@ export class TripAssignPanel extends BasePanel implements IPanel {
     initialize(): void {
         this.collection.v = RZO.getCollection("drivers");
         this.entity.v = RZO.getEntity("trip");
-        this.service.v = RZO.getSource("db").service;
+        this.service.v =
+            (<ServiceSource>RZO.getSource("db").ensure(ServiceSource)).service;
         this.appointmentTsField.v = RZO.getField("trip.appointmentts");
         this.drivernumField.v = RZO.getField("trip.drivernum");
 

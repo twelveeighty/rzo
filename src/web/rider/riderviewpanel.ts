@@ -18,7 +18,8 @@
 */
 
 import {
-    Entity, Field, State, MemResultSet, Filter, Query, Collection, Cfg
+    Entity, Field, State, MemResultSet, Filter, Query, Collection, Cfg,
+    ServiceSource
 } from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
 
@@ -86,7 +87,8 @@ export class RiderViewPanel extends BasePanel implements IPanel {
     initialize(): void {
         super.initialize();
         this.entity.v = RZO.getEntity("rider");
-        this.service.v = RZO.getSource("db").service;
+        this.service.v =
+            (<ServiceSource>RZO.getSource("db").ensure(ServiceSource)).service;
         this.tripEntity.v = RZO.getEntity("trip");
         this.tripRidernumField.v = this.tripEntity.v.getField("ridernum");
         this.tripsCollection.v = RZO.getCollection("trips");

@@ -17,7 +17,7 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { Field, Cfg, Row } from "../../base/core.js";
+import { Field, Cfg, Row, ServiceSource } from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
 
 import * as X from "../common.js";
@@ -83,7 +83,8 @@ export class TripViewPanel extends BasePanel implements IPanel {
     initialize(): void {
         super.initialize();
         this.entity.v = RZO.getEntity("trip");
-        this.service.v = RZO.getSource("db").service;
+        this.service.v =
+            (<ServiceSource>RZO.getSource("db").ensure(ServiceSource)).service;
         this.appointmentTsField.v = RZO.getField("trip.appointmentts");
 
         this.editBtn.addEventListener("click", (evt) => {

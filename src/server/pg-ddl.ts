@@ -93,37 +93,41 @@ insert into leaderelect values (1, now(), '00000000-0000-1000-8000-000000000000'
         this.output.push(stateTableDDL(true));
         // Create the NOBODY account
         this.output.push(`
-insert into useraccount (
+insert into useraccount_vc (
     _id,
-    _rev, inconflict,
+    _rev,
     updated,
     updatedby,
+    versiondepth, ancestry,
+    isleaf, isdeleted, isstub, isconflict, iswinner)
+values (
+    '00000000-0000-1000-8000-000000000000',
+    '1-f0000000000000000000000000000000',
+    CURRENT_TIMESTAMP,
+    '00000000-0000-1000-8000-000000000000',
+    1, 'f0000000000000000000000000000000',
+    true, false, false, false, true
+);
+
+insert into useraccount (
+    _id,
+    _rev,
     useraccountnum, name, email, persona, status)
 values (
     '00000000-0000-1000-8000-000000000000',
-    '1-f0000000000000000000000000000000', false,
-    CURRENT_TIMESTAMP,
-    '00000000-0000-1000-8000-000000000000',
+    '1-f0000000000000000000000000000000',
     'NOBODY', 'Nobody', 'nobody@nobody.com', 'nobody', 'ACTIVE'
 );
 
-insert into useraccount_vc (
-    _id, versiondepth, ancestry, _rev,
-    updated, updatedby,
-    isleaf, isdeleted, isstub)
-select _id, 1, 'f0000000000000000000000000000000', _rev,
-       updated, updatedby, true, false, false
-from useraccount
-where useraccountnum = 'NOBODY'
-;
-
 insert into useraccount_v (
-    _id, _rev, updated, updatedby, useraccountnum, name, email, persona, status)
-select
-    _id, _rev, updated, updatedby, useraccountnum, name, email, persona, status
-from useraccount
-where useraccountnum = 'NOBODY'
-;
+    _id,
+    _rev,
+    useraccountnum, name, email, persona, status)
+values (
+    '00000000-0000-1000-8000-000000000000',
+    '1-f0000000000000000000000000000000',
+    'NOBODY', 'Nobody', 'nobody@nobody.com', 'nobody', 'ACTIVE'
+);
 
 copy dbinfo (id, info) from STDIN;
 `

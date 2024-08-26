@@ -344,8 +344,7 @@ export class Row {
 
     static dataToRow(data: any, entity?: Entity): Row {
         if (data && typeof data == "object") {
-            const keys = Object.keys(data);
-            if (keys.length > 0) {
+            if (Object.keys(data).length > 0) {
                 if (entity) {
                     entity.transformDataForRow(<JsonObject>data);
                 }
@@ -374,6 +373,13 @@ export class Row {
             return {};
         }
         return row.raw();
+    }
+
+    static must(row?: Row, error?: string): Row {
+        if (row) {
+            return row;
+        }
+        throw new CoreError(error || "Row is unexpectedly null or undefined");
     }
 
     constructor(object?: JsonObject) {
@@ -493,13 +499,11 @@ export class Row {
     }
 
     get core(): CoreColumns {
-        return new CoreColumns(
-            this.get("_id"),
-            this.get("_rev"),
-            this.has("inconflict") ? this.get("inconflict") : false,
-            this.get("updated"),
-            this.get("updatedby")
-        );
+        return new CoreColumns(this.get("_id"), this.get("_rev"));
+    }
+
+    deleteNoCheck(column: string): void {
+        delete this._row[column];
     }
 
     delete(column: string): void {
@@ -558,6 +562,8 @@ export interface IResultSet {
     getAll(): Object[];
     getRow(): Row;
     find(callback: RowFinderCallback): Row | undefined;
+    filter(callback: RowFinderCallback): Row[];
+    some(callback: RowFinderCallback): boolean;
 }
 
 export class EmptyResultSet implements IResultSet {
@@ -567,7 +573,15 @@ export class EmptyResultSet implements IResultSet {
     }
 
     find(callback: RowFinderCallback): Row | undefined {
-        throw new CoreError("Cannot call find() on EmptyResultSet");
+        return undefined;
+    }
+
+    some(callback: RowFinderCallback): boolean {
+        return false;
+    }
+
+    filter(callback: RowFinderCallback): Row[] {
+        return [];
     }
 
     get(column: string): any {
@@ -655,6 +669,27 @@ export class MemResultSet implements IResultSet {
             }
         }
         return undefined;
+    }
+
+    filter(callback: RowFinderCallback): Row[] {
+        const result = [];
+        this.rewind();
+        while (this.next()) {
+            if (callback(this._row)) {
+                result.push(this._row);
+            }
+        }
+        return result;
+    }
+
+    some(callback: RowFinderCallback): boolean {
+        this.rewind();
+        while (this.next()) {
+            if (callback(this._row)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     has(column: string): boolean {
@@ -749,18 +784,19 @@ export class MemResultSet implements IResultSet {
 }
 
 export interface IService {
+    getDBInfo(logger: Logger, context: IContext): Promise<Row>;
+    getQueryOne(logger: Logger, context: IContext, entity: Entity,
+                filter: Filter): Promise<Row>;
+    createInMemorySession(logger: Logger, userId: string, expiryOverride?: Date,
+                          personaOverride?: Persona): Promise<State>;
     getGeneratorNext(logger: Logger, context: IContext,
                      generatorName: string): Promise<string>;
     getOne(logger: Logger, context: IContext, entity: Entity, id: string,
            rev?: string): Promise<Row>;
-    getQueryOne(logger: Logger, context: IContext, entity: Entity,
-                filter: Filter): Promise<Row>;
     queryCollection(logger: Logger, context: IContext, collection: Collection,
                     query?: Query): Promise<IResultSet>;
     getQuery(logger: Logger, context: IContext, entity: Entity,
              query: Query): Promise<IResultSet>;
-    getSequenceId(logger: Logger, context: IContext,
-                  entity: Entity): Promise<string>;
     put(logger: Logger, context: IContext, entity: Entity, id: string,
         row: Row): Promise<Row>;
     post(logger: Logger, context: IContext, entity: Entity,
@@ -777,7 +813,6 @@ export interface IService {
                      tokenUuid: string): Promise<DeferredToken | null>;
     putDeferredToken(logger: Logger, context: IContext,
                      token: DeferredToken): Promise<number>;
-    getDBInfo(logger: Logger, context: IContext): Promise<Row>;
 }
 
 export interface IAuthenticator {
@@ -927,189 +962,30 @@ export class FieldState {
     }
 }
 
-type MD5Impl = (message: string) => string;
-
-export class CoreColumns {
+class CoreColumns {
     _id: string;
     _rev: string;
-    inconflict: boolean;
-    updated: Date;
-    updatedby: string;
 
-    static V_NAMES = ["_id", "_rev", "updated", "updatedby"];
-    static NAMES = CoreColumns.V_NAMES.concat("inconflict");
+    static V_NAMES = ["_id", "_rev"];
 
     static exclude(columns: string[]): string[] {
-        return columns.filter((column) => !CoreColumns.NAMES.includes(column));
+        return columns.filter((column) => !CoreColumns.V_NAMES.includes(column));
     }
 
     static addToEntity(columns: string[]): string[] {
         // Prevent duplicates of already existing core columns
         const noCores = CoreColumns.exclude(columns);
-        return noCores.concat(CoreColumns.NAMES);
-    }
-
-    static addToV(columns: string[]): string[] {
-        // Prevent duplicates of already existing core columns
-        const noCores = CoreColumns.exclude(columns);
         return noCores.concat(CoreColumns.V_NAMES);
     }
 
-    static ancestryToAncestors(ancestry: string): string[] {
-        const ancestors: string[] = ancestry.split(".");
-        for (let depth = ancestors.length; depth > 0; depth--) {
-            const ancestor = `${depth}-${ancestors[depth - 1]}`;
-            ancestors[depth - 1] = ancestor;
-        }
-        return ancestors;
-    }
-
-    static beats(current: string, challenger: string): boolean {
-        if (challenger == current) {
-            return false;
-        }
-        if (!current) {
-            return true;
-        }
-        if (!challenger) {
-            return false;
-        }
-        const currentDepth = CoreColumns.versionDepth(current);
-        const challengerDepth = CoreColumns.versionDepth(challenger);
-        if (currentDepth > challengerDepth) {
-            return false;
-        }
-        if (challengerDepth > currentDepth) {
-            return true;
-        }
-        const currentHash = current.substring(current.indexOf("-") + 1);
-        const challengerHash = challenger.substring(
-            challenger.indexOf("-") + 1);
-        return challengerHash > currentHash;
-    }
-
-    static versionWinner(rows: Row[]): Row | undefined {
-        if (!rows.length) {
-            return undefined;
-        }
-        if (rows.length == 1) {
-            return rows[0];
-        }
-        rows.sort(CoreColumns.versionCompare);
-        return rows[rows.length - 1];
-    }
-
-    static versionCompare(left: Row, right: Row): number {
-        const leftHash = CoreColumns.versionHash(left.get("_rev"));
-        const rightHash = CoreColumns.versionHash(right.get("_rev"));
-        if (leftHash == rightHash) {
-            return 0;
-        }
-        if (leftHash < rightHash) {
-            return -1;
-        }
-        return 1;
-    }
-
-    static versionHash(rev: string): string {
-        if (!rev) {
-            throw new CoreError("Empty or null rev has no hash");
-        }
-        const dashPos = rev.indexOf("-");
-        if (dashPos == -1 || dashPos == 0 || dashPos >= (rev.length - 1)) {
-            throw new CoreError(`Cannot establish hash from rev` +
-                                `: '${rev}'`);
-        }
-        return rev.substring(dashPos + 1);
-    }
-
-    static versionDepth(rev: string): number {
-        if (!rev) {
-            throw new CoreError("Empty or null rev has no depth");
-        }
-        const dashPos = rev.indexOf("-");
-        if (dashPos == -1 || dashPos == 0) {
-            throw new CoreError(`Cannot establish rev depth from rev` +
-                                `: '${rev}'`);
-        }
-        const depthStr = rev.substring(0, dashPos);
-        let depthNum;
-        try {
-            depthNum = Number(depthStr);
-        } catch (error) {
-            throw new CoreError(
-                `Cannot convert ${depthStr} to a number`, { cause: error });
-        }
-        if (!Number.isInteger(depthNum)) {
-            throw new CoreError(`Cannot convert ${depthStr} to an integer`);
-        }
-        return depthNum;
-    }
-
-    static newVersion(row: Row, stage: "POST" | "PUT" | "DELETE",
-                      md5Impl: MD5Impl): string {
-        const depth = stage === "PUT" || stage === "DELETE" ?
-            CoreColumns.versionDepth(row.get("_rev")) + 1 :
-            1;
-        // create the md5 hash of the row w/o the Core columns.
-        const dataCols = CoreColumns.exclude(row.columns);
-        if (!dataCols.length) {
-            throw new CoreError("Cannot calculate rev on an empty row");
-        }
-        const data = Row.emptyRow(dataCols);
-        data.copyFrom(row);
-        if (stage === "DELETE") {
-            data.add("_deleted", true);
-        }
-        const jsonStr = JSON.stringify(Row.rowToData(data));
-        const md5Hash = md5Impl(jsonStr);
-
-        return `${depth}-${md5Hash}`;
-    }
-
-    static addToRowForPost(row: Row, context: IContext, timestamp: Date,
-                           md5Impl: MD5Impl): void {
-        row.updateOrAdd("_id", Entity.generateId());
-        row.updateOrAdd("updated", timestamp);
-        row.updateOrAdd("_rev",
-                        CoreColumns.newVersion(row, "POST", md5Impl));
-        row.updateOrAdd("inconflict", false);
-        row.updateOrAdd("updatedby", context.userAccountId);
-    }
-
-    static addToRowForPut(row: Row, context: IContext, timestamp: Date,
-                          md5Impl: MD5Impl): void {
-        row.updateOrAdd("updated", timestamp);
-        row.updateOrAdd("_rev",
-                        CoreColumns.newVersion(row, "PUT", md5Impl));
-        row.updateOrAdd("inconflict", false);
-        row.updateOrAdd("updatedby", context.userAccountId);
-    }
-
-    static addToRowForDelete(row: Row, context: IContext, timestamp: Date,
-                          md5Impl: MD5Impl): void {
-        row.updateOrAdd("updated", timestamp);
-        row.updateOrAdd("_rev",
-                        CoreColumns.newVersion(row, "DELETE", md5Impl));
-        row.updateOrAdd("inconflict", false);
-        row.updateOrAdd("updatedby", context.userAccountId);
-    }
-
-    constructor(id: string, rev: string, inconflict: boolean, updated: Date,
-                updatedby: string) {
+    constructor(id: string, rev: string) {
         this._id = id;
         this._rev = rev;
-        this.inconflict = inconflict;
-        this.updated = updated;
-        this.updatedby = updatedby;
     }
 
     addToJsonObject(data: JsonObject) {
         data["_id"] = this._id;
         data["_rev"] = this._rev;
-        data["inconflict"] = this.inconflict;
-        data["updated"] = this.updated;
-        data["updatedby"] = this.updatedby;
     }
 }
 
@@ -2230,7 +2106,8 @@ export class SiblingSequenceKey extends ForeignKey {
             for (const sequence of this.siblingCfg.sequences) {
                 const target = state.field(sequence.field);
                 if (target.isNull) {
-                    const service = this.collection.v.source.v.service;
+                    const service =
+                        this.collection.v.source.v.service;
                     const targetField = this.entity.getField(sequence.field);
                     const nextVal = await this.nextSequence(
                         sequence.field, filter, sequence.increment, service,
@@ -2250,7 +2127,7 @@ type UniqueSiblingSequenceCfg = FieldCfg & {
 
 export class UniqueSiblingSequence extends IntegerField {
     key: Cfg<ForeignKey>;
-    source: Cfg<Source>;
+    source: Cfg<ServiceSource>;
 
     constructor(entity: Entity, config: UniqueSiblingSequenceCfg) {
         super(entity, config);
@@ -2269,7 +2146,7 @@ export class UniqueSiblingSequence extends IntegerField {
         this.key.v = <ForeignKey>field;
         this.source.setIf(
             `${this.fqName}: 'source' `,
-            configuration.sources.get(this.source.name));
+            configuration.getSource(this.source.name).ensure(ServiceSource) as ServiceSource);
     }
 
     async validate(phase: Phase, state: State, fieldState: FieldState,
@@ -2839,7 +2716,7 @@ type UniqueFieldCfg = FieldCfg & {
 }
 
 export class UniqueField extends StringField {
-    source: Cfg<Source>;
+    source: Cfg<ServiceSource>;
 
     constructor(entity: Entity, config: UniqueFieldCfg) {
         super(entity, config);
@@ -2847,7 +2724,8 @@ export class UniqueField extends StringField {
     }
 
     configure(configuration: IConfiguration) {
-        this.source.v = configuration.getSource(this.source.name);
+        this.source.v = configuration.getSource(this.source.name).ensure(
+            ServiceSource) as ServiceSource;
     }
 
     async validate(phase: Phase, state: State, fieldState: FieldState,
@@ -3206,7 +3084,7 @@ export class Collection {
     fields: string[];
     orderBy: OrderBy[];
     entity: Cfg<Entity>;
-    source: Cfg<Source>;
+    source: Cfg<ServiceSource>;
     logger: Logger;
 
     constructor(config: TypeCfg<CollectionSpec>, blueprints: Map<string, any>) {
@@ -3231,7 +3109,8 @@ export class Collection {
         );
         this.source.setIf(
             `Collection '${this.name}' references invalid source `,
-            configuration.sources.get(this.source.name)
+            configuration.getSource(this.source.name).ensure(
+                ServiceSource) as ServiceSource
         );
     }
 
@@ -3267,11 +3146,30 @@ export class Source {
         this.name = config.metadata.name;
     }
 
-    configure(configuration: IConfiguration) {
+    configure(configuration: IConfiguration): void {
+    }
+
+    ensure(targetType: Function): unknown {
+        if (!(this instanceof targetType)) {
+            throw new CoreError(
+                `Source ${this.name}' must be a ${targetType.name}`);
+        }
+        return this;
+    }
+}
+
+export class ServiceSource extends Source {
+
+    constructor(config: TypeCfg<ClassSpec>, blueprints: Map<string, any>) {
+        super(config, blueprints);
+    }
+
+    configure(configuration: IConfiguration): void {
     }
 
     get service(): IService {
-        throw new CoreError(`Source ${this.name} has an undefined service`);
+        throw new CoreError(
+            `ServiceSource ${this.name} has an undefined service`);
     }
 }
 
@@ -3294,7 +3192,7 @@ export class Authenticator {
 type Membership = {
     entity: Entity;
     through: string;
-    source: Source;
+    source: ServiceSource;
 }
 
 export class Persona {
@@ -3332,7 +3230,7 @@ export class Persona {
             const membershipObj = {
                 entity: entity,
                 through: membershipCfg.through,
-                source: source
+                source: source.ensure(ServiceSource) as ServiceSource
             };
             this.memberships.set(membershipCfg.name, membershipObj);
         }

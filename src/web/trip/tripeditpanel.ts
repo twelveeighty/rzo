@@ -17,7 +17,7 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { Cfg, Entity } from "../../base/core.js";
+import { Cfg, Entity, ServiceSource } from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
 
 import { TOASTER } from "../toaster.js";
@@ -120,7 +120,8 @@ export class TripEditPanel extends FormPanel implements IPanel {
     initialize(): void {
         super.initialize();
         this.entity.v = RZO.getEntity("trip");
-        this.service.v = RZO.getSource("db").service;
+        this.service.v =
+            (<ServiceSource>RZO.getSource("db").ensure(ServiceSource)).service;
         this.riderEntity.v = RZO.getEntity("rider");
         this.initUI();
     }

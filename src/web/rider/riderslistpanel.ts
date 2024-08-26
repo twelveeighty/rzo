@@ -17,7 +17,7 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { Collection, Cfg } from "../../base/core.js";
+import { Collection, Cfg, ServiceSource } from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
 
 import * as X from "../common.js";
@@ -52,7 +52,8 @@ export class RidersListPanel extends BasePanel implements IPanel {
 
     initialize(): void {
         this.collection.v = RZO.getCollection("riders");
-        this.service.v = RZO.getSource("db").service;
+        this.service.v =
+            (<ServiceSource>RZO.getSource("db").ensure(ServiceSource)).service;
 
         this.createBtn.addEventListener("click", (evt) => {
             this.createRider(evt);

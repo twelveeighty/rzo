@@ -18,7 +18,8 @@
 */
 
 import {
-    ClassSpec, TypeCfg, IConfiguration, DaemonWorker, _IError, Cfg, Logger
+    ClassSpec, TypeCfg, IConfiguration, DaemonWorker, _IError, Cfg, Logger,
+    ServiceSource
 } from "../base/core.js";
 
 import { ISessionBackendService } from "../base/session.js";
@@ -183,7 +184,8 @@ export class CacheWorker extends APICacheWorker implements ICache {
             this._leader = leader;
         });
         const sessionBackendService: unknown =
-            configuration.getSource(this.sessionBackend.name).service;
+            (<ServiceSource>configuration.getSource(
+                this.sessionBackend.name).ensure(ServiceSource)).service;
         if (!((<any>sessionBackendService).isSessionBackendService)) {
             throw new CacheError(
                 `Invalid CacheWorker: ${this.name}: ` +

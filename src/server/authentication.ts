@@ -23,7 +23,7 @@ import { randomInt } from "node:crypto";
 
 import {
     _IError, Row, Filter, Cfg, Entity, TypeCfg, IConfiguration, Nobody,
-    JsonObject, Persona, SideEffects, IService, Logger
+    JsonObject, Persona, SideEffects, Logger, IContext
 } from "../base/core.js";
 
 import { NOCONTEXT } from "../base/configuration.js";
@@ -47,7 +47,13 @@ type OneTimeAdapterSpec = SessionAwareAdapterSpec & {
     persona: string;
 }
 
-export async function rzoAuthenticate(logger: Logger, service: IService,
+interface IRZOAuthService {
+    getQueryOne(logger: Logger, context: IContext, entity: Entity,
+                filter: Filter): Promise<Row>;
+}
+
+export async function rzoAuthenticate(logger: Logger,
+                                      service: IRZOAuthService,
                                       loginEntity: Entity,
                                       row: Row): Promise<string> {
     if (row.has("username") && row.has("password")) {

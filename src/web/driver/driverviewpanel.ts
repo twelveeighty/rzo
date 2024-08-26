@@ -18,7 +18,8 @@
 */
 
 import {
-    Entity, Field, State, MemResultSet, Filter, Query, Collection, Cfg
+    Entity, Field, State, MemResultSet, Filter, Query, Collection, Cfg,
+    ServiceSource
 } from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
 
@@ -75,7 +76,8 @@ export class DriverViewPanel extends BasePanel implements IPanel {
 
     initialize(): void {
         this.entity.v = RZO.getEntity("driver");
-        this.service.v = RZO.getSource("db").service;
+        this.service.v =
+            (<ServiceSource>RZO.getSource("db").ensure(ServiceSource)).service;
         this.tripEntity.v = RZO.getEntity("trip");
         this.tripDrivernumField.v = this.tripEntity.v.getField("drivernum");
         this.tripsCollection.v = RZO.getCollection("trips");

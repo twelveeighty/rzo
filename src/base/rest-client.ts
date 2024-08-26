@@ -19,9 +19,9 @@
 
 import {
     Entity, IService, IResultSet, Query, MemResultSet, EmptyResultSet,
-    Filter, Collection, IContext, Row, TypeCfg, DeferredToken, Source,
+    Filter, Collection, IContext, Row, TypeCfg, DeferredToken, ServiceSource,
     ClassSpec, IConfiguration, Cfg, Authenticator, IAuthenticator, Persona,
-    Logger
+    Logger, State
 } from "./core.js";
 
 import { SessionContext } from "./session.js";
@@ -59,6 +59,11 @@ export class RestClient implements IService, IAuthenticator {
     configure(configuration: IConfiguration) {
         this.sessionEntity.v = configuration.getEntity(this.sessionEntity.name);
         this.personas.v = configuration.personas;
+    }
+
+    createInMemorySession(logger: Logger, userId: string, expiryOverride?: Date,
+                          personaOverride?: Persona): Promise<State> {
+        throw new RestClientError("This service does not support sessions");
     }
 
     async getDeferredToken(logger: Logger, context: IContext,
@@ -579,9 +584,9 @@ type RestClientSourceSpec = ClassSpec & {
     url: string;
 }
 
-export class RestClientSource extends Source {
+export class RestClientSource extends ServiceSource {
     url: string;
-    private _service: RestClient;
+    _service: RestClient;
 
     constructor(config: TypeCfg<RestClientSourceSpec>,
                 blueprints: Map<string, any>) {
@@ -614,7 +619,8 @@ export class RestClientAuthenticator extends Authenticator {
 
     configure(configuration: IConfiguration) {
         super.configure(configuration);
-        const target = configuration.getSource(this.source.name).service;
+        const target = (<ServiceSource>configuration.getSource(
+            this.source.name).ensure(ServiceSource)).service;
         if (!((<any>target).isAuthenticator)) {
             throw new RestClientError(
                 `Invalid Authenticator ${this.name}, source ` +

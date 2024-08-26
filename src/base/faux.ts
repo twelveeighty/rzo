@@ -19,10 +19,16 @@
 
 import {
     Row, IService, IContext, IResultSet, EmptyResultSet, Entity, DeferredToken,
-    Collection, Filter, Query, Source, TypeCfg, ClassSpec, Logger
+    Collection, Filter, Query, Source, TypeCfg, ClassSpec, Logger, Persona,
+    State
 } from "./core.js";
 
 export class FauxService implements IService {
+
+    createInMemorySession(logger: Logger, userId: string, expiryOverride?: Date,
+                          personaOverride?: Persona): Promise<State> {
+        throw new Error("Not implemented");
+    }
     async getGeneratorNext(logger: Logger, context: IContext,
                      generatorName: string): Promise<string> {
         return "";
@@ -94,7 +100,7 @@ export class FauxService implements IService {
 }
 
 export class FauxSource extends Source {
-    private _service: FauxService;
+    _service: FauxService;
 
     constructor(config: TypeCfg<ClassSpec>, blueprints: Map<string, any>) {
         super(config, blueprints);

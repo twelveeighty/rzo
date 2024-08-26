@@ -588,13 +588,14 @@ export class EntityDDL implements EntityCreator {
         if (!doVersion) {
             columns.push("   _id uuid primary key");
             columns.push("   _rev varchar(43) not null");
-            columns.push("   inconflict boolean not null");
+            if (entity.immutable) {
+                columns.push("   updated timestamptz not null");
+                columns.push("   updatedby uuid not null");
+            }
         } else {
             columns.push("   _id uuid not null");
             columns.push("   _rev varchar(43) not null");
         }
-        columns.push("   updated timestamptz not null");
-        columns.push("   updatedby uuid not null");
 
         const clse   = "\n);\n";
         const postTable: string[] = [];
@@ -635,18 +636,20 @@ drop table if exists ${entity.table}_vc;
 create table ${entity.table}_vc (
    seq bigserial primary key,
    _id uuid not null,
+   _rev varchar(43) not null,
    updated timestamptz not null,
    updatedby uuid not null,
    versiondepth integer not null,
    ancestry text not null,
-   _rev varchar(43) not null,
    isleaf boolean not null,
    isdeleted boolean not null,
    isstub boolean not null,
+   isconflict boolean not null,
+   iswinner boolean not null,
    constraint ${entity.table}_vc_version unique (_id, _rev)
 );
 
-create index ${entity.table}_vc_versiondepth on ${entity.table}_vc (_id, versiondepth desc);
+create index ${entity.table}_vc_id on ${entity.table}_vc (_id);
 
 `           ;
             tableDDL += vcTable;

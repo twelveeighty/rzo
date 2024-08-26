@@ -22,7 +22,8 @@ import { readFile } from "node:fs/promises";
 import { argv } from 'node:process';
 
 import {
-    State, KeyValue, IService, IContext, Entity, SideEffects, Row, Logger
+    State, KeyValue, IService, IContext, Entity, SideEffects, Row, Logger,
+    ServiceSource
 } from "./base/core.js";
 
 import { RZO } from "./base/configuration.js";
@@ -97,7 +98,7 @@ try {
 
     try {
         const source = RZO.getSource("db");
-        const service = source.service;
+        const service = (<ServiceSource>source.ensure(ServiceSource)).service;
         const authenticator = RZO.getAuthenticator("auth").service;
 
         if (!service) {

@@ -20,8 +20,8 @@
 import { IncomingMessage, ServerResponse } from "http";
 
 import {
-    _IError, IService, JsonObject, Entity, Row, Cfg, TypeCfg, IConfiguration,
-    Persona, State, IContext, Logger
+    _IError, JsonObject, Entity, Row, Cfg, TypeCfg, IConfiguration,
+    IContext, Logger, Filter, Source, ClassSpec
 } from "../base/core.js";
 
 import { NOCONTEXT } from "../base/configuration.js";
@@ -41,10 +41,13 @@ class ReplicationError extends _IError {
     }
 }
 
-export interface IReplicableService extends IService {
+export interface IReplicationService {
     get isReplicable(): boolean;
-    createInMemorySession(logger: Logger, userId: string, expiryOverride?: Date,
-                          personaOverride?: Persona): Promise<State>;
+    getDBInfo(logger: Logger, context: IContext): Promise<Row>;
+    getQueryOne(logger: Logger, context: IContext, entity: Entity,
+                filter: Filter): Promise<Row>;
+    getSequenceId(logger: Logger, context: IContext,
+                  entity: Entity): Promise<string>;
     getReplicationState(logger: Logger, entity: Entity,
                        id: string): Promise<JsonObject | null>;
     putReplicationState(logger: Logger, entity: Entity, id: string,
@@ -102,7 +105,7 @@ export type DeletedDoc = {
 
 export type ReplicationResponse = {
     id: string;
-    ok: boolean;
+    ok?: boolean;
     rev: string;
     error?: string;
     reason?: string;
@@ -178,6 +181,21 @@ create index ${STATE_TABLE}_entity
 `   ;
     const fullCreate = dropFirst ? drop + create : create;
     return fullCreate;
+}
+
+export class ReplicationSource extends Source {
+
+    constructor(config: TypeCfg<ClassSpec>, blueprints: Map<string, any>) {
+        super(config, blueprints);
+    }
+
+    configure(configuration: IConfiguration): void {
+    }
+
+    get service(): IReplicationService {
+        throw new ReplicationError(
+            `ReplicationSource ${this.name} has an undefined service`);
+    }
 }
 
 export class RevsQuery {
@@ -351,27 +369,29 @@ export class ChangesFeedQuery {
     }
 }
 
+type ReplicationAdapterSpec = SessionAwareAdapterSpec & {
+    replicationSource: string;
+}
+
 export class ReplicationAdapter extends SessionAwareAdapter {
     entities: Cfg<Map<string, Entity>>;
     loginEntity: Cfg<Entity>;
-    replSource: Cfg<IReplicableService>;
+    replSource: Cfg<IReplicationService>;
 
-    constructor(config: TypeCfg<SessionAwareAdapterSpec>,
+    constructor(config: TypeCfg<ReplicationAdapterSpec>,
                 blueprints: Map<string, any>) {
         super(config, blueprints);
         this.entities = new Cfg("entities");
         this.loginEntity = new Cfg("loginentity");
-        this.replSource = new Cfg(config.spec.source);
+        this.replSource = new Cfg(config.spec.replicationSource);
     }
 
     configure(configuration: IConfiguration): void {
         super.configure(configuration);
-        const service: unknown = this.source.v;
-        if (!((<any>service).isReplicable)) {
-            throw new ReplicationError(
-                `Source ${this.replSource.name} is not a replicable source`);
-        }
-        this.replSource.v = <IReplicableService>service;
+
+        this.replSource.v = (<ReplicationSource>configuration.getSource(
+            this.replSource.name).ensure(ReplicationSource)).service;
+
         this.entities.v = configuration.entities;
         this.loginEntity.v = configuration.getEntity("login");
     }
@@ -478,8 +498,19 @@ export class ReplicationAdapter extends SessionAwareAdapter {
                        uriElements[2] == "_changes") {
                 await this.handleGetReplicateChanges(
                     context, entity, request, response, uriElements);
-            } else if (uriElements.length == 3 ||
-                       (uriElements.length == 5 && uriElements[3] == "?")) {
+            } else if (uriElements.length == 3) {
+                const row = await this.source.v.getOne(
+                    this.logger, context, entity, uriElements[2]);
+                if (!row.empty) {
+                    response.end(JSON.stringify(row.raw()));
+                } else {
+                    response.statusCode = 404;
+                    response.end(JSON.stringify({
+                        "error": "not_found",
+                        "reason": "missing"
+                    }));
+                }
+            } else if (uriElements.length == 5 && uriElements[3] == "?") {
                 await this.handleGetReplicateRevs(
                     entity, request, response, uriElements);
             } else {
@@ -572,6 +603,7 @@ export class ReplicationAdapter extends SessionAwareAdapter {
             } else if (id == "_bulk_docs") {
                 const bulkResponse = await this.replSource.v.postBulkDocs(
                     this.logger, entity, payload as BulkDocsRequest);
+                response.statusCode = 201;
                 response.end(JSON.stringify(bulkResponse));
             } else if (id == "_bulk_get") {
                 await this.handleBulkGet(

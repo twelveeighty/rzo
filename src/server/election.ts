@@ -19,7 +19,7 @@
 
 import {
     Row, _IError, TypeCfg, ClassSpec, DaemonWorker, Cfg, IConfiguration,
-    IService, Entity, Logger
+    IService, Entity, Logger, ServiceSource
 } from "../base/core.js";
 
 class ElectionError extends _IError {
@@ -82,7 +82,8 @@ export class LeaderElector extends DaemonWorker {
 
     configure(configuration: IConfiguration): void {
         this.logger.configure(configuration);
-        const dbSource = configuration.getSource(this.service.name);
+        const dbSource = configuration.getSource(
+            this.service.name).ensure(ServiceSource) as ServiceSource;
         if (!(<any>dbSource.service).isElectorService) {
             throw new ElectionError(
                 `LeaderElector '${this.name}' requires a Source that defines ` +

@@ -23,7 +23,7 @@ import {
     _IError, Entity, Cfg, DaemonWorker, IService, IPolicyConfiguration,
     TypeCfg, ClassSpec, IConfiguration, Persona, Row, Query, Filter,
     OrderBy, Collection, IResultSet, DeferredToken, JsonObject, Logger,
-    IContext
+    IContext, ServiceSource
 } from "../base/core.js";
 
 import { ICache } from "./cache.js";
@@ -213,7 +213,8 @@ export class BaseAdapter extends DaemonWorker implements IAdapter {
 
     configure(configuration: IConfiguration): void {
         super.configure(configuration);
-        this.source.v = configuration.getSource(this.source.name).service;
+        this.source.v = (<ServiceSource>configuration.getSource(
+            this.source.name).ensure(ServiceSource)).service;
         this.logger.configure(configuration);
     }
 
@@ -295,8 +296,9 @@ export class SessionAwareAdapter extends BaseAdapter {
         }
         this.policyConfig.v = configuration.policyConfig!;
 
-        const sessionBackendService: unknown =
-            configuration.getSource(this.sessionBackend.name).service;
+        const source = configuration.getSource(this.sessionBackend.name).ensure(
+            ServiceSource) as ServiceSource;
+        const sessionBackendService: unknown = source.service;
         if (!((<any>sessionBackendService).isSessionBackendService)) {
             throw new AdapterError(
                 `Invalid BaseAdapter: ${this.name}: ` +
@@ -399,24 +401,13 @@ export class EntityAdapter extends SessionAwareAdapter {
                           uriElements: string[]): Promise<void> {
         /* https:/host/
          *             0   1     2     3         4
-         * GET         e entity                         Get _vc max(seq) info
          * GET         e entity uuid                    Get winning version
          * GET         e entity uuid   ?     rev=1-xxx  Get specific version
          * GET         e entity  ?   filter             Query
          */
         try {
             const context = await this.pullContext(request);
-            if (uriElements.length == 2) {
-                const resource = `entity/${entity.name}`;
-                this.policyConfig.v.guardResource(context, resource, "get");
-                const maxseq = await this.source.v.getSequenceId(
-                    this.logger, context, entity);
-                const result = {
-                    "instance_start_time": "0",
-                    "update_seq": maxseq
-                };
-                response.end(JSON.stringify(result));
-            } else if (uriElements.length == 3) {
+            if (uriElements.length == 3) {
                 await this.getOne(
                     context, request, response, entity, uriElements[2]);
             } else if (uriElements.length == 4 && uriElements[2] == "?") {

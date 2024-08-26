@@ -17,6 +17,7 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+import { ServiceSource } from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
 
 import { TOASTER } from "../toaster.js";
@@ -94,7 +95,8 @@ export class RiderEditPanel extends FormPanel implements IPanel {
     initialize(): void {
         super.initialize();
         this.entity.v = RZO.getEntity("rider");
-        this.service.v = RZO.getSource("db").service;
+        this.service.v =
+            (<ServiceSource>RZO.getSource("db").ensure(ServiceSource)).service;
         this.initUI();
     }
 

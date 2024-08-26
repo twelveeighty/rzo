@@ -17,7 +17,9 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { Collection, Cfg, Field, Filter, Query } from "../../base/core.js";
+import {
+    Collection, Cfg, Field, Filter, Query, ServiceSource
+} from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
 
 import * as X from "../common.js";
@@ -88,7 +90,8 @@ export class TripsListPanel extends BasePanel implements IPanel {
     initialize(): void {
         this.collection.v = RZO.getCollection("trips");
         this.appointmentTsField.v = RZO.getField("trip.appointmentts");
-        this.service.v = RZO.getSource("db").service;
+        this.service.v =
+            (<ServiceSource>RZO.getSource("db").ensure(ServiceSource)).service;
 
         this.zones.addEventListener("change", (evt) => {
             this.queryList(this.startDate, this.endDate);

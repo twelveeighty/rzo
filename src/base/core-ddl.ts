@@ -289,6 +289,12 @@ export class AmountFieldDDL extends FieldDDL {
     }
 }
 
+export class HistoryFieldDDL extends FieldDDL {
+    columnDDLType(field: Field, doVersion: boolean): string {
+        return "jsonb";
+    }
+}
+
 export class ForeignKeyDDL implements FieldCreator {
 
     creationDDL(factory: CreatorFactory, field: Field, doVersion: boolean,
@@ -587,10 +593,11 @@ export class EntityDDL implements EntityCreator {
         const columns: string[] = [];
         if (!doVersion) {
             columns.push("   _id uuid primary key");
-            columns.push("   _rev varchar(43) not null");
             if (entity.immutable) {
                 columns.push("   updated timestamptz not null");
                 columns.push("   updatedby uuid not null");
+            } else {
+                columns.push("   _rev varchar(43) not null");
             }
         } else {
             columns.push("   _id uuid not null");

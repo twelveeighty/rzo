@@ -26,13 +26,13 @@ import {
     Row, TypeCfg, ClassSpec, _IError, Logger, JsonObject
 } from "../base/core.js";
 
-import { putMvcc, ancestryToAncestors, versionDepth } from "./mvcc.js";
+import { MvccController, MvccResult } from "./mvcc.js";
 import { PgBaseClient } from "./pg-client.js";
 
 import {
     STATE_TABLE, ReplicationResponse, ChangesFeedQuery,
     NormalChangeFeed, ChangeRecord, RevsDiffResponse, RevsDiffRequest,
-    IReplicationService, RevsQuery, BulkDocsRequest,
+    IReplicationService, RevsQuery, BulkDocsRequest, DocRevisions,
     BulkGetRequest, BulkGetResponse, BulkGetResponseObj, ReplicationSource
 } from "./replication.js";
 
@@ -49,6 +49,8 @@ type PgReplicationSourceSpec = ClassSpec & {
 
 export class PgReplication extends PgBaseClient implements IReplicationService {
     private _spec: PgReplicationSourceSpec;
+    private mvccLogger: Logger;
+    private mvccController: MvccController;
 
     constructor(spec: PgReplicationSourceSpec) {
         super();
@@ -57,12 +59,15 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
             throw new PgReplicationError(
                 `Invalid pageSize: ${this._spec.pageSize}`, 400);
         }
+        this.mvccLogger = new Logger("server/mvcc/replication");
+        this.mvccController = new MvccController(this.mvccLogger);
     }
 
     configure(configuration: IConfiguration) {
         super.configure(configuration);
         this.sessionEntity.v = configuration.getEntity("session");
         this.userEntity.v = configuration.getEntity("useraccount");
+        this.mvccLogger.configure(configuration);
     }
 
     get isReplicable(): boolean {
@@ -84,8 +89,8 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
                            query: ChangesFeedQuery): Promise<NormalChangeFeed> {
         if (query.style != "all_docs") {
             throw new PgReplicationError(
-                `Change feed query style '${query.style}' is not yet ` +
-                `implemented`, 400);
+                `Change feed query style '${query.style}' is not implemented`,
+                400);
         }
         if (query.feed != "normal") {
             throw new PgReplicationError(
@@ -96,26 +101,40 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
                 "Cannot perform 'normal' change feed when 'since' is 'now'",
                 400);
         }
+        /* We do not store the converted bigint 'since' value, since we only
+         * pass big numbers as strings to pg. But we do check if the passed
+         * 'since' query parameter can be interpreted as a bigint.
+         */
+        this.mvccController.toBigInt(query.since);
+        /* The lastseq return value is always the max(seq) of the _vc table,
+         * no matter what the 'since' value is. We can't do that in one
+         * query, because of the where clause in the 2nd query.
+         */
+        let statement = `select max(seq) from ${entity.table}_vc`;
+        this.log(logger, statement);
+        let result = await this._pool.query(statement);
+        const lastSeq: bigint = this.mvccController.toBigInt(
+            result.rows[0].max, 0n);
         const whereClause = query.since != "0" ?
-            "isleaf = true and seq > $1" : "isleaf = true" ;
-        let statement =
-            `select max(seq), count(*) from ${entity.table}_vc ` +
-            `where ${whereClause}`;
-        let parameters = query.since != "0" ?
-            [ChangesFeedQuery.parseNumber(query.since)] : [];
+            "(isleaf = true or isdeleted = true) and seq > $1" :
+            "(isleaf = true or isdeleted = true)";
+        const parameters = query.since != "0" ? [query.since] : [];
+        statement =
+            `select count(*) from ${entity.table}_vc where ${whereClause}`;
         this.log(logger, statement, parameters);
-        const result = await this._pool.query(statement, parameters);
+        result = await this._pool.query(statement, parameters);
         if (result.rows.length == 0) {
             throw new PgReplicationError(
                 `No rows returned for summary version control query ` +
                `for entity ${entity.name}`, 400);
         }
-        const recordCount = result.rows[0].count;
-        const lastSeq = result.rows[0].max;
-        if (!recordCount || recordCount == 0) {
+        // Count is returned as a string
+        const recordCount: number = this.mvccController.toInteger(
+            result.rows[0].count, 0);
+        if (recordCount == 0) {
             // nothing to do
             const changesFeed = {
-                last_seq: lastSeq ? lastSeq as number : 0,
+                last_seq: `${lastSeq}`,
                 pending: 0,
                 results: []
             };
@@ -129,28 +148,28 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
         // many records are 'pending'.
         statement =
             `select seq, _id, _rev, isdeleted from ${entity.table}_vc ` +
-            `where ` + whereClause + " order by seq";
+            `where ${whereClause} order by seq`;
         const client = await this._pool.connect();
         try {
             this.log(logger, statement, parameters);
             const cursor = client.query(new Cursor(statement, parameters));
             const rows = await cursor.read(this._spec.pageSize);
-            let count = 0;
-            let lastProcessedSeq = 0;
+            let count: number = 0;
+            let lastProcessedSeq: bigint = 0n;
             const changesFeed: NormalChangeFeed = {
-                last_seq: 0,
+                last_seq: `${lastSeq}`,
                 pending: 0,
                 results: []
             };
             for (const row of rows) {
-                const currentSeq = row.seq as number;
+                const currentSeq = this.mvccController.toBigInt(row.seq);
                 if (currentSeq > lastSeq) {
                     break;
                 }
                 lastProcessedSeq = currentSeq;
                 count++;
                 const changeRecord: ChangeRecord = {
-                    id: `${row["_id"]}`,
+                    id: row["_id"],
                     seq: `${currentSeq}`,
                     changes: [ { rev: `${row["_rev"]}` } ]
                 };
@@ -161,7 +180,7 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
             }
             await cursor.close();
 
-            changesFeed.last_seq = lastProcessedSeq;
+            changesFeed.last_seq = `${lastProcessedSeq}`;
             const pending = recordCount - count;
             changesFeed.pending = pending < 0 ? 0 : pending;
 
@@ -178,7 +197,8 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
         }
         // now check the ancestry field to see if the target rev is a non-leaf
         // parent.
-        const ancestors = ancestryToAncestors(row.get("ancestry"));
+        const ancestors = this.mvccController.ancestryToAncestors(
+            row.get("ancestry"));
         return ancestors.includes(rev);
     }
 
@@ -193,122 +213,73 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
          *        'true'). Curiously, this is not even documented as a possible
          *        parameter in the CouchDB API documentation, but PouchDB sets
          *        this during replication calls.
+         *        Because PouchDB uses this during replication instead of
+         *        getAllLeafRevs(), we use the same logic: if the requested rev
+         *        is not a leaf, return the leaf that has the requested rev
+         *        in its ancestry.
          * Note that these assumptions make the passed RevsQuery parameter
          * irrelevant. We keep it for future expansions.
          */
         const results: BulkGetResponseObj[] = [];
-        let statement: string;
-        let parameters: any[];
         for (const docReq of request.docs) {
             const outerIdObj: BulkGetResponseObj = { id: docReq.id, docs: [] };
             results.push(outerIdObj);
             // Get all (possibly conflicting) leaf records
-            statement =
+            const statement =
                 `select ${this.fullyQualifiedVCCols("vc").join()}, v.* ` +
                 `from ${entity.table}_vc as vc ` +
-                `left join ${entity.table}_v as v on (vc._id = v._id and ` +
-                `vc._rev = v._rev) ` +
-                `where vc._id = \$1 and vc.isleaf = \$2 ` +
-                `order by vc.versiondepth desc`;
-            parameters = [docReq.id, true];
+                `inner join ${entity.table}_v as v on ` +
+                `(vc._id = v._id and vc._rev = v._rev) ` +
+                `where vc._id = \$1 and vc.isleaf = \$2`;
+            const parameters = [docReq.id, true];
             this.log(logger, statement, parameters);
-            const leafResults = await this._pool.query(statement, parameters);
-            let docReqRevFound = false;
-            // These leaf results are always returned
-            for (const dbRow of leafResults.rows) {
-                const row = Row.dataToRow(dbRow);
-                const revHashes = Entity.asString(
-                    row.get("ancestry")).split(".").reverse();
-                /* 1. Check to see if we had _v match on the original query
-                 * 2. add _revisions column
-                 * 3. Remove all _vc columns
-                 */
-                if (!row.has("_id") || !row.get("_id")) {
-                    throw new PgReplicationError(
-                        `Cannot find leaf record for entity ${entity.name}, ` +
-                        `id = ${docReq.id}, rev = ${row.get("vc_rev")}`);
-                }
-                row.add("_revisions", {
-                    start: row.get("versiondepth"),
-                    ids: revHashes
-                });
-                for (const name of PgReplication.VC_COL_ALIASES) {
-                    row.delete(name);
-                }
-                if (docReq.rev && row.get("_rev") == docReq.rev) {
-                    docReqRevFound = true;
-                }
-                outerIdObj.docs.push({ ok: row.raw() });
-            }
-
-            /* If a specific revision was queried, check if we've already
-             * handled that with the leaf version(s), otherwise try to locate
-             * it.
-             */
-            if (docReq.rev && !docReqRevFound) {
-                statement =
-                    `select ${this.fullyQualifiedVCCols("vc").join()}, v.* ` +
-                    `from ${entity.table}_vc as vc ` +
-                    `left join ${entity.table}_v as v on (vc._id = v._id and ` +
-                    `vc._rev = v._rev) ` +
-                    `where vc._id = \$1 and vc._rev = \$2 `;
-                parameters = [docReq.id, docReq.rev];
-                this.log(logger, statement, parameters);
-                const reqResults = await this._pool.query(
-                    statement, parameters);
-                if (reqResults.rows.length) {
-                    const row = Row.dataToRow(reqResults.rows[0]);
-                    const revHashes = Entity.asString(
-                        row.get("ancestry")).split(".").reverse();
-                    const revisions = {
-                        start: row.get("versiondepth"),
-                        ids: revHashes
-                    };
-                    if (!row.has("_id") || !row.get("_id")) {
-                        /* This is a stub, or otherwise missing payload.
-                         * Add a stub record with _revisions
-                         */
-                        const stub = {
-                            _id: docReq.id,
-                            _rev: docReq.rev,
-                            _revisions: revisions
-                        };
-                        outerIdObj.docs.push({ ok: stub });
+            const queryResults = await this._pool.query(statement, parameters);
+            if (!queryResults.rows.length) {
+                outerIdObj.docs.push({ error: {
+                    id: docReq.id,
+                    rev: docReq.rev || "undefined",
+                    error: "not_found",
+                    reason: "missing"
+                }});
+            } else {
+                const resultSet = new MemResultSet(queryResults.rows);
+                if (docReq.rev) {
+                    const matchingRow = resultSet.find(
+                        (row) => this.revInAncestry(row, docReq.rev!));
+                    if (matchingRow) {
+                        const revisions = this.getRevisions(matchingRow);
+                        this.convertDbRowToAppRow(matchingRow);
+                        matchingRow.add("_revisions", revisions);
+                        outerIdObj.docs.push({ ok: matchingRow.raw() });
                     } else {
-                        row.add("_revisions", revisions);
-                        for (const name of PgReplication.VC_COL_ALIASES) {
-                            row.delete(name);
-                        }
-                        outerIdObj.docs.push({ ok: row.raw() });
-                    }
-                } else {
-                    // The requested version is not found
-                    outerIdObj.docs.push(
-                        {
-                            error: {
-                                id: docReq.id,
-                                rev: docReq.rev,
-                                error: "not_found",
-                                reason: "missing"
-                            }
-                        }
-                    );
-                }
-            } else if (!outerIdObj.docs.length) {
-                // We have not found any matches or leafs
-                outerIdObj.docs.push(
-                    {
-                        error: {
+                        outerIdObj.docs.push({ error: {
                             id: docReq.id,
-                            rev: docReq.rev || "undefined",
+                            rev: docReq.rev,
                             error: "not_found",
                             reason: "missing"
-                        }
+                        }});
                     }
-                );
+                } else {
+                    // Since no specific _rev was requested, we return all leafs
+                    while (resultSet.next()) {
+                        const row = resultSet.getRow();
+                        const revisions = this.getRevisions(row);
+                        this.convertDbRowToAppRow(row);
+                        row.add("_revisions", revisions);
+                        outerIdObj.docs.push({ ok: row.raw() });
+                    }
+                }
             }
         }
         return { results: results };
+    }
+
+    private getRevisions(row: Row): DocRevisions {
+        return {
+            start: row.get("versiondepth"),
+            ids: Entity.asString(
+                row.get("ancestry")).split(".").reverse()
+        };
     }
 
     async getAllLeafRevs(logger: Logger, entity: Entity, id: string,
@@ -368,11 +339,7 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
             if (row.has("missing")) {
                 renderedRows.push(row.raw());
             } else {
-                const revisions = {
-                    start: row.get("versiondepth"),
-                    ids: Entity.asString(
-                        row.get("ancestry")).split(".").reverse()
-                };
+                const revisions = this.getRevisions(row);
                 this.convertDbRowToAppRow(row);
                 row.add("_revisions", revisions);
                 renderedRows.push(row.raw());
@@ -432,29 +399,16 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
                 const id = row.get("_id");
                 const rev = row.get("_rev");
                 // Pull the version history for this id
-                statement = `select * from ${entity.table}_vc where id = \$1`;
+                statement = `select * from ${entity.table}_vc where _id = \$1`;
                 parameters = [id];
                 this.log(logger, statement, parameters);
                 const versionResult = await client.query(statement, parameters);
                 const versions = new MemResultSet(versionResult.rows);
-                const mvccResult = putMvcc(row, versions, true);
+                let mvccResult: MvccResult | undefined;
                 try {
-                    statement = "BEGIN";
-                    this.log(logger, statement);
-                    await client.query(statement);
-
-                    await this.applyMvccResults(
-                        logger, client, entity, mvccResult);
-
-                    statement = "COMMIT";
-                    this.log(logger, statement);
-                    await client.query(statement);
-
-                    result.push({ id: id, rev: rev, ok: true });
-                } catch (err: any) {
-                    statement = "ROLLBACK";
-                    this.log(logger, statement);
-                    await client.query(statement);
+                    mvccResult = this.mvccController.putMvcc(
+                        row, versions, true);
+                } catch (err) {
                     result.push({
                         id: id,
                         rev: rev,
@@ -462,6 +416,34 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
                         reason: (err instanceof Error ? (<Error>err).message :
                                  "unknown")
                     });
+                }
+                if (mvccResult) {
+                    try {
+                        statement = "BEGIN";
+                        this.log(logger, statement);
+                        await client.query(statement);
+
+                        await this.applyMvccResults(
+                            logger, client, entity, mvccResult);
+
+                        statement = "COMMIT";
+                        this.log(logger, statement);
+                        await client.query(statement);
+
+                        result.push({ id: id, rev: rev, ok: true });
+                    } catch (err: any) {
+                        logger.exc(err);
+                        statement = "ROLLBACK";
+                        this.log(logger, statement);
+                        await client.query(statement);
+                        result.push({
+                            id: id,
+                            rev: rev,
+                            error: "forbidden",
+                            reason: (err instanceof Error ? (<Error>err).message :
+                                     "unknown")
+                        });
+                    }
                 }
             }
         } finally {
@@ -531,7 +513,8 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
             if (result.rows.length) {
                 oldRev = result.rows[0]._rev;
             }
-            const newVersionDepth = oldRev ? versionDepth(oldRev) + 1 : 1;
+            const newVersionDepth =
+                oldRev ? this.mvccController.versionDepth(oldRev) + 1 : 1;
             const versionHash = md5(JSON.stringify(repState));
 
             _rev = `${newVersionDepth}-${versionHash}`;

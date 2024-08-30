@@ -145,33 +145,11 @@
                       "internal": [ "NEW", "ACTIVE", "INACTIVE" ],
                       "aliases": []
                 },
-                { "name": "statusmemo", "type": "StringField" }
-            ]
-        }
-    },
-    {
-        "apiVersion": "v1",
-        "kind": "Entity",
-        "metadata": {
-            "name": "riderstatus"
-        },
-        "spec": {
-            "type": "FieldChangeLogEntity",
-            "table": "riderstatus",
-            "targetEntity": "rider",
-            "triggeredBy": "status",
-            "alsoLogs": ["statusmemo"],
-            "parents": [],
-            "keyFields": [
-                { "name": "ridernum", "type": "StringField", "required": true,
-                    "maxlength": 32
+                { "name": "statusmemo", "type": "StringField" },
+                { "name": "statushistory", "type": "HistoryField",
+                    "target": "status",
+                    "alsoLogs": ["statusmemo"]
                 }
-            ],
-            "coreFields": [
-                { "name": "status", "type": "StringField", "required": true,
-                    "maxlength": 32
-                },
-                { "name": "statusmemo", "type": "StringField" }
             ]
         }
     },
@@ -232,33 +210,11 @@
                       "internal": [ "NEW", "ACTIVE", "INACTIVE" ],
                       "aliases": []
                 },
-                { "name": "statusmemo", "type": "StringField" }
-            ]
-        }
-    },
-    {
-        "apiVersion": "v1",
-        "kind": "Entity",
-        "metadata": {
-            "name": "driverstatus"
-        },
-        "spec": {
-            "type": "FieldChangeLogEntity",
-            "table": "driverstatus",
-            "targetEntity": "driver",
-            "triggeredBy": "status",
-            "alsoLogs": ["statusmemo"],
-            "parents": [],
-            "keyFields": [
-                { "name": "drivernum", "type": "StringField", "required": true,
-                    "maxlength": 32
+                { "name": "statusmemo", "type": "StringField" },
+                { "name": "statushistory", "type": "HistoryField",
+                    "target": "status",
+                    "alsoLogs": ["statusmemo"]
                 }
-            ],
-            "coreFields": [
-                { "name": "status", "type": "StringField", "required": true,
-                    "maxlength": 32
-                },
-                { "name": "statusmemo", "type": "StringField" }
             ]
         }
     },
@@ -383,33 +339,11 @@
                           { "for": "ARCHIVED", "aliases": ["CANCEL", "CLOSED"] }
                       ]
                 },
-                { "name": "statusmemo", "type": "StringField" }
-            ]
-        }
-    },
-    {
-        "apiVersion": "v1",
-        "kind": "Entity",
-        "metadata": {
-            "name": "tripstatus"
-        },
-        "spec": {
-            "type": "FieldChangeLogEntity",
-            "table": "tripstatus",
-            "targetEntity": "trip",
-            "triggeredBy": "status",
-            "alsoLogs": ["statusmemo"],
-            "parents": [],
-            "keyFields": [
-                { "name": "tripnum", "type": "StringField", "required": true,
-                    "maxlength": 32
+                { "name": "statusmemo", "type": "StringField" },
+                { "name": "statushistory", "type": "HistoryField",
+                    "target": "status",
+                    "alsoLogs": ["statusmemo"]
                 }
-            ],
-            "coreFields": [
-                { "name": "status", "type": "StringField", "required": true,
-                    "maxlength": 32
-                },
-                { "name": "statusmemo", "type": "StringField" }
             ]
         }
     }

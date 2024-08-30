@@ -65,9 +65,7 @@ export interface IReplicationService {
 }
 
 export type BulkGetRequest = {
-    docs: [
-        { id: string; rev?: string; }
-    ];
+    docs: [ { id: string; rev?: string; } ];
 }
 
 type BulkGetError = {
@@ -123,7 +121,7 @@ export type ChangeRecord = {
 }
 
 export type NormalChangeFeed = {
-    last_seq: number;
+    last_seq: string;
     pending?: number;
     results: ChangeRecord[];
 }

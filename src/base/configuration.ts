@@ -392,10 +392,12 @@ export class Configuration implements IConfiguration {
 class NobodyContext implements IContext {
     sessionId?: string;
     persona: Persona;
+    userAccount: string;
     userAccountId: string;
 
     constructor() {
         this.persona = Nobody.INSTANCE;
+        this.userAccount = Nobody.NUM;
         this.userAccountId = Nobody.ID;
     }
 

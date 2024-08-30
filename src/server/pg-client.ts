@@ -37,9 +37,7 @@ import {
 } from "../base/session.js";
 import { ITaskRunner, Scheduler } from "../base/scheduler.js";
 
-import {
-    MvccResult, putMvcc, postMvcc, deleteMvcc, convertToPayload
-} from "./mvcc.js";
+import { MvccResult, MvccController } from "./mvcc.js";
 import { IElectorService, LeaderElector } from "./election.js";
 
 class PgClientError extends _IError {
@@ -51,9 +49,11 @@ class PgClientError extends _IError {
 class DeferredContext implements IContext {
     sessionId?: string;
     persona: Persona;
+    userAccount: string;
     userAccountId: string;
 
-    constructor(userAccountId: string) {
+    constructor(userAccount: string, userAccountId: string) {
+        this.userAccount = userAccount;
         this.userAccountId = userAccountId;
         this.persona = Nobody.INSTANCE;
     }
@@ -105,6 +105,9 @@ export class PgBaseClient {
         if (row.get("isdeleted")) {
             row.add("_deleted", true);
         }
+        if (row.get("isconflict")) {
+            row.add("_conflict", true);
+        }
         row.deleteNoCheck("seq");
         row.deleteNoCheck("vc_id");
         row.deleteNoCheck("vc_rev");
@@ -131,8 +134,25 @@ export class PgBaseClient {
         return "" + result.rows[0].max;
     }
 
+    private async getQueryOneImmutable(logger: Logger, context: IContext,
+                                       entity: Entity,
+                                       filter: Filter): Promise<Row> {
+        const statement =
+            `select * from ${entity.table} where (${filter.where}) limit 1`;
+        this.log(logger, statement);
+        const result = await this._pool.query(statement);
+        if (result.rows.length === 0) {
+            return new Row();
+        }
+        return Row.dataToRow(result.rows[0], entity);
+    }
+
     async getQueryOne(logger: Logger, context: IContext, entity: Entity,
                       filter: Filter): Promise<Row> {
+        if (entity.immutable) {
+            return await this.getQueryOneImmutable(
+                logger, context, entity, filter);
+        }
         const statement =
             `select ${this.fullyQualifiedVCCols("vc").join()}, e.* ` +
             `from ${entity.table} as e ` +
@@ -169,8 +189,8 @@ export class PgBaseClient {
     }
 
     protected async applyMvccResults(logger: Logger, client: pg.Client,
-                                   entity: Entity,
-                                   result: MvccResult): Promise<void> {
+                                     entity: Entity,
+                                     result: MvccResult): Promise<void> {
         const putStatement = `update ${entity.table}_vc set ` +
             `isleaf = \$1, isdeleted = \$2, isstub = \$3, isconflict = \$4, ` +
             `iswinner = \$5 where seq = \$6`;
@@ -217,18 +237,32 @@ export class PgBaseClient {
                 `values (` +
                 `${result.leafTable.payload!.columnNumbers.join()}` +
                 `)`;
-            parameters = result.leafTable.payload!.values();
+            const row = Row.must(result.leafTable.payload);
+            parameters = row.values();
             this.log(logger, statement, parameters);
             await client.query(statement, parameters);
         } else if (result.leafTable.type == "delete") {
             const statement = `delete from ${entity.table} where _id = \$1`;
             parameters = [result.leafTable._id];
             this.log(logger, statement, parameters);
-            await client.query(statement, parameters);
+            const pgResult = await client.query(statement, parameters);
+            if (pgResult.rowCount != 1) {
+                throw new PgClientError(
+                    `MVCC Leaf delete: delete ${entity.name}, id = ` +
+                    `${result.leafTable._id} rowCount was not 1: ` +
+                    `${pgResult.rowCount}`);
+            }
         } else if (result.leafTable.type == "swap") {
             let statement = `delete from ${entity.table} where _id = \$1`;
             parameters = [result.leafTable._id];
             this.log(logger, statement, parameters);
+            let pgResult = await client.query(statement, parameters);
+            if (pgResult.rowCount != 1) {
+                throw new PgClientError(
+                    `MVCC Leaf swap: delete ${entity.name}, id = ` +
+                    `${result.leafTable._id} rowCount was not 1: ` +
+                    `${pgResult.rowCount}`);
+            }
             /* Over time, the _v table could have diverted from the entity
              * table, so only pull the current columns from _v.
              */
@@ -239,14 +273,39 @@ export class PgBaseClient {
                 `where _id = \$1 and _rev = \$2`;
             parameters = [result.leafTable._id, result.leafTable._rev];
             this.log(logger, statement, parameters);
-            await client.query(statement, parameters);
+            pgResult = await client.query(statement, parameters);
+            if (pgResult.rowCount != 1) {
+                throw new PgClientError(
+                    `MVCC Leaf swap: insert/select ${entity.name}_v, id = ` +
+                    `${result.leafTable._id} ; rev = ` +
+                    `${result.leafTable._rev} rowCount was not 1: ` +
+                    `${pgResult.rowCount}`);
+            }
+        } else if (result.leafTable.type == "put") {
+            const row = Row.must(result.leafTable.payload);
+            const targetId = row.get("_id");
+            const targetRev = result.leafTable._rev;
+            const setList = row.getUpdateSet();
+            parameters = row.values().concat(targetId, targetRev);
+            const statement =
+                `update ${entity.table} set ${setList.join(", ")} ` +
+                `where _id = \$${setList.length + 1} and ` +
+                `_rev = \$${setList.length + 2}`;
+            this.log(logger, statement, parameters);
+            const pgResult = await client.query(statement, parameters);
+            if (pgResult.rowCount != 1) {
+                throw new PgClientError(
+                    `MVCC Leaf put: update ${entity.name}, id = ` +
+                    `${targetId} ; rev = ${targetRev} rowCount was not 1: ` +
+                    `${pgResult.rowCount}`);
+            }
         }
     }
 
     protected log(logger: Logger, statement: string, parameters?: any[]): void {
         logger.debug(statement);
         if (parameters && parameters.length) {
-            logger.debug(parameters);
+            logger.debugAny(parameters);
         }
     }
 }
@@ -263,8 +322,10 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
     leaderElector: Cfg<LeaderElector>;
     private _scheduler: Scheduler;
     private _spec: PgClientSourceSpec;
+    private mvccController: MvccController;
     private electionLogger: Logger;
     private deferredLogger: Logger;
+    private mvccLogger: Logger;
 
     constructor(spec: PgClientSourceSpec) {
         super();
@@ -278,6 +339,8 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
         this._scheduler = new Scheduler(30000, this);
         this.electionLogger = new Logger("server/election");
         this.deferredLogger = new Logger("server/deferred");
+        this.mvccLogger = new Logger("server/mvcc");
+        this.mvccController = new MvccController(this.mvccLogger);
     }
 
     configure(configuration: IConfiguration) {
@@ -294,6 +357,7 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
         });
         this.electionLogger.configure(configuration);
         this.deferredLogger.configure(configuration);
+        this.mvccLogger.configure(configuration);
     }
 
     get isElectorService(): boolean {
@@ -336,7 +400,8 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
                 this._pool.query(statement, parameters).then(() => {
                     while (resultSet.next()) {
                         const token = resultSet.getRow().raw() as DeferredToken;
-                        const context = new DeferredContext(token.updatedby);
+                        const context = new DeferredContext(
+                            token.updatedbynum, token.updatedby);
                         this.performTokenUpdate(
                             this.deferredLogger, context, token, true);
                     }
@@ -614,12 +679,13 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
         }
 
         // Pull the version history for this id
-        let statement = `select * from ${entity.table}_vc where id = \$1`;
+        let statement = `select * from ${entity.table}_vc where _id = \$1`;
         let parameters: any[] = [id];
         this.log(logger, statement, parameters);
         const result = await this._pool.query(statement, parameters);
         const versions = new MemResultSet(result.rows);
-        const mvccResult = putMvcc(row, versions, false);
+        const mvccResult = this.mvccController.putMvcc(
+            row, versions, false, context);
         const client = await this._pool.connect();
         try {
             statement = "BEGIN";
@@ -666,7 +732,7 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
             }
         }
         if (entity.immutable) {
-            convertToPayload(row);
+            this.mvccController.convertToPayload(row);
             row.add("_id", Entity.generateId());
             row.add("updated", new Date());
             row.add("updatedby", context.userAccountId);
@@ -681,7 +747,7 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
             return row;
         } else {
             let statement: string;
-            const mvccResult = postMvcc(row, context);
+            const mvccResult = this.mvccController.postMvcc(row, context);
             const client = await this._pool.connect();
             try {
                 statement = "BEGIN";
@@ -726,12 +792,13 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
             await this.deleteImmutable(logger, context, entity, id);
         }
         // Pull the version history for this id
-        let statement = `select * from ${entity.table}_vc where id = \$1`;
+        let statement = `select * from ${entity.table}_vc where _id = \$1`;
         let parameters: any[] = [id];
         this.log(logger, statement, parameters);
         const result = await this._pool.query(statement, parameters);
         const versions = new MemResultSet(result.rows);
-        const mvccResult = deleteMvcc(id, rev, versions);
+        const mvccResult = this.mvccController.deleteMvcc(
+            id, rev, versions, context);
         const client = await this._pool.connect();
         try {
             statement = "BEGIN";

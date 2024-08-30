@@ -201,7 +201,8 @@
             "defaultLevel": "Info",
             "loggers": [
                 { "name": "adapter", "level": "Debug" },
-                { "name": "server/restserver", "level": "Error" }
+                { "name": "server/mvcc", "level": "Debug" },
+                { "name": "server/restserver", "level": "Debug" }
             ]
         }
     }

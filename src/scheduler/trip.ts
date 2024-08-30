@@ -88,11 +88,13 @@ export class AppointmentTSField extends DateTimeField {
     async activate(phase: Phase, state: State, fieldState: FieldState,
                    context: IContext): Promise<SideEffects> {
         await super.activate(phase, state, fieldState, context);
-        const triptype = state.field("triptype");
-        if (phase == "set" && fieldState.dirtyNotNull && triptype.isNotNull &&
-               triptype.value == "RETURN") {
-            if (AppointmentTSField.autoFillReturnTS(state)) {
-                return ["returnts"];
+        if (phase == "set") {
+            const triptype = state.field("triptype");
+            if (fieldState.dirtyNotNull && triptype.isNotNull &&
+                   triptype.value == "RETURN") {
+                if (AppointmentTSField.autoFillReturnTS(state)) {
+                    return ["returnts"];
+                }
             }
         }
         return null;

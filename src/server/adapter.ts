@@ -154,8 +154,10 @@ export class AdapterError extends _IError {
                 const causeMsg = cause.message;
                 msg = toRestError(
                     statusCode, type, message, causeType, causeMsg);
+                logger.exc(cause);
             } else {
                 msg = toRestError(statusCode, type, message);
+                logger.exc(<Error>error);
             }
         } else if (exc instanceof Error) {
             const error = <Error>exc;
@@ -167,14 +169,15 @@ export class AdapterError extends _IError {
                 const causeMsg = cause.message;
                 msg = toRestError(
                     statusCode, type, message, causeType, causeMsg);
+                logger.exc(cause);
             } else {
+                logger.exc(<Error>error);
                 msg = toRestError(statusCode, type, message);
             }
         } else {
             msg = toRestError(statusCode, typeof exc, `${exc}`);
+            logger.error(msg);
         }
-        logger.error(msg);
-        logger.error(exc);
         response.statusCode = statusCode;
         response.end(msg);
     }
@@ -493,8 +496,8 @@ export class EntityAdapter extends SessionAwareAdapter {
             const version = uriElements[4].substring("rev=".length);
             this.delete(request, response, entity, uriElements[2], version);
         } else {
-            throw new AdapterError(`Invalid request: invalid URI ` +
-                                      `components for DELETE`);
+            throw new AdapterError(
+                `Invalid request: invalid URI components for DELETE`);
         }
     }
 

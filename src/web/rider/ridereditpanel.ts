@@ -101,8 +101,10 @@ export class RiderEditPanel extends FormPanel implements IPanel {
     }
 
     async show(panelData?: PanelData): Promise<void> {
-        if (panelData) {
+        if (panelData && panelData.dataType == "State") {
             this.state = panelData.state;
+        } else if (panelData && panelData.dataType == "Row") {
+            this.state = this.entity.v.rowToState(panelData.row);
         } else {
             this.state = await this.entity.v.create(
                 CONTEXT.session, this.service.v);

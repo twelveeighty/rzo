@@ -66,6 +66,7 @@ create table deferredtoken (
     containedfield varchar(64) not null,
     id uuid not null,
     token uuid not null,
+    updatedbynum text not null,
     updatedby uuid not null,
     updated timestamptz not null,
     constraint deferredtoken_token unique (token),

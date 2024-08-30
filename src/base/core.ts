@@ -76,6 +76,7 @@ export interface IConfiguration {
 export interface IContext {
     sessionId?: string;
     persona: Persona;
+    userAccount: string;
     userAccountId: string;
     getSubject(key: string): string;
 }
@@ -116,6 +117,16 @@ export class Logger {
 
     log(msg: any, level?: LogThreshold): void {
         if (level == undefined) {
+            console.log(`|${this.name} ${msg}`);
+        } else {
+            if (level <= this.threshold) {
+                console.log(`|${this.name} ${msg}`);
+            }
+        }
+    }
+
+    logAny(msg: any, level?: LogThreshold): void {
+        if (level == undefined) {
             console.log(msg);
         } else {
             if (level <= this.threshold) {
@@ -134,6 +145,17 @@ export class Logger {
 
     debug(msg: any): void {
         this.log(msg, 999);
+    }
+
+    debugAny(msg: any): void {
+        this.logAny(msg, 999);
+    }
+
+    exc(err: Error): void {
+        if (9 <= this.threshold) {
+            console.log(`|${this.name} ${err.message}`);
+            console.log(err);
+        }
     }
 
     willLog(level: LogLevel): boolean {
@@ -889,6 +911,7 @@ export type DeferredToken = {
     containedfield: string;
     id: string;
     token: string;
+    updatedbynum: string;
     updatedby: string;
     updated: Date;
 };
@@ -938,6 +961,20 @@ export class FieldState {
 
     get asString(): string {
         return Entity.asString(this._newState);
+    }
+
+    get changed(): boolean {
+        if (this._dirty) {
+            if (this._oldState == null && this._newState != null) {
+                return true;
+            }
+            if (this._oldState != null && this._newState == null) {
+                return true;
+            }
+            return this._oldState != this._newState;
+        } else {
+            return false;
+        }
     }
 
     get oldValue(): any {
@@ -2185,7 +2222,6 @@ export class Entity {
     keyFields: Map<string, Field>;
     coreFields: Map<string, Field>;
     contains: ContainedEntity[];
-    changeLogs: FieldChangeLogEntity[];
     regionalizedBy?: Field;
     logger: Logger;
 
@@ -2224,7 +2260,6 @@ export class Entity {
         this.keyFields = new Map();
         this.coreFields = new Map();
         this.contains = [];
-        this.changeLogs = [];
         for (const field of config.spec.keyFields) {
             const field_name = field.name;
             this.checkDuplicateField(field_name);
@@ -2326,7 +2361,14 @@ export class Entity {
         }
     }
 
-    toRow(state: State): Row {
+    rowToState(row: Row): State {
+        let core = row.has("_id") ? row.core : undefined;
+        const state = new State(this, core);
+        this.loadState(row, state);
+        return state;
+    }
+
+    stateToRow(state: State): Row {
         const columns: string[] = [];
         const fields = this.allFields;
 
@@ -2346,7 +2388,8 @@ export class Entity {
     async put(service: IService, state: State,
               context: IContext): Promise<Row> {
         await this.validate("update", state, context);
-        const row = this.toRow(state);
+        await this.activate("update", state, context);
+        const row = this.stateToRow(state);
         return await service.put(
             this.logger, context, this, state.id, row);
     }
@@ -2354,13 +2397,15 @@ export class Entity {
     async post(service: IService, state: State,
                context: IContext): Promise<Row> {
         await this.validate("create", state, context);
-        const row = this.toRow(state);
+        await this.activate("create", state, context);
+        const row = this.stateToRow(state);
         return await service.post(this.logger, context, this, row);
     }
 
     async delete(service: IService, state: State,
                  context: IContext): Promise<void> {
         await this.validate("delete", state, context);
+        await this.activate("delete", state, context);
         if (state.hasId()) {
             await service.delete(
                 this.logger, context, this, state.id, state.rev);
@@ -2498,6 +2543,20 @@ export class Entity {
                 field.validate(phase, state, fieldState, context));
         }
         await Promise.all(fieldPromises);
+    }
+
+    async activate(phase: Phase, state: State,
+                   context: IContext): Promise<SideEffects[]> {
+        if (phase == "create" || phase == "update" || phase == "delete") {
+            const fieldPromises: Promise<SideEffects>[] = [];
+            for (const field of this.allFields) {
+                const fieldState = state.field(field.name);
+                fieldPromises.push(
+                    field.activate(phase, state, fieldState, context));
+            }
+            return await Promise.all(fieldPromises);
+        }
+        return [];
     }
 
     get ddlCreatorClass(): string {
@@ -2750,157 +2809,6 @@ export class UniqueField extends StringField {
     }
 }
 
-type FieldChangeLogEntitySpec = ContainedEntitySpec & {
-    targetEntity: string;
-    triggeredBy: string;
-    alsoLogs: string[];
-}
-
-export class FieldChangeLogEntity extends ContainedEntity {
-    targetEntity: Cfg<Entity>;
-    triggeredBy: string;
-    alsoLogs: string[];
-
-    constructor(config: TypeCfg<FieldChangeLogEntitySpec>,
-                blueprints: Map<string, any>) {
-        super(config, blueprints);
-        this.targetEntity = new Cfg(config.spec.targetEntity);
-        this.triggeredBy = config.spec.triggeredBy;
-        this.alsoLogs = config.spec.alsoLogs;
-        this._immutable = true;
-    }
-
-    shouldTrigger(oldRow: Row, row: Row): boolean {
-        const field = this.targetEntity.v.getField(this.triggeredBy);
-        return oldRow.has(this.triggeredBy) &&
-            row.has(this.triggeredBy) &&
-            field.hasChanged(oldRow.get(this.triggeredBy),
-                             row.get(this.triggeredBy));
-    }
-
-    createChangeLogRow(row: Row, updatedby: string, timestamp: Date,
-                       oldRow?: Row): Row {
-        const log = new Row();
-        log.add("_id", oldRow ? oldRow.get("_id") : row.get("_id"));
-        log.add("updated", timestamp);
-        log.add("updatedby", updatedby);
-
-        const state = new State(this);
-
-        // Same key(s) as target entity.
-        for (const field of this.keyFields.values()) {
-            if (row.has(field.name)) {
-                // Load state(s) from row
-                field.load(row, state);
-                field.save(log, state);
-            } else if (oldRow) {
-                // Load state(s) from oldRow
-                field.load(oldRow, state);
-                field.save(log, state);
-            }
-        }
-
-        // TriggeredBy, if not already added as part of the keys
-        if (!log.has(this.triggeredBy)) {
-            log.add(this.triggeredBy, row.get(this.triggeredBy));
-        }
-        // AlsoLogs, if not already added earlier, and only if existing in
-        // the new row
-        for (const alsoLog of this.alsoLogs) {
-            if (!log.has(alsoLog)) {
-                if (row.has(alsoLog)) {
-                    log.add(alsoLog, row.get(alsoLog));
-                }
-            }
-        }
-        return log;
-    }
-
-    checkForField(where: string, fieldName: string): void {
-        if (where == "key") {
-            if (!this.keyFields.has(fieldName)) {
-                throw new CoreError(
-                    `${this.name}: missing key field '${fieldName}'`);
-            }
-        } else if (where == "core") {
-            if (!this.coreFields.has(fieldName)) {
-                throw new CoreError(
-                    `${this.name}: missing core field '${fieldName}'`);
-            }
-        } else if (where == "any") {
-            if (!this.keyFields.has(fieldName) &&
-                    !this.coreFields.has(fieldName)) {
-                throw new CoreError(
-                    `${this.name}: missing field '${fieldName}'`);
-            }
-        } else {
-            throw new CoreError(
-                `${this.name}: unknown 'where': ${where}`);
-        }
-    }
-
-    configure(configuration: IConfiguration) {
-        // make sure we wire in targetEntity BEFORE calling super.configure(),
-        // since our super method calls parentKeyFor().
-        this.targetEntity.v = configuration.getEntity(this.targetEntity.name);
-        if (!this.targetEntity.v.findField(this.triggeredBy)) {
-            throw new CoreError(
-                `${this.name}: field ${this.triggeredBy} does not exist` +
-                    ` on entity ${this.targetEntity.name}`);
-        }
-
-        if (this.parentNames.includes(this.targetEntity.name)) {
-            throw new CoreError(
-                `${this.name}: targetEntity ${this.targetEntity.name} can ` +
-                    `not also be defined as a parent in 'parents'`);
-        }
-
-        super.configure(configuration);
-
-        for (const fieldName of this.alsoLogs) {
-            if (!this.targetEntity.v.findField(fieldName)) {
-                throw new CoreError(
-                    `${this.name}: field ${fieldName} does not exist` +
-                        ` on entity ${this.targetEntity.name}`);
-            }
-        }
-        // For keyFields, we must have the exact same keys as the targetEntity.
-        for (const fieldName of this.targetEntity.v.keyFields.keys()) {
-            this.checkForField("key", fieldName);
-        }
-        // We also require a matching triggeredBy and all defined under
-        // 'alsoLogs' to be defined, either as a Key or Core field.
-        this.checkForField("any", this.triggeredBy);
-        for (const fieldName of this.alsoLogs) {
-            this.checkForField("any", fieldName);
-        }
-        //console.log(`Adding FieldChangeLogEntity ${this.name} to target ` +
-        //            `${this.targetEntity.name}`);
-        this.targetEntity.v.changeLogs.push(this);
-    }
-
-    parentKeyFor(parentName: string): ForeignKey {
-        // Iterate over targetEntity's key fields to find a ForeignKey that
-        // targets the parent.
-        for (const field of this.targetEntity.v.keyFields.values()) {
-            if (field instanceof ForeignKey) {
-                const foreignKey = <ForeignKey>field;
-                if (foreignKey.targetEntity.name == parentName) {
-                    return foreignKey;
-                }
-            }
-        }
-        throw new CoreError(
-            `${this.name}: target ${this.targetEntity.name} fails to ` +
-                `provide a foreignKey to parent ${parentName}`);
-    }
-
-    get ddlCreatorClass(): string {
-        return "base.core-ddl.FieldChangeLogEntityDDL";
-    }
-
-}
-
 type AmountFieldCfg = FieldCfg & {
     precision: number;
     scale: number;
@@ -2972,12 +2880,14 @@ export class SummaryField extends AmountField {
     fieldName: string;
     parentIdName: Cfg<string>;
     containedEntity: Cfg<ContainedEntity>;
+    private deferredLogger: Logger;
 
     constructor(entity: Entity, config: SummaryFieldCfg) {
         super(entity, config);
         this.parentIdName = new Cfg("parentIdName");
         this.containedEntity = new Cfg(config.entity);
         this.fieldName = config.field;
+        this.deferredLogger = new Logger("server/deferred");
     }
 
     configure(configuration: IConfiguration) {
@@ -2988,6 +2898,7 @@ export class SummaryField extends AmountField {
             ContainedEntity);
         this.parentIdName.v = this.containedEntity.v.parentKeyFor(
             this.entity.name).idName;
+        this.deferredLogger.configure(configuration);
     }
 
     async performTokenUpdate(service: IService, token: DeferredToken,
@@ -3023,18 +2934,19 @@ export class SummaryField extends AmountField {
             containedfield: this.fieldName,
             id: id,
             token: Entity.generateId(),
+            updatedbynum: context.userAccount,
             updatedby: context.userAccountId,
             updated: new Date()
         };
         service.putDeferredToken(this.logger, context, token)
         .then((waitMillis) => {
             if (!waitMillis) {
-                console.log(
+                this.deferredLogger.debug(
                     `Deferred ${this.fqName} update token: ${token.token} ` +
                     `is managed by the service.`);
                 return;
             }
-            console.log(
+            this.deferredLogger.debug(
                 `Deferred ${this.fqName} update with token: ${token.token}`);
             setTimeout(() => {
                 service.queryDeferredToken(
@@ -3045,7 +2957,7 @@ export class SummaryField extends AmountField {
                         // Only if the current token is the same as 'our' token
                         // do we take action. Otherwise, a further update has
                         // occurred and we simply exit without doing anything.
-                        console.log(
+                        this.deferredLogger.debug(
                             `Deferred ${this.fqName} comparing target token: ` +
                             `${token.token} to latest token: ` +
                             `${currToken.token}`);
@@ -3053,28 +2965,110 @@ export class SummaryField extends AmountField {
                         if (currToken.token == token.token) {
                             this.performTokenUpdate(service, token, context);
                         } else {
-                            console.log(
+                            this.deferredLogger.debug(
                                `Deferred ${this.fqName} token ${token.token} ` +
                                `superseded by token ${currToken.token}`);
                         }
                     } else {
-                        console.log(
+                        this.deferredLogger.debug(
                             `Deferred ${this.fqName} token ${token.token} no ` +
                             `longer exists`);
                     }
                 })
                 .catch((error) => {
-                    console.error(
-                        `${this.fqName}: cannot execute deferred update due ` +
-                        `to: ${error}`);
+                    this.deferredLogger.error(
+                        `${this.fqName}: cannot execute deferred update`);
+                    this.deferredLogger.exc(error);
                 });
             }, waitMillis);
         })
         .catch((error) => {
-            console.error(
+            this.deferredLogger.error(
                 `${this.fqName}: cannot schedule deferred update due ` +
                 `to: ${error}`);
         });
+    }
+}
+
+type HistoryFieldCfg = FieldCfg & {
+    target: string;
+    alsoLogs?: string[];
+}
+
+type HistoryObject = {
+    history: JsonObject[];
+}
+
+export class HistoryField extends Field {
+    target: Cfg<Field>;
+    alsoLogNames: string[];
+
+    constructor(entity: Entity, config: HistoryFieldCfg) {
+        super(entity, config);
+        this.target = new Cfg(config.target);
+        this.alsoLogNames =
+            (config.alsoLogs && config.alsoLogs.length) ? config.alsoLogs : [];
+        this.required = true;
+    }
+
+    configure(configuration: IConfiguration) {
+        super.configure(configuration);
+        const targetField = this.entity.getField(this.target.name);
+        if (!targetField.required) {
+            throw new CoreError(
+                `Field ${this.fqName}: target ${this.target.name} must be` +
+                ` a required field`);
+        }
+        this.target.v = targetField;
+        // Verify all the 'alsoLogs' fields exist
+        for (const name of this.alsoLogNames) {
+            this.entity.getField(name);
+        }
+    }
+
+    async validate(phase: Phase, state: State, fieldState: FieldState,
+                   context: IContext): Promise<void> {
+        // Overloaded to prevent required field throwing an error
+    }
+
+    async activate(phase: Phase, state: State, fieldState: FieldState,
+                   context: IContext): Promise<SideEffects> {
+        if (phase == "create" || phase == "update") {
+            const targetState = state.field(this.target.v.name);
+            if (phase == "create" && targetState.isNull) {
+                throw new CoreError(
+                    `Field ${this.fqName} cannot track a value that is` +
+                    ` null for target ${this.target.v.name}`);
+            }
+            if (phase == "create" ||
+                (phase == "update" &&
+                 targetState.changed && targetState.isNotNull)) {
+
+                const historyRow = new Row({
+                    updated: new Date(),
+                    updatedbynum: context.userAccount,
+                    updatedby: context.userAccountId
+                });
+                historyRow.add(this.target.v.name, targetState.asString);
+                for (const name of this.alsoLogNames) {
+                    historyRow.add(name, state.field(name).asString);
+                }
+                if (phase == "create") {
+                    fieldState.value = { history: [historyRow.raw()] };
+                } else if (phase == "update") {
+                    const emptyHistory = { "history": [] };
+                    const updated: HistoryObject = fieldState.isNotNull ?
+                        <HistoryObject>fieldState.value : emptyHistory;
+                    updated["history"].push(historyRow.raw());
+                    fieldState.value = updated;
+                }
+            }
+        }
+        return null;
+    }
+
+    get ddlCreatorClass(): string {
+        return "base.core-ddl.HistoryFieldDDL";
     }
 }
 

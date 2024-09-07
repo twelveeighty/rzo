@@ -106,21 +106,27 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
          * 'since' query parameter can be interpreted as a bigint.
          */
         this.mvccController.toBigInt(query.since);
-        /* The lastseq return value is always the max(seq) of the _vc table,
-         * no matter what the 'since' value is. We can't do that in one
-         * query, because of the where clause in the 2nd query.
+        /* The lastseq return value is always the max(updateseq) of the _vc
+         * table, no matter what the 'since' value is. We have to run this
+         * query first because the where clause in the 2nd query could return
+         * zero rows and therefore 'hide' the max(updateseq) as null.
+         * We cannot wait with running this query until after we've seen the
+         * 'null' value on the 'since' based query, because there is a (very
+         * small) chance rows were added in the time between the two queries
+         * and that data would be hidden from the target replicator forever.
          */
-        let statement = `select max(seq) from ${entity.table}_vc`;
+        let statement = `select max(updateseq) from ${entity.table}_vc`;
         this.log(logger, statement);
         let result = await this._pool.query(statement);
-        const lastSeq: bigint = this.mvccController.toBigInt(
+        const fallBackLastSeq = this.mvccController.toBigInt(
             result.rows[0].max, 0n);
         const whereClause = query.since != "0" ?
-            "(isleaf = true or isdeleted = true) and seq > $1" :
+            "(isleaf = true or isdeleted = true) and updateseq > $1" :
             "(isleaf = true or isdeleted = true)";
         const parameters = query.since != "0" ? [query.since] : [];
         statement =
-            `select count(*) from ${entity.table}_vc where ${whereClause}`;
+            `select count(*), max(updateseq) from ${entity.table}_vc ` +
+            `where ${whereClause}`;
         this.log(logger, statement, parameters);
         result = await this._pool.query(statement, parameters);
         if (result.rows.length == 0) {
@@ -128,11 +134,17 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
                 `No rows returned for summary version control query ` +
                `for entity ${entity.name}`, 400);
         }
+        /* We use the latest max(updateseq) pulled from the 2nd query to ensure
+         * count(*) and max(updateseq) are in-sync, in case rows were added in
+         * the time between running the two queries.
+         */
+        const lastSeq = this.mvccController.toBigInt(
+            result.rows[0].max, fallBackLastSeq);
         // Count is returned as a string
         const recordCount: number = this.mvccController.toInteger(
             result.rows[0].count, 0);
         if (recordCount == 0) {
-            // nothing to do
+            // Nothing to do
             const changesFeed = {
                 last_seq: `${lastSeq}`,
                 pending: 0,
@@ -140,48 +152,92 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
             };
             return changesFeed;
         }
-        // Start a Cursor to return the first 'pageSize' results.
-        // It is possible that new rows are added between the previous summary
-        // query and the upcoming details query, so we'll cap it at the
-        // summary result for 'lastSeq', since that will have a consistent
-        // accompanying 'recordCount' value. Otherwise, we will not know how
-        // many records are 'pending'.
+        if (query.limit && query.limit == 0) {
+            // Return the count and lastseq
+            const changesFeed = {
+                last_seq: `${lastSeq}`,
+                pending: recordCount,
+                results: []
+            };
+            return changesFeed;
+        }
+        // Start a Cursor to return 'pageSize' results.
         statement =
-            `select seq, _id, _rev, isdeleted from ${entity.table}_vc ` +
-            `where ${whereClause} order by seq`;
+            `select updateseq, _id, _rev, isdeleted from ${entity.table}_vc ` +
+            `where ${whereClause} order by updateseq`;
         const client = await this._pool.connect();
         try {
             this.log(logger, statement, parameters);
             const cursor = client.query(new Cursor(statement, parameters));
-            const rows = await cursor.read(this._spec.pageSize);
-            let count: number = 0;
-            let lastProcessedSeq: bigint = 0n;
+            let lastProcessedSeq: bigint = lastSeq;
+            const changeResults: ChangeRecord[] = [];
             const changesFeed: NormalChangeFeed = {
-                last_seq: `${lastSeq}`,
+                last_seq: `${lastProcessedSeq}`,
                 pending: 0,
-                results: []
+                results: changeResults
             };
-            for (const row of rows) {
-                const currentSeq = this.mvccController.toBigInt(row.seq);
-                if (currentSeq > lastSeq) {
-                    break;
+            const recordMap: Map<string, ChangeRecord> = new Map();
+            let moreRows: boolean = true;
+            /* The record count is different from the length of the
+             * changeFeed.results, since we are grouping the results by _id.
+             * But to keep things consistent with the count(*) used above on
+             * the _vc table, we count the actual rows processed to calculate
+             * the 'pending' value.
+             */
+            let rowCount = 0;
+            while (moreRows) {
+                const rows = await cursor.read(this._spec.pageSize);
+                for (const row of rows) {
+                    const currentSeq = this.mvccController.toBigInt(
+                        row["updateseq"]);
+                    const id = row["_id"];
+                    const rev = row["_rev"];
+                    let changeRecord = recordMap.get(id);
+                    if (changeRecord) {
+                        // Existing id
+                        changeRecord.seq = `${currentSeq}`;
+                        changeRecord.changes.push({ rev: rev });
+                        rowCount++;
+                        lastProcessedSeq = currentSeq;
+                        /* If this is a leaf but so far only _deleted records
+                         * were encountered, then this leaf clears the 'deleted'
+                         * flag for all revs, including the upcoming ones.
+                         */
+                        if (!row["isdeleted"] && changeRecord["deleted"]) {
+                            delete changeRecord["deleted"];
+                        }
+                    } else {
+                        /* New id, first check if adding this pushes us over
+                         * the query.limit (if applicable).
+                         */
+                        if (query.limit &&
+                            changeResults.length >= query.limit) {
+                            // This pushes us over the limit, so stop.
+                            moreRows = false;
+                            break;
+                        }
+                        changeRecord = {
+                            id: id,
+                            seq: `${currentSeq}`,
+                            changes: [{ rev: rev }]
+                        };
+                        if (row["isdeleted"]) {
+                            changeRecord["deleted"] = true;
+                        }
+                        recordMap.set(id, changeRecord);
+                        changeResults.push(changeRecord);
+                        rowCount++;
+                        lastProcessedSeq = currentSeq;
+                    }
                 }
-                lastProcessedSeq = currentSeq;
-                count++;
-                const changeRecord: ChangeRecord = {
-                    id: row["_id"],
-                    seq: `${currentSeq}`,
-                    changes: [ { rev: `${row["_rev"]}` } ]
-                };
-                if (row.isdeleted) {
-                    changeRecord.deleted = true;
-                }
-                changesFeed.results.push(changeRecord);
+                /* Keep going unless we've reached the query.limit and broke
+                 * out of the for loop or the cursor is exhausted.
+                 */
+                moreRows = moreRows && (rows.length >= this._spec.pageSize);
             }
             await cursor.close();
-
             changesFeed.last_seq = `${lastProcessedSeq}`;
-            const pending = recordCount - count;
+            const pending = recordCount - rowCount;
             changesFeed.pending = pending < 0 ? 0 : pending;
 
             return changesFeed;
@@ -215,8 +271,11 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
          *        this during replication calls.
          *        Because PouchDB uses this during replication instead of
          *        getAllLeafRevs(), we use the same logic: if the requested rev
-         *        is not a leaf, return the leaf that has the requested rev
-         *        in its ancestry.
+         *        is not a leaf or deleted, return the leaf and/or deleted that
+         *        has the requested rev in its ancestry.
+         * For conflicts, even if all conflicted docs were deleted except for
+         * the 'winning' one, this returns multiple documents for a requested
+         * rev, because conflicts and the deleted ones are returned as well.
          * Note that these assumptions make the passed RevsQuery parameter
          * irrelevant. We keep it for future expansions.
          */
@@ -224,14 +283,19 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
         for (const docReq of request.docs) {
             const outerIdObj: BulkGetResponseObj = { id: docReq.id, docs: [] };
             results.push(outerIdObj);
-            // Get all (possibly conflicting) leaf records
+            /* Get all (possibly conflicting) leaf records and deleted records,
+             * and then search backward for the requested id/rev. This should
+             * be faster than locating the id/rev first and then calculating
+             * its leaf or deleted decendant.
+             */
             const statement =
                 `select ${this.fullyQualifiedVCCols("vc").join()}, v.* ` +
                 `from ${entity.table}_vc as vc ` +
-                `inner join ${entity.table}_v as v on ` +
+                `left join ${entity.table}_v as v on ` +
                 `(vc._id = v._id and vc._rev = v._rev) ` +
-                `where vc._id = \$1 and vc.isleaf = \$2`;
-            const parameters = [docReq.id, true];
+                `where vc._id = \$1 and ` +
+                `(vc.isleaf = \$2 or vc.isdeleted = \$3)`;
+            const parameters = [docReq.id, true, true];
             this.log(logger, statement, parameters);
             const queryResults = await this._pool.query(statement, parameters);
             if (!queryResults.rows.length) {
@@ -244,13 +308,15 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
             } else {
                 const resultSet = new MemResultSet(queryResults.rows);
                 if (docReq.rev) {
-                    const matchingRow = resultSet.find(
+                    const matchingRows = resultSet.filter(
                         (row) => this.revInAncestry(row, docReq.rev!));
-                    if (matchingRow) {
-                        const revisions = this.getRevisions(matchingRow);
-                        this.convertDbRowToAppRow(matchingRow);
-                        matchingRow.add("_revisions", revisions);
-                        outerIdObj.docs.push({ ok: matchingRow.raw() });
+                    if (matchingRows.length) {
+                        for (const matchingRow of matchingRows) {
+                            const revisions = this.getRevisions(matchingRow);
+                            this.convertDbRowToAppRow(matchingRow);
+                            matchingRow.add("_revisions", revisions);
+                            outerIdObj.docs.push({ ok: matchingRow.raw() });
+                        }
                     } else {
                         outerIdObj.docs.push({ error: {
                             id: docReq.id,
@@ -567,12 +633,12 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
     async getSequenceId(logger: Logger, context: IContext,
                         entity: Entity): Promise<string> {
         const statement =
-            `select coalesce(max(seq), 0) "max" from ${entity.table}_vc`;
+            `select coalesce(max(updateseq), 0) "max" from ${entity.table}_vc`;
         this.log(logger, statement);
         const result = await this._pool.query(statement);
         if (result.rows.length === 0) {
             throw new PgReplicationError(
-                `No rows returned for max(seq) ${entity.table}_vc`, 404);
+                `No rows returned for max(updateseq) ${entity.table}_vc`, 404);
         }
         return "" + result.rows[0].max;
     }

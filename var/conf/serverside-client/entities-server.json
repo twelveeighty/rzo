@@ -1,0 +1,32 @@
+[
+    {
+        "apiVersion": "v1",
+        "kind": "Entity",
+        "metadata": {
+            "name": "login"
+        },
+        "spec": {
+            "type": "ImmutableContainedEntity",
+            "table": "login",
+            "parents": ["useraccount"],
+            "keyFields": [
+                { "name": "useraccountnum", "type": "ForeignKey",
+                      "target": "useraccount",
+                      "value": "useraccountnum",
+                      "collection": "useraccounts"
+                }
+            ],
+            "coreFields": [
+                { "name": "password", "type": "server.crypto.PasswordField",
+                    "required": true,
+                    "minLength": 12,
+                    "specials": " ~`!@#$%^&*()-_+=[]{};:'\",<.>/?\\|",
+                    "minSpecials": 2,
+                    "minNumbers": 2,
+                    "algorithm": "SHA-512"
+                }
+            ]
+        }
+    }
+]
+

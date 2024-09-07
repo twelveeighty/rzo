@@ -76,6 +76,8 @@ try {
 
     const configuration = await Promise.all([
         readFile(getUrl("entities"), { encoding: 'utf8' }),
+        readFile(getUrl("entities-server", "serverside-client"),
+                 { encoding: 'utf8' }),
         readFile(getUrl("personas"), { encoding: 'utf8' }),
         readFile(getUrl("collections", "client"), { encoding: 'utf8' }),
         readFile(getUrl("config", "serverside-client"), { encoding: 'utf8' })
@@ -124,8 +126,8 @@ try {
                         operation = "delete";
                         break;
                     default:
-                        throw new Error(`Invalid operation: ` +
-                                        `${entityCfg.operation}`);
+                        throw new Error(
+                            `Invalid operation: ${entityCfg.operation}`);
                 }
             } else {
                 operation = "post";

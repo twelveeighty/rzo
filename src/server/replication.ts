@@ -481,8 +481,12 @@ export class ReplicationAdapter extends SessionAwareAdapter {
                 };
                 response.end(JSON.stringify(result));
             } else if (uriElements.length == 4 && uriElements[2] == "_local") {
+                let id: string = decodeURIComponent(uriElements[3]);
+                if (!id.startsWith("_local/")) {
+                    id = `_local/${id}`;
+                }
                 const state = await this.replSource.v.getReplicationState(
-                    this.logger, entity, decodeURIComponent(uriElements[3]))
+                    this.logger, entity, id)
                 if (state) {
                     response.end(JSON.stringify(state));
                 } else {
@@ -533,6 +537,12 @@ export class ReplicationAdapter extends SessionAwareAdapter {
          */
         const revsQuery = new RevsQuery(
             uriElements.length >= 5 ? uriElements[4] : "");
+
+        if (this.logger.willLog("Debug")) {
+            this.logger.info("Replication _bulk_get inbound:");
+            this.logger.logAny(JSON.stringify(payload, null, 2));
+        }
+
         const bulk = await this.replSource.v.postBulkGet(
             this.logger, entity, payload as BulkGetRequest, revsQuery);
         if (this.logger.willLog("Info")) {
@@ -555,7 +565,7 @@ export class ReplicationAdapter extends SessionAwareAdapter {
         }
         const result = JSON.stringify(bulk);
         if (this.logger.willLog("Debug")) {
-            this.logger.debug(result);
+            this.logger.logAny(JSON.stringify(bulk, null, 2));
         }
         response.end(result);
     }

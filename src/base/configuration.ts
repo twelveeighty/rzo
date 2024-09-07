@@ -366,8 +366,8 @@ export class Configuration implements IConfiguration {
 
     private async performBootstrap() {
         await this.parse();
-        this.configure();
         this.logConfiguration.sort();
+        this.configure();
         console.log(this.logConfiguration.loggers);
     }
 

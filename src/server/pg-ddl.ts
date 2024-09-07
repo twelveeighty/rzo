@@ -97,6 +97,7 @@ insert into leaderelect values (1, now(), '00000000-0000-1000-8000-000000000000'
 insert into useraccount_vc (
     _id,
     _rev,
+    updateseq,
     updated,
     updatedby,
     versiondepth, ancestry,
@@ -104,6 +105,7 @@ insert into useraccount_vc (
 values (
     '00000000-0000-1000-8000-000000000000',
     '1-f0000000000000000000000000000000',
+    nextval('useraccount_vc_useq'),
     CURRENT_TIMESTAMP,
     '00000000-0000-1000-8000-000000000000',
     1, 'f0000000000000000000000000000000',

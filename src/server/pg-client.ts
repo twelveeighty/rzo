@@ -73,16 +73,6 @@ export class PgBaseClient {
         "updated", "updatedby", "versiondepth", "ancestry",
         "isleaf", "isdeleted", "isstub, isconflict, iswinner"
     ];
-    static VC_COL_ALIASES = [
-        "seq", "vc_id", "vc_rev",
-        "updated", "updatedby", "versiondepth", "ancestry",
-        "isleaf", "isdeleted", "isstub", "iswinner"
-    ];
-    static VC_COL_NAMES = [
-        "seq", "_id", "_rev",
-        "updated", "updatedby", "versiondepth", "ancestry",
-        "isleaf", "isdeleted", "isstub", "iswinner"
-    ];
 
     constructor() {
         this.sessionEntity = new Cfg("session");
@@ -95,40 +85,51 @@ export class PgBaseClient {
         this.userEntity.v = configuration.getEntity("useraccount");
     }
 
-    protected convertDbRowToAppRow(row: Row): Row {
-        if (!row.has("_id") || !row.get("_id")) {
+    protected convertDbRowToAppRow(row: Row, flagConflict?: boolean): Row {
+        if (!row.has("_id")) {
             row.add("_id", row.get("vc_id"));
+        } else if (!row.get("_id")) {
+            row.put("_id", row.get("vc_id"));
         }
-        if (!row.has("_rev") || !row.get("_rev")) {
+        if (!row.has("_rev")) {
             row.add("_rev", row.get("vc_rev"));
+        } else if (!row.get("_rev")) {
+            row.put("_rev", row.get("vc_rev"));
         }
         if (row.get("isdeleted")) {
             row.add("_deleted", true);
+            const keep = ["_id", "_rev", "_deleted", "_revisions"];
+            for (const colName of row.columns) {
+                if (!keep.includes(colName)) {
+                    row.deleteNoCheck(colName);
+                }
+            }
+        } else {
+            if (flagConflict && row.get("isconflict")) {
+                row.add("_conflict", true);
+            }
+            row.deleteNoCheck("seq");
+            row.deleteNoCheck("vc_id");
+            row.deleteNoCheck("vc_rev");
+            row.deleteNoCheck("versiondepth");
+            row.deleteNoCheck("ancestry");
+            row.deleteNoCheck("isleaf");
+            row.deleteNoCheck("isdeleted");
+            row.deleteNoCheck("isstub");
+            row.deleteNoCheck("isconflict");
+            row.deleteNoCheck("iswinner");
         }
-        if (row.get("isconflict")) {
-            row.add("_conflict", true);
-        }
-        row.deleteNoCheck("seq");
-        row.deleteNoCheck("vc_id");
-        row.deleteNoCheck("vc_rev");
-        row.deleteNoCheck("versiondepth");
-        row.deleteNoCheck("ancestry");
-        row.deleteNoCheck("isleaf");
-        row.deleteNoCheck("isdeleted");
-        row.deleteNoCheck("isstub");
-        row.deleteNoCheck("isconflict");
-        row.deleteNoCheck("iswinner");
         return row;
     }
 
     async getSequenceId(logger: Logger, context: IContext,
-                  entity: Entity): Promise<string> {
+                        entity: Entity): Promise<string> {
         const statement =
-            `select coalesce(max(seq), 0) "max" from ${entity.table}_vc`;
+            `select coalesce(max(updateseq), 0) "max" from ${entity.table}_vc`;
         this.log(logger, statement);
         const result = await this._pool.query(statement);
         if (result.rows.length === 0) {
-            throw new PgClientError(`No rows returned for max(seq) ` +
+            throw new PgClientError(`No rows returned for max(updateseq) ` +
                                     `${entity.table}_vc`, 404);
         }
         return "" + result.rows[0].max;
@@ -164,7 +165,8 @@ export class PgBaseClient {
         if (result.rows.length === 0) {
             return new Row();
         }
-        return this.convertDbRowToAppRow(Row.dataToRow(result.rows[0], entity));
+        return this.convertDbRowToAppRow(
+            Row.dataToRow(result.rows[0], entity), true);
     }
 
     async getDBInfo(logger: Logger, context: IContext): Promise<Row> {
@@ -188,28 +190,37 @@ export class PgBaseClient {
         return result;
     }
 
+    private getSelfUpdateSet(entity: Entity, alias: string): string[] {
+        const statements: string[] = [];
+        for (const column of entity.allFieldColumns) {
+            statements.push(`${column} = ${alias}.${column}`);
+        }
+        return statements;
+    }
+
     protected async applyMvccResults(logger: Logger, client: pg.Client,
                                      entity: Entity,
                                      result: MvccResult): Promise<void> {
         const putStatement = `update ${entity.table}_vc set ` +
+            `updateseq = nextval('${entity.table}_vc_useq'), ` +
             `isleaf = \$1, isdeleted = \$2, isstub = \$3, isconflict = \$4, ` +
             `iswinner = \$5 where seq = \$6`;
         const postStatement = `insert into ${entity.table}_vc (` +
             `_id, _rev, updated, updatedby, versiondepth, ancestry, isleaf, ` +
-            `isdeleted, isstub, isconflict, iswinner) values (` +
-            `\$1, \$2, \$3, \$4, \$5, \$6, \$7, \$8, \$9, \$10, \$11)`;
-        let parameters: any[];
+            `isdeleted, isstub, isconflict, iswinner, updateseq) values (` +
+            `\$1, \$2, \$3, \$4, \$5, \$6, \$7, \$8, \$9, \$10, \$11, ` +
+            `nextval('${entity.table}_vc_useq'))`;
         for (const vc of result.vcTables) {
             const record = vc.record;
             if (vc.action == "put") {
-                parameters = [
+                const parameters = [
                     record.isleaf, record.isdeleted, record.isstub,
                     record.isconflict, record.iswinner, record.seq!
                 ];
                 this.log(logger, putStatement, parameters);
                 await client.query(putStatement, parameters);
             } else if (vc.action == "post") {
-                parameters = [
+                const parameters = [
                     record._id!, record._rev!, record.updated!,
                     record.updatedby!, record.versiondepth!, record.ancestry!,
                     record.isleaf, record.isdeleted, record.isstub,
@@ -226,67 +237,66 @@ export class PgBaseClient {
                 `values (` +
                 `${result.versionTable.payload!.columnNumbers.join()}` +
                 `)`;
-            parameters = result.versionTable.payload!.values();
+            const parameters = result.versionTable.payload!.values();
             this.log(logger, statement, parameters);
             await client.query(statement, parameters);
         }
         // Entity table
         if (result.leafTable.type == "post") {
+            const row = result.leafTable.leafActionPost!.payload;
             const statement = `insert into ${entity.table} ` +
-                `(${result.leafTable.payload!.columns.join()}) ` +
+                `(${row.columns.join()}) ` +
                 `values (` +
-                `${result.leafTable.payload!.columnNumbers.join()}` +
+                `${row.columnNumbers.join()}` +
                 `)`;
-            const row = Row.must(result.leafTable.payload);
-            parameters = row.values();
+            const parameters = row.values();
             this.log(logger, statement, parameters);
             await client.query(statement, parameters);
         } else if (result.leafTable.type == "delete") {
+            const id = result.leafTable.leafActionDelete!._id;
             const statement = `delete from ${entity.table} where _id = \$1`;
-            parameters = [result.leafTable._id];
+            const parameters = [id];
             this.log(logger, statement, parameters);
             const pgResult = await client.query(statement, parameters);
             if (pgResult.rowCount != 1) {
                 throw new PgClientError(
-                    `MVCC Leaf delete: delete ${entity.name}, id = ` +
-                    `${result.leafTable._id} rowCount was not 1: ` +
-                    `${pgResult.rowCount}`);
+                    `MVCC Leaf delete: delete ${entity.name}, id = ${id} ` +
+                    `rowCount was not 1: ${pgResult.rowCount}`);
             }
         } else if (result.leafTable.type == "swap") {
-            let statement = `delete from ${entity.table} where _id = \$1`;
-            parameters = [result.leafTable._id];
-            this.log(logger, statement, parameters);
-            let pgResult = await client.query(statement, parameters);
-            if (pgResult.rowCount != 1) {
-                throw new PgClientError(
-                    `MVCC Leaf swap: delete ${entity.name}, id = ` +
-                    `${result.leafTable._id} rowCount was not 1: ` +
-                    `${pgResult.rowCount}`);
-            }
-            /* Over time, the _v table could have diverted from the entity
-             * table, so only pull the current columns from _v.
+            const id = result.leafTable.leafActionSwap!._id;
+            const toRev = result.leafTable.leafActionSwap!.toRev;
+            /* Over time, the entrity table diverts from the _v table, so only
+             * pull the current columns using the entity definition.
              */
-            const entityCols = ["_id", "_rev"].concat(entity.allFieldColumns);
-            statement =
-                `insert into ${entity.table} ` +
-                `select ${entityCols.join()} from ${entity.table}_v ` +
-                `where _id = \$1 and _rev = \$2`;
-            parameters = [result.leafTable._id, result.leafTable._rev];
+            const updateSet = this.getSelfUpdateSet(entity, "v");
+            // Add the _rev column to the update list.
+            updateSet.push("_rev = v._rev");
+            const statement =
+                `update ${entity.table} set ${updateSet.join(", ")} ` +
+                `from ${entity.table}_v as v ` +
+                `where ${entity.table}._id = v._id ` +
+                `and v._id = \$1 and v._rev = \$2`;
+            const parameters = [id, toRev];
             this.log(logger, statement, parameters);
-            pgResult = await client.query(statement, parameters);
+            const pgResult = await client.query(statement, parameters);
             if (pgResult.rowCount != 1) {
                 throw new PgClientError(
-                    `MVCC Leaf swap: insert/select ${entity.name}_v, id = ` +
-                    `${result.leafTable._id} ; rev = ` +
-                    `${result.leafTable._rev} rowCount was not 1: ` +
+                    `MVCC Leaf swap: update/select ${entity.name}, id = ` +
+                    `${id} ; rev = ${toRev} rowCount was not 1: ` +
                     `${pgResult.rowCount}`);
             }
         } else if (result.leafTable.type == "put") {
-            const row = Row.must(result.leafTable.payload);
+            /* The "put" operation requires the payload to contain
+             * the *new* _rev and the leafAction._rev to MATCH the current _rev
+             * on the entity table. If no match, an error is thrown and no
+             * update is performed.
+             */
+            const row = result.leafTable.leafActionPut!.payload;
             const targetId = row.get("_id");
-            const targetRev = result.leafTable._rev;
+            const targetRev = result.leafTable.leafActionPut!._rev;
             const setList = row.getUpdateSet();
-            parameters = row.values().concat(targetId, targetRev);
+            const parameters = row.values().concat(targetId, targetRev);
             const statement =
                 `update ${entity.table} set ${setList.join(", ")} ` +
                 `where _id = \$${setList.length + 1} and ` +
@@ -583,7 +593,7 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
             const result = await this._pool.query(statement, parameters);
             if (result.rows.length > 0) {
                 row = this.convertDbRowToAppRow(
-                    Row.dataToRow(result.rows[0], entity));
+                    Row.dataToRow(result.rows[0], entity), true);
             }
         } else {
             const statement =
@@ -597,7 +607,7 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
             const result = await this._pool.query(statement, parameters);
             if (result.rows.length > 0) {
                 row = this.convertDbRowToAppRow(
-                    Row.dataToRow(result.rows[0], entity));
+                    Row.dataToRow(result.rows[0], entity), true);
             }
         }
         return row;
@@ -698,7 +708,7 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
             this.log(logger, statement);
             await client.query(statement);
 
-            return Row.must(mvccResult.leafTable.payload);
+            return Row.must(mvccResult.leafTable.leafActionPut?.payload);
         } catch (err: any) {
             statement = "ROLLBACK";
             this.log(logger, statement);
@@ -760,7 +770,7 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
                 this.log(logger, statement);
                 await client.query(statement);
 
-                return Row.must(mvccResult.leafTable.payload);
+                return Row.must(mvccResult.leafTable.leafActionPost?.payload);
             } catch (err: any) {
                 statement = "ROLLBACK";
                 this.log(logger, statement);

@@ -43,11 +43,30 @@ type VcResult = {
     record: VcRecord;
 }
 
+type LeafActionPost = {
+    payload: Row;
+}
+
+type LeafActionPut = {
+    payload: Row;
+    _rev: string;
+}
+
+type LeafActionSwap = {
+    _id: string;
+    toRev: string;
+}
+
+type LeafActionDelete = {
+    _id: string;
+}
+
 type LeafAction = {
     type: "none" | "post" | "put" | "swap" | "delete";
-    _id?: string;
-    _rev?: string;
-    payload?: Row;
+    leafActionPost?: LeafActionPost;
+    leafActionPut?: LeafActionPut;
+    leafActionSwap?: LeafActionSwap;
+    leafActionDelete?: LeafActionDelete;
 }
 
 type VersionTableAction = {
@@ -65,8 +84,10 @@ type DocRevisions = {
     start: number;
 }
 
-const ENTITY_EXCLUDED = ["_revisions", "updated", "updatedby"];
-const HASH_EXCLUDED = ["_id", "_rev", "_revisions", "updated", "updatedby"];
+const ENTITY_EXCLUDED = ["seq", "_revisions", "updated", "updatedby",
+                         "updateseq"];
+const HASH_EXCLUDED = ["_id", "_rev", "seq", "_revisions", "updated",
+                       "updatedby", "updateseq"];
 
 class MvccError extends _IError {
     constructor(message: string, code?: number, options?: ErrorOptions) {
@@ -78,8 +99,10 @@ export class MvccResult {
     vcTables: VcResult[];
     versionTable: VersionTableAction;
     leafTable: LeafAction;
+    logger: Logger;
 
-    constructor() {
+    constructor(logger: Logger) {
+        this.logger = logger;
         this.vcTables = [];
         this.versionTable = { type: "none" };
         this.leafTable = { type: "none" };
@@ -87,6 +110,42 @@ export class MvccResult {
 
     addVcTableAction(action: "post" | "put", record: VcRecord) {
         this.vcTables.push({ action: action, record: record });
+    }
+
+    setLeafActionPut(row: Row, oldRev: string) {
+        if (!row.hasAll(["_id", "_rev"])) {
+            this.logger.error("C 078 - EXC");
+            throw new MvccError(
+                "Row must have _id and _rev to set LeafAction to 'put'");
+        }
+        if (row.get("_rev") == oldRev) {
+            this.logger.error("C 079 - EXC");
+            throw new MvccError(
+                "Row's _rev and passed oldRev must be different to set" +
+                " LeafAction to 'put'");
+        }
+        this.leafTable.type = "put";
+        this.leafTable.leafActionPut = { payload: row, _rev: oldRev };
+    }
+
+    setLeafActionPost(row: Row) {
+        if (!row.hasAll(["_id", "_rev"])) {
+            this.logger.error("C 080 - EXC");
+            throw new MvccError(
+                "Row must have _id and _rev to set LeafAction to 'post'");
+        }
+        this.leafTable.type = "post";
+        this.leafTable.leafActionPost = { payload: row };
+    }
+
+    setLeafActionSwap(id: string, toRev: string) {
+        this.leafTable.type = "swap";
+        this.leafTable.leafActionSwap = { _id: id, toRev: toRev };
+    }
+
+    setLeafActionDelete(id: string) {
+        this.leafTable.type = "delete";
+        this.leafTable.leafActionDelete = { _id: id };
     }
 }
 
@@ -236,9 +295,25 @@ export class MvccController {
         return { depth: depth, hash: hash };
     }
 
+    private findParent(external: DocRevisions,
+                       versions: IResultSet): Row | undefined {
+        /* Starting at 'start - 1', find the first parent in our known
+         * versions.
+         */
+        for (let idx = 1, depth = external.start - 1;
+             idx < external.ids.length && depth > 0;
+             idx++, depth--) {
+            const rev = `${depth}-${external.ids[idx]}`;
+            const result = versions.find((rec) => rec.get("_rev") == rev);
+            if (result) {
+                return result;
+            }
+        }
+    }
+
     private putForceDelete(row: Row, versions: IResultSet,
                            context?: IContext): MvccResult {
-        const result = new MvccResult();
+        const result = new MvccResult(this.logger);
         const id = row.get("_id");
         const rev = row.get("_rev");
         const updated = row.has("updated") ? row.get("updated") : new Date();
@@ -272,13 +347,11 @@ export class MvccController {
          */
         if (rowRevisions && rowRevisions.ids.length > 1) {
             this.logger.debug("C 002");
-            /* If the 'start - 1' revision in the array matches one of our
-             * 'versions' and that match is a (non-deleted) leaf, then delete
+            /* Find the the first known match to the passed revision history in
+             * 'versions' and if that match is a (non-deleted) leaf, then delete
              * that leaf.
              */
-            const target = `${rowRevisions.start - 1}-${rowRevisions.ids[1]}`;
-            const toDeleteRev = versions.find(
-                (rec) => rec.get("_rev") == target);
+            const toDeleteRev = this.findParent(rowRevisions, versions);
             // Only make further edits if we have a match for this rev.
             if (toDeleteRev) {
                 this.logger.debug("C 003");
@@ -286,10 +359,10 @@ export class MvccController {
                     this.logger.debug("C 004");
                     /*
                      * Post a new vc record for the deletion.
-                     * Mark the 'start - 1' rev isleaf=false, isconflict=false,
+                     * Mark the parent rev isleaf=false, isconflict=false,
                      * iswinner=false.
-                     * If 'start - 1' was the winner and there were no
-                     * conflicts, delete the leaf.
+                     * If parent was the winner and there were no conflicts,
+                     * delete the leaf.
                      * Else If there were conflicts, determine the new winner
                      * and if different swap the leaf with the new winner and
                      * then update the 'isconflict' values accordingly based on
@@ -306,8 +379,7 @@ export class MvccController {
                     if (toDeleteRev.get("iswinner") &&
                         !toDeleteRev.get("isconflict")) {
                         this.logger.debug("C 008");
-                        result.leafTable.type = "delete";
-                        result.leafTable._id = id;
+                        result.setLeafActionDelete(id);
                     } else if (toDeleteRev.get("isconflict")) {
                         this.logger.debug("C 009");
                         /* Mark the toDeleteRev row as isleaf=false, and then
@@ -324,8 +396,9 @@ export class MvccController {
                             this.logger.error("C 011 - EXC");
                             throw new MvccError(
                                 `Data integrity issue C 011 - record id ` +
-                                `${id} version ${target} is marked ` +
-                                `isconflict, but there are no other leaf records`);
+                                `${id} version ${toDeleteRev.get("_rev")} is ` +
+                                `marked isconflict, but there are no other ` +
+                                `leaf records`);
                         }
                         if (leafs.length == 1) {
                             this.logger.debug("C 012");
@@ -343,9 +416,10 @@ export class MvccController {
                              */
                             if (!leafs[0].get("iswinner")) {
                                 this.logger.debug("C 014");
-                                result.leafTable.type = "swap";
-                                result.leafTable._id = id;
-                                result.leafTable._rev = leafs[0].get("_rev");
+                                result.setLeafActionSwap(
+                                    id, leafs[0].get("_rev"));
+                            } else {
+                                this.logger.debug("C 081");
                             }
                         } else {
                             this.logger.debug("C 013");
@@ -368,10 +442,8 @@ export class MvccController {
                                         iswinner: true
                                     });
                                     // Swap the entity record to the new winner
-                                    result.leafTable.type = "swap";
-                                    result.leafTable._id = id;
-                                    result.leafTable._rev =
-                                        newWinner.get("_rev");
+                                    result.setLeafActionSwap(
+                                        id, newWinner.get("_rev"));
                                 }
                                 /* The winner hasn't changed, so no other
                                  * modifications are needed
@@ -379,9 +451,11 @@ export class MvccController {
                             } else {
                                 this.logger.error("C 017 - EXC");
                                 throw new MvccError(
-                                    `Data integrity issue - record id ${id} ` +
-                                    `version ${target} is marked 'isconflict'` +
-                                    `, but no record is marked as 'iswinner'`);
+                                    `Data integrity issue C 017 - record ` +
+                                    `id ${id} version ` +
+                                    `${toDeleteRev.get("_rev")} is marked ` +
+                                    `'isconflict', but no record is ` +
+                                    `marked as 'iswinner'`);
                             }
                         }
                     } else {
@@ -423,7 +497,7 @@ export class MvccController {
             return this.putForceDelete(row, versions, context);
         }
         this.logger.debug("C 019");
-        const result = new MvccResult();
+        const result = new MvccResult(this.logger);
         const id = row.get("_id");
         const rev = row.get("_rev");
         const updated = row.has("updated") ? row.get("updated") : new Date();
@@ -458,11 +532,9 @@ export class MvccController {
         // we force the creation of a (possibly conflicted) leaf.
         if (rowRevisions && rowRevisions.ids.length > 1) {
             this.logger.debug("C 077");
-            const parentRev =
-                `${rowRevisions.start - 1}-${rowRevisions.ids[1]}`;
-            const parentRow = versions.find(
-                (rec) => rec.get("_rev") == parentRev);
+            const parentRow = this.findParent(rowRevisions, versions);
             if (parentRow && parentRow.get("isleaf")) {
+                const parentRev = parentRow.get("_rev");
                 /* The passed row is a new version for the parent, update
                  * the parent's vc record, since it is no longer a leaf.
                  */
@@ -513,8 +585,7 @@ export class MvccController {
                          */
                         if (newWinnerRev == rev) {
                             this.logger.debug("C 027");
-                            result.leafTable.type = "swap";
-                            result.leafTable.payload = row;
+                            result.setLeafActionSwap(id, rev);
                         } else if (newWinnerRev != oldWinnerRev) {
                             this.logger.debug("C 028");
                             result.addVcTableAction("put", {
@@ -567,16 +638,7 @@ export class MvccController {
                         isconflict: false,
                         iswinner: true
                     });
-                    result.addVcTableAction("put", {
-                        seq: parentRow.get("seq"),
-                        isleaf: false,
-                        isdeleted: false,
-                        isstub: false,
-                        isconflict: false,
-                        iswinner: false
-                    });
-                    result.leafTable.type = "swap";
-                    result.leafTable.payload = row;
+                    result.setLeafActionSwap(id, rev);
                 }
             } else {
                 /* Unknown parent, or the known parent is not a leaf. Create
@@ -615,8 +677,7 @@ export class MvccController {
                      */
                     if (winnerRev == rev) {
                         this.logger.debug("C 035");
-                        result.leafTable.type = "swap";
-                        result.leafTable.payload = row;
+                        result.setLeafActionSwap(id, rev);
                     } else {
                         this.logger.debug("C 036");
                     }
@@ -656,8 +717,7 @@ export class MvccController {
                      */
                     if (winnerRev == rev) {
                         this.logger.debug("C 037");
-                        result.leafTable.type = "swap";
-                        result.leafTable.payload = row;
+                        result.setLeafActionSwap(id, rev);
                     } else {
                         this.logger.debug("C 038");
                     }
@@ -703,8 +763,7 @@ export class MvccController {
                         isconflict: false,
                         iswinner: true
                     });
-                    result.leafTable.type = "post";
-                    result.leafTable.payload = row;
+                    result.setLeafActionPost(row);
                 }
             }
         } else if (rowRevisions && rowRevisions.ids.length == 1) {
@@ -784,8 +843,7 @@ export class MvccController {
                 }
             }
             // Add the leaf table
-            result.leafTable.type = "post";
-            result.leafTable.payload = row;
+            result.setLeafActionPost(row);
         } else {
             this.logger.debug("C 021");
         }
@@ -795,7 +853,7 @@ export class MvccController {
     private putNoForce(row: Row, versions: IResultSet, vcRow: Row,
                        context?: IContext): MvccResult {
         this.logger.debug("C 048");
-        const result = new MvccResult();
+        const result = new MvccResult(this.logger);
         const id = row.get("_id");
         const rev = row.get("_rev");
         // No conflicts may exist
@@ -852,9 +910,7 @@ export class MvccController {
         });
         result.versionTable.type = "post";
         result.versionTable.payload = row;
-        result.leafTable.type = "put";
-        result.leafTable.payload = row;
-        result.leafTable._rev = rev;
+        result.setLeafActionPut(row, rev);
         return result;
     }
 
@@ -894,7 +950,7 @@ export class MvccController {
     deleteMvcc(id: string, rev: string, versions: IResultSet,
                context: IContext): MvccResult {
         this.logger.debug("C 058");
-        const result = new MvccResult();
+        const result = new MvccResult(this.logger);
         const toDeleteVC = versions.find((rec) => rec.get("_rev") == rev);
         if (toDeleteVC) {
             this.logger.debug("C 059");
@@ -962,12 +1018,13 @@ export class MvccController {
                             iswinner: true
                         });
                         if (!newWinner.get("iswinner")) {
+                            this.logger.debug("C 082");
                             /* The remaining conflict is now the winner, swap
                              * the leaf record.
                              */
-                            result.leafTable.type = "swap";
-                            result.leafTable._id = id;
-                            result.leafTable._rev = newWinner.get("_rev");
+                            result.setLeafActionSwap(id, newWinner.get("_rev"));
+                        } else {
+                            this.logger.debug("C 083");
                         }
                     } else if (remainingConflicts.length > 1) {
                         this.logger.debug("C 066");
@@ -997,9 +1054,8 @@ export class MvccController {
                                     iswinner: true
                                 });
                                 // Swap the leaf record to the new winner
-                                result.leafTable.type = "swap";
-                                result.leafTable._id = id;
-                                result.leafTable._rev = newWinner.get("_rev");
+                                result.setLeafActionSwap(
+                                    id, newWinner.get("_rev"));
                                 if (oldWinner.get("_rev") != rev) {
                                     this.logger.debug("C 072");
                                     result.addVcTableAction("put", {
@@ -1034,9 +1090,7 @@ export class MvccController {
                 } else {
                     this.logger.debug("C 064");
                     // No conflicts, remove the leaf record
-                    result.leafTable.type = "delete";
-                    result.leafTable._id = id;
-                    result.leafTable._rev = rev;
+                    result.setLeafActionDelete(id);
                 }
             } else {
                 this.logger.error("C 062 - EXC");
@@ -1051,7 +1105,7 @@ export class MvccController {
 
     postMvcc(row: Row, context: IContext): MvccResult {
         this.logger.debug("C 074");
-        const result = new MvccResult();
+        const result = new MvccResult(this.logger);
         this.convertToPayload(row);
         const id = Entity.generateId();
         const updated = new Date();
@@ -1075,8 +1129,7 @@ export class MvccController {
         });
         result.versionTable.type = "post";
         result.versionTable.payload = row;
-        result.leafTable.type = "post";
-        result.leafTable.payload = row;
+        result.setLeafActionPost(row);
         return result;
     }
 

@@ -644,6 +644,7 @@ create table ${entity.table}_vc (
    seq bigserial primary key,
    _id uuid not null,
    _rev varchar(43) not null,
+   updateseq bigint not null,
    updated timestamptz not null,
    updatedby uuid not null,
    versiondepth integer not null,
@@ -657,6 +658,9 @@ create table ${entity.table}_vc (
 );
 
 create index ${entity.table}_vc_id on ${entity.table}_vc (_id);
+create index ${entity.table}_vc_updateseq on ${entity.table}_vc (updateseq);
+
+create sequence ${entity.table}_vc_useq owned by ${entity.table}_vc.updateseq;
 
 `           ;
             tableDDL += vcTable;

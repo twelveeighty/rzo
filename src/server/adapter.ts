@@ -238,19 +238,23 @@ export class BaseAdapter extends DaemonWorker implements IAdapter {
             chunks.push(chunk);
         });
         request.on("end", () => {
-            const payload = Buffer.concat(chunks).toString();
-            const parsed = JSON.parse(payload);
-            let json_obj: any;
-            if (parsed instanceof Array) {
-                json_obj = (<any[]>parsed)[0];
-            } else {
-                json_obj = parsed;
-            }
-            this.payloadHandler(
-                json_obj, request, response, uriElements, resource, id)
-            .catch((error) => {
+            try {
+                const payload = Buffer.concat(chunks).toString();
+                const parsed = JSON.parse(payload);
+                let json_obj: any;
+                if (parsed instanceof Array) {
+                    json_obj = (<any[]>parsed)[0];
+                } else {
+                    json_obj = parsed;
+                }
+                this.payloadHandler(
+                    json_obj, request, response, uriElements, resource, id)
+                .catch((error) => {
+                    AdapterError.toResponse(this.logger, error, response);
+                });
+            } catch(error) {
                 AdapterError.toResponse(this.logger, error, response);
-            });
+            }
         });
         request.on("error", (error) => {
             AdapterError.toResponse(this.logger, error, response);

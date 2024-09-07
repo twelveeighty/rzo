@@ -18,8 +18,7 @@
 */
 
 import {
-    Entity, Field, State, MemResultSet, Filter, Query, Collection, Cfg,
-    ServiceSource
+    Entity, Field, State, Filter, Query, Collection, Cfg, ServiceSource
 } from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
 
@@ -229,6 +228,8 @@ export class RiderViewPanel extends BasePanel implements IPanel {
             `${state.asString("ridernum")} (${state.asString("status")})`;
 
         const values: string[] = [];
+        this.addIfPresent(values, "_id", state.id);
+        this.addIfPresent(values, "_rev", state.rev);
         this.addIfPresent(values, "Zone", state.asString("zone"));
         this.addIfPresent(values, "Address", state.asString("address1"));
         this.addIfPresent(values, "Address2", state.asString("address2"));
@@ -267,9 +268,7 @@ export class RiderViewPanel extends BasePanel implements IPanel {
 
     async show(panelData?: PanelData): Promise<void> {
         if (panelData && panelData.dataType == "Row") {
-            const rs = MemResultSet.fromRow(panelData.row);
-            rs.next();
-            this.state = this.entity.v.from(rs);
+            this.state = this.entity.v.rowToState(panelData.row);
             this.stateToUI(this.state);
             this.div.hidden = false;
         } else if (panelData) {

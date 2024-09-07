@@ -200,9 +200,10 @@
         "spec": {
             "defaultLevel": "Info",
             "loggers": [
-                { "name": "adapter", "level": "Debug" },
-                { "name": "server/mvcc", "level": "Debug" },
-                { "name": "server/restserver", "level": "Debug" }
+                { "name": "server/mvcc", "level": "Info" },
+                { "name": "server/restserver", "level": "Info" },
+                { "name": "adapter", "level": "Info" },
+                { "name": "adapter/replicationadapter", "level": "Info" }
             ]
         }
     }

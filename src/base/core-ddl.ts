@@ -598,10 +598,12 @@ export class EntityDDL implements EntityCreator {
                 columns.push("   updatedby uuid not null");
             } else {
                 columns.push("   _rev varchar(43) not null");
+                columns.push("   _att jsonb");
             }
         } else {
             columns.push("   _id uuid not null");
             columns.push("   _rev varchar(43) not null");
+            columns.push("   _att jsonb");
         }
 
         const clse   = "\n);\n";
@@ -611,8 +613,8 @@ export class EntityDDL implements EntityCreator {
 
         for (const field of entity.allFields) {
             const fieldCreator = factory.fieldCreator(field.ddlCreatorClass);
-            const columnDDL = fieldCreator.creationDDL(factory, field,
-                                                       doVersion);
+            const columnDDL = fieldCreator.creationDDL(
+                factory, field, doVersion);
             columns.push(...columnDDL.ddl);
             postTable.push(...columnDDL.post);
         }

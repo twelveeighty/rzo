@@ -69,9 +69,20 @@ type LeafAction = {
     leafActionDelete?: LeafActionDelete;
 }
 
-type VersionTableAction = {
-    type: "none" | "post";
-    payload?: Row;
+type VersionActionPost = {
+    payload: Row;
+}
+
+type VersionActionDelcopy = {
+    _id: string;
+    fromRev: string;
+    toRev: string;
+}
+
+type VersionAction = {
+    type: "none" | "post" | "delcopy";
+    versionActionPost?: VersionActionPost;
+    versionActionDelcopy?: VersionActionDelcopy;
 }
 
 type VcVersion = {
@@ -97,7 +108,7 @@ class MvccError extends _IError {
 
 export class MvccResult {
     vcTables: VcResult[];
-    versionTable: VersionTableAction;
+    versionTable: VersionAction;
     leafTable: LeafAction;
     logger: Logger;
 
@@ -112,11 +123,27 @@ export class MvccResult {
         this.vcTables.push({ action: action, record: record });
     }
 
-    setLeafActionPut(row: Row, oldRev: string) {
+    setVersionActionDelcopy(id: string, fromRev: string, toRev: string) {
+        this.versionTable.type = "delcopy";
+        this.versionTable.versionActionDelcopy =
+            { _id: id, fromRev: fromRev, toRev: toRev };
+    }
+
+    setVersionActionPost(row: Row) {
         if (!row.hasAll(["_id", "_rev"])) {
+            this.logger.error("C 084 - EXC");
+            throw new MvccError(
+                "Row must have _id and _rev to set VersionAction to 'post'");
+        }
+        this.versionTable.type = "post";
+        this.versionTable.versionActionPost = { payload: row };
+    }
+
+    setLeafActionPut(row: Row, oldRev: string) {
+        if (!row.hasAll(["_id", "_rev", "_att"])) {
             this.logger.error("C 078 - EXC");
             throw new MvccError(
-                "Row must have _id and _rev to set LeafAction to 'put'");
+                "Row must have _id, _rev and _att to set LeafAction to 'put'");
         }
         if (row.get("_rev") == oldRev) {
             this.logger.error("C 079 - EXC");
@@ -170,7 +197,8 @@ export class MvccController {
             if (!challengerRev) {
                 return current;
             }
-            const challengerRevDepth = this.versionDepth(challengerRev);
+            const challengerRevDepth =
+                this.versionDepth(challengerRev);
             const currentRevDepth = this.versionDepth(currentRev);
             if (challengerRevDepth > currentRevDepth) {
                 return challenger;
@@ -193,7 +221,6 @@ export class MvccController {
         }
     }
 
-
     private winner(leafs: Row[]): Row {
         if (leafs.length < 2) {
             throw new MvccError(
@@ -207,6 +234,42 @@ export class MvccController {
             return winner;
         } else {
             throw new MvccError("Cannot determine winner");
+        }
+    }
+
+    versionDepth(rev: string): number {
+        const dashPos = rev.indexOf("-");
+        if (dashPos == -1 || dashPos == 0) {
+            throw new MvccError(`Cannot establish rev depth from rev` +
+                                `: '${rev}'`);
+        }
+        const depthStr = rev.substring(0, dashPos);
+        let depthNum;
+        try {
+            depthNum = Number(depthStr);
+        } catch (error) {
+            throw new MvccError(
+                `Cannot convert ${depthStr} to a number`, 500,
+                { cause: error });
+        }
+        if (!Number.isInteger(depthNum)) {
+            throw new MvccError(`Cannot convert ${depthStr} to an integer`);
+        }
+        return depthNum;
+    }
+
+    newVersion(payload: Row, fromRev?: string): VcVersion {
+        if (payload.empty) {
+            throw new MvccError(`Cannot create version hash on empty data row`);
+        }
+        const hash = md5(JSON.stringify(payload.raw()));
+        const depth = fromRev ? this.versionDepth(fromRev) + 1 : 1;
+        return { depth: depth, hash: hash };
+    }
+
+    convertToPayload(row: Row): void {
+        for (const col of HASH_EXCLUDED) {
+            row.delete(col);
         }
     }
 
@@ -251,48 +314,12 @@ export class MvccController {
         }
     }
 
-    convertToPayload(row: Row): void {
-        for (const col of HASH_EXCLUDED) {
-            row.delete(col);
-        }
-    }
-
     private versionHash(rev: string): string {
         const dashPos = rev.indexOf("-");
         if (dashPos == -1 || dashPos == 0 || dashPos >= (rev.length - 1)) {
             throw new MvccError(`Cannot establish hash from rev: '${rev}'`);
         }
         return rev.substring(dashPos + 1);
-    }
-
-    versionDepth(rev: string): number {
-        const dashPos = rev.indexOf("-");
-        if (dashPos == -1 || dashPos == 0) {
-            throw new MvccError(`Cannot establish rev depth from rev` +
-                                `: '${rev}'`);
-        }
-        const depthStr = rev.substring(0, dashPos);
-        let depthNum;
-        try {
-            depthNum = Number(depthStr);
-        } catch (error) {
-            throw new MvccError(
-                `Cannot convert ${depthStr} to a number`, 500,
-                { cause: error });
-        }
-        if (!Number.isInteger(depthNum)) {
-            throw new MvccError(`Cannot convert ${depthStr} to an integer`);
-        }
-        return depthNum;
-    }
-
-    private newVersion(payload: Row, fromRev?: string): VcVersion {
-        if (payload.empty) {
-            throw new MvccError(`Cannot create version hash on empty data row`);
-        }
-        const hash = md5(JSON.stringify(payload.raw()));
-        const depth = fromRev ? this.versionDepth(fromRev) + 1 : 1;
-        return { depth: depth, hash: hash };
     }
 
     private findParent(external: DocRevisions,
@@ -359,6 +386,7 @@ export class MvccController {
                     this.logger.debug("C 004");
                     /*
                      * Post a new vc record for the deletion.
+                     * Copy the parent rev to a new _v record.
                      * Mark the parent rev isleaf=false, isconflict=false,
                      * iswinner=false.
                      * If parent was the winner and there were no conflicts,
@@ -376,6 +404,8 @@ export class MvccController {
                         isconflict: false,
                         iswinner: false
                     });
+                    result.setVersionActionDelcopy(
+                        id, toDeleteRev.get("_rev"), rev);
                     if (toDeleteRev.get("iswinner") &&
                         !toDeleteRev.get("isconflict")) {
                         this.logger.debug("C 008");
@@ -512,8 +542,7 @@ export class MvccController {
             rowRevisions ? this.couchRevsToAncestry(rowRevisions.ids) : revHash;
         this.removeNonEntityFields(row);
         // Always create the version record for the passed leaf
-        result.versionTable.type = "post";
-        result.versionTable.payload = row;
+        result.setVersionActionPost(row);
         const oldWinner = versions.find((rec) => rec.get("iswinner"));
         const hasConflicts = versions.some((rec) => rec.get("isconflict"));
         // Do some data-integrity sanity checks
@@ -908,8 +937,7 @@ export class MvccController {
             isconflict: false,
             iswinner: false
         });
-        result.versionTable.type = "post";
-        result.versionTable.payload = row;
+        result.setVersionActionPost(row);
         result.setLeafActionPut(row, rev);
         return result;
     }
@@ -956,7 +984,7 @@ export class MvccController {
             this.logger.debug("C 059");
             if (toDeleteVC.get("isleaf")) {
                 this.logger.debug("C 061");
-                /* Add the deleted tombstone. Calculate the hash from _id,
+                /* Add the deleted _v record. Calculate the hash from _id,
                  * updated, updatedby and _deleted: true.
                  * This is different from the normal hash calculation,
                  * which excludes all those fields.
@@ -988,6 +1016,7 @@ export class MvccController {
                     isconflict: false,
                     iswinner: false
                 });
+                result.setVersionActionDelcopy(id, rev, newRevString);
                 // Mark the vc record as non-leaf
                 result.addVcTableAction("put", {
                     seq: toDeleteVC.get("seq"),
@@ -1127,8 +1156,7 @@ export class MvccController {
             isconflict: false,
             iswinner: true
         });
-        result.versionTable.type = "post";
-        result.versionTable.payload = row;
+        result.setVersionActionPost(row);
         result.setLeafActionPost(row);
         return result;
     }

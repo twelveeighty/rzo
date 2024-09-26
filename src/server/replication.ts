@@ -578,6 +578,7 @@ export class ReplicationAdapter extends SessionAwareAdapter {
                                    id?: string): Promise<void> {
         /* https:/host/
          *             0   1       2
+         * POST        r entity _ensure_full_commit     Couch API, no-op
          * POST        r entity _revs_diff     Calculate Revision Difference
          * POST        r entity _bulk_docs     Upload Batch of Documents
          *
@@ -604,7 +605,10 @@ export class ReplicationAdapter extends SessionAwareAdapter {
             throw new ReplicationError(`Invalid entity: ${resource}`, 404);
         }
         if (request.method == "POST") {
-            if (id == "_revs_diff") {
+            if (id == "_ensure_full_commit") {
+                response.end(JSON.stringify(
+                    { ok: true, instance_start_time: "0" }));
+            } else if (id == "_revs_diff") {
                 const diffResponse = await this.replSource.v.getRevsDiffRequest(
                     this.logger, entity, payload as RevsDiffRequest);
                 response.end(JSON.stringify(diffResponse));
@@ -704,14 +708,6 @@ export class ReplicationAdapter extends SessionAwareAdapter {
             response.end(JSON.stringify(couchServerInfo));
         } catch (error) {
             AdapterError.toResponse(this.logger, error, response);
-        }
-    }
-
-    decodeOptionalURIComponent(input?: string) {
-        if (input !== undefined) {
-            return decodeURIComponent(input);
-        } else {
-            return input;
         }
     }
 

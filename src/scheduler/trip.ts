@@ -20,12 +20,53 @@
 import {
     Entity, Phase, State, FieldState, IContext, ForeignKey, _IError,
     SideEffects, AliasValueList, DateTimeField, IConfiguration, IService,
-    Query, Filter
+    Query, Filter, ReplicationFilter
 } from "../base/core.js";
 
 class TripError extends _IError {
     constructor(message: string, options?: ErrorOptions) {
         super(500, message, options);
+    }
+}
+
+export class TripReplicationFilter extends ReplicationFilter {
+
+    hasSourceFilter(): boolean {
+        return true;
+    }
+
+    getSourceFilter(arg?: string): string {
+        // Default to midnight in current timezone
+        let offset = new Date().getTimezoneOffset();
+        if (arg) {
+            /* Arg is in the form of:
+             *    M+480  - Midnight in UTC-8 timezone
+             *    M-180  - Midnight in UTC+3 timezone
+             */
+            const midnightRegex = /M([+-])(\d+)/;
+            const result = arg.match(midnightRegex);
+            if (result) {
+                const value = Number(result[2]);
+                if (result[1] == "-") {
+                    offset = -1 * value;
+                } else {
+                    offset = value;
+                }
+            } else {
+                throw new TripError(
+                    `Cannot match replication filter ${this.name} argument ` +
+                    `'${arg}' to a timezoned midnight`);
+            }
+        }
+        // Create a date object at today's UTC midnight
+        const midnight = new Date();
+        midnight.setUTCHours(0, 0, 0, 0);
+        /* Now add/subtract timezone offset to adjust to the current timezone
+         * midnight.
+         */
+        const midnightLocal =
+            new Date(midnight.valueOf() + (offset * 60 * 1000));
+        return `v.appointmentts >= '${midnightLocal.toISOString()}'`;
     }
 }
 

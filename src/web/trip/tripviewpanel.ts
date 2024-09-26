@@ -136,9 +136,11 @@ export class TripViewPanel extends BasePanel implements IPanel {
             `${appointmentDateTime}${returnTime}`;
 
         this.statusElement.innerText = new AttributeJoiner().
-            add("", `${row.getString("triptype")} - ` +
+            add("", `${row.getString("status")} ` +
+                    `${row.getString("triptype")} - ` +
                     `${row.getString("description")}`).
-            add("", `${row.getString("tripnum")} (${row.getString("status")})`).
+            add("", `${row.getString("tripnum")}`).
+            add("", `${row.getString("_id")} / ${row.getString("_rev")}`).
             toText();
 
         this.fromAddressPre.innerText = new AttributeJoiner().

@@ -32,7 +32,8 @@ export class RiderEditPanel extends FormPanel implements IPanel {
 
     constructor() {
         super("rider-edit-div", "rider-edit-form",
-              "rider-edit-btn", "rider-edit-cancel-btn", [
+              "rider-edit-btn", "rider-edit-cancel-btn",
+              [
                   new Control("rider-ridernum-txt", "ridernum", true),
                   new Control("rider-zone-sel", "zone", true),
                   new Control("rider-status-sel", "status", true),

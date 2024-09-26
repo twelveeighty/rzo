@@ -24,6 +24,17 @@
     },
     {
         "apiVersion": "v1",
+        "kind": "Source",
+        "metadata": {
+            "name": "pgattachdb"
+        },
+        "spec": {
+            "type": "server.pg-attach.PgAttachSource",
+            "pageSize": 100
+        }
+    },
+    {
+        "apiVersion": "v1",
         "kind": "Worker",
         "metadata": {
             "name": "restserver"
@@ -32,6 +43,7 @@
             "type": "server.rest.RestServerWorker",
             "ports": [5001],
             "adapters": [
+                { "context": "a", "adapter": "attachadapter" },
                 { "context": "e", "adapter": "entityadapter" },
                 { "context": "c", "adapter": "collectionadapter" },
                 { "context": "g", "adapter": "generatoradapter" },
@@ -41,6 +53,20 @@
                 { "context": "otl", "adapter": "onetimeloginadapter" },
                 { "context": "t", "adapter": "tokenadapter" }
             ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Worker",
+        "metadata": {
+            "name": "attachadapter"
+        },
+        "spec": {
+            "type": "server.attach.AttachAdapter",
+            "source": "db",
+            "cache": "sessioncache",
+            "sessionBackendSource": "db",
+            "attachSource": "pgattachdb"
         }
     },
     {
@@ -193,6 +219,16 @@
     },
     {
         "apiVersion": "v1",
+        "kind": "ReplicationFilter",
+        "metadata": {
+            "name": "activetrips"
+        },
+        "spec": {
+            "type": "scheduler.trip.TripReplicationFilter"
+        }
+    },
+    {
+        "apiVersion": "v1",
         "kind": "LogConfiguration",
         "metadata": {
             "name": "logging"
@@ -203,7 +239,9 @@
                 { "name": "server/mvcc", "level": "Info" },
                 { "name": "server/restserver", "level": "Info" },
                 { "name": "adapter", "level": "Info" },
-                { "name": "adapter/replicationadapter", "level": "Info" }
+                { "name": "adapter/replicationadapter", "level": "Info" },
+                { "name": "adapter/entityadapter", "level": "Debug" },
+                { "name": "adapter/attachadapter", "level": "Debug" }
             ]
         }
     }

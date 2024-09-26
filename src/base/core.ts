@@ -55,6 +55,7 @@ export interface IConfiguration {
     personas: Map<string, Persona>;
     collections: Map<string, Collection>;
     workers: Map<string, DaemonWorker>;
+    artifacts: Map<string, Artifact>;
 
     getCollection(name: string): Collection;
     getEntity(name: string): Entity;
@@ -62,6 +63,8 @@ export interface IConfiguration {
     getSource(name: string): Source;
     getAuthenticator(name: string): Authenticator;
     getPersona(name: string): Persona;
+    getArtifact<T>(fqName: string, targetType: Function): T;
+    getArtifacts<T>(kind: string, targetType: Function): Map<string, T>;
 
     registerAsyncTask(task: AsyncTask): void;
     startAsyncTasks(): Promise<void>;
@@ -412,6 +415,14 @@ export class Row {
         }
     }
 
+    copyWithout(exclude?: string[]): Row {
+        const entries = exclude && exclude.length ?
+            Object.entries(this._row).filter(
+                (pair: [string, any]) => !exclude.includes(pair[0])) :
+            Object.entries(this._row);
+        return new Row(Object.fromEntries(entries));
+    }
+
     get columnNumbers(): string[] {
         const numbers: string[] = [];
         let num = 1;
@@ -521,7 +532,8 @@ export class Row {
     }
 
     get core(): CoreColumns {
-        return new CoreColumns(this.get("_id"), this.get("_rev"));
+        return new CoreColumns(
+            this.get("_id"), this.get("_rev"), this.get("_att"));
     }
 
     deleteNoCheck(column: string): void {
@@ -867,6 +879,7 @@ export type IndexType = "none" | "asc" | "desc";
 export type FieldCfg = ClassSpec & {
     name: string;
     required?: boolean;
+    partitioned?: boolean;
     default?: string;
     maxlength?: number;
     indexed?: IndexType;
@@ -999,30 +1012,40 @@ export class FieldState {
     }
 }
 
+export type Attachment = {
+    n: string; // Name
+    m: string; // MIME type
+    d: string; // digest
+    l: number; // length
+    r: number; // rev_pos
+}
+
+export type Attachments = { att: Attachment[] };
+
 class CoreColumns {
     _id: string;
     _rev: string;
+    _att: Attachments | null;
 
-    static V_NAMES = ["_id", "_rev"];
-
-    static exclude(columns: string[]): string[] {
-        return columns.filter((column) => !CoreColumns.V_NAMES.includes(column));
-    }
+    static V_NAMES = ["_id", "_rev", "_att"];
 
     static addToEntity(columns: string[]): string[] {
         // Prevent duplicates of already existing core columns
-        const noCores = CoreColumns.exclude(columns);
-        return noCores.concat(CoreColumns.V_NAMES);
+        return columns.filter(
+            (column) => !CoreColumns.V_NAMES.includes(column)
+        ).concat(CoreColumns.V_NAMES);
     }
 
-    constructor(id: string, rev: string) {
+    constructor(id: string, rev: string, att: Attachments | null) {
         this._id = id;
         this._rev = rev;
+        this._att = att;
     }
 
     addToJsonObject(data: JsonObject) {
         data["_id"] = this._id;
         data["_rev"] = this._rev;
+        data["_att"] = this._att;
     }
 }
 
@@ -1175,7 +1198,7 @@ export class State {
         if (this.hasId()) {
             return this.core!._id;
         } else {
-            throw new CoreError("id is not (yet) defined for this state");
+            throw new CoreError("_id is not (yet) defined for this state");
         }
     }
 
@@ -2362,7 +2385,7 @@ export class Entity {
     }
 
     rowToState(row: Row): State {
-        let core = row.has("_id") ? row.core : undefined;
+        const core = row.has("_id") ? row.core : undefined;
         const state = new State(this, core);
         this.loadState(row, state);
         return state;
@@ -3263,6 +3286,64 @@ export class DaemonWorker implements AsyncTask {
     }
 
     async stop(): Promise<any> {
+    }
+}
+
+export class Artifact {
+    readonly name: string;
+
+    constructor(config: TypeCfg<ClassSpec>, blueprints: Map<string, any>) {
+        this.name = config.metadata.name;
+    }
+
+    configure(configuration: IConfiguration): void {
+    }
+
+    get kind(): string {
+        throw new CoreError(`Artifact ${this.name} has undefined 'kind'`);
+    }
+}
+
+export type ReplicationFilterSpec = ClassSpec & {
+    sourceFilter?: string;
+    dataFilter?: string;
+};
+
+export class ReplicationFilter extends Artifact {
+    spec: ReplicationFilterSpec;
+
+    constructor(config: TypeCfg<ReplicationFilterSpec>,
+                blueprints: Map<string, any>) {
+        super(config, blueprints);
+        this.spec = config.spec;
+    }
+
+    configure(configuration: IConfiguration): void {
+    }
+
+    get kind(): string {
+        return "ReplicationFilter";
+    }
+
+    protected processFilter(filter: string, arg?: string): string {
+        return filter;
+    }
+
+    hasDataFilter(): boolean {
+        return !!this.spec.dataFilter;
+    }
+
+    hasSourceFilter(): boolean {
+        return !!this.spec.sourceFilter;
+    }
+
+    getSourceFilter(arg?: string): string {
+        if (this.spec.sourceFilter) {
+            return this.processFilter(this.spec.sourceFilter);
+        } else {
+            throw new CoreError(
+                `ReplicationFilter ${this.name} has no sourceFilter`);
+        }
     }
 }
 

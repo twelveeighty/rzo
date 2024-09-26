@@ -221,6 +221,14 @@ export class BaseAdapter extends DaemonWorker implements IAdapter {
         this.logger.configure(configuration);
     }
 
+    protected decodeOptionalURIComponent(input?: string) {
+        if (input !== undefined) {
+            return decodeURIComponent(input);
+        } else {
+            return input;
+        }
+    }
+
     protected async payloadHandler(payload: JsonObject,
                                    request: IncomingMessage,
                                    response: ServerResponse,
@@ -240,7 +248,7 @@ export class BaseAdapter extends DaemonWorker implements IAdapter {
         request.on("end", () => {
             try {
                 const payload = Buffer.concat(chunks).toString();
-                const parsed = JSON.parse(payload);
+                const parsed = payload ? JSON.parse(payload) : {};
                 let json_obj: any;
                 if (parsed instanceof Array) {
                     json_obj = (<any[]>parsed)[0];
@@ -343,10 +351,6 @@ export class SessionAwareAdapter extends BaseAdapter {
         }
         return context;
     }
-
-    handle(request: IncomingMessage, response: ServerResponse,
-           uriElements: string[]): void {
-    }
 }
 
 export class EntityAdapter extends SessionAwareAdapter {
@@ -365,11 +369,11 @@ export class EntityAdapter extends SessionAwareAdapter {
 
     async getOne(context: IContext, request: IncomingMessage,
                  response: ServerResponse, entity: Entity, id: string,
-                 version?: string) : Promise<void> {
+                 rev?: string) : Promise<void> {
         const resource = `entity/${entity.name}`;
         this.policyConfig.v.guardResource(context, resource, "get");
         const row = await this.source.v.getOne(
-            this.logger, context, entity, id, version);
+            this.logger, context, entity, id, rev);
         if (row && !row.empty) {
             this.policyConfig.v.guardRow(context, resource, "get", row);
             response.end(JSON.stringify(Row.rowToData(row)));

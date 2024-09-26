@@ -20,7 +20,8 @@
 import {
     TypeCfg, ClassSpec, EntitySpec, Entity, Field, Source, Persona, Nobody,
     Collection, AsyncTask, DaemonWorker, IConfiguration, IContext,
-    IPolicyConfiguration, Authenticator, Logger, LogLevel, LogThreshold
+    IPolicyConfiguration, Authenticator, Logger, LogLevel, LogThreshold,
+    Artifact
 } from "./core.js";
 
 import { ClassInfo, Reflection } from "./reflect.js";
@@ -66,6 +67,9 @@ type CollectionClass = { new(config: TypeCfg<ClassSpec>,
 
 type DaemonWorkerClass = { new(config: TypeCfg<ClassSpec>,
                           blueprints: Map<string, any>): DaemonWorker; };
+
+type ArtifactClass = { new(config: TypeCfg<ClassSpec>,
+                           blueprints: Map<string, any>): Artifact; };
 
 class LogConfiguration {
     name: string;
@@ -119,8 +123,9 @@ export class Configuration implements IConfiguration {
     reflection: Reflection;
     json_config: TypeCfg<ClassSpec>[];
     asyncTasks: AsyncTask[];
-    _policyConfig?: IPolicyConfiguration;
     logConfiguration: LogConfiguration;
+    artifacts: Map<string, Artifact>;
+    _policyConfig?: IPolicyConfiguration;
 
     constructor() {
         this.json_config = [];
@@ -132,6 +137,7 @@ export class Configuration implements IConfiguration {
         this.workers = new Map();
         this.reflection = new Reflection();
         this.classes = new Map();
+        this.artifacts = new Map();
         this.asyncTasks = [];
         this.logConfiguration = new LogConfiguration();
     }
@@ -183,7 +189,7 @@ export class Configuration implements IConfiguration {
         }
     }
 
-    instantiate<Target, ReflectClass extends ReflectableClass<Target>>
+    private instantiate<Target, ReflectClass extends ReflectableClass<Target>>
                              (config: TypeCfg<ClassSpec>,
                               collection: Map<string, Target>): void {
         const instanceName = config.metadata.name;
@@ -198,6 +204,27 @@ export class Configuration implements IConfiguration {
         const instanceClazz = <ReflectClass>clazz;
         const instance = new instanceClazz(config, this.classes);
         collection.set(instanceName, instance);
+    }
+
+    private instantiateArtifact(config: TypeCfg<ClassSpec>): void {
+        const fqName = `${config.kind}/${config.metadata.name}`;
+        // check dupes
+        if (this.artifacts.has(fqName)) {
+            throw new ConfigError(`Artifact ${fqName} is duplicated`);
+        }
+        const className = config.spec.type;
+        const clazz = this.classes.get(className);
+        // Instantiate the Artifact class.
+        // console.log(`instantiating ${className}: ${instanceName}`);
+        const instanceClazz = <ArtifactClass>clazz;
+        const instance = new instanceClazz(config, this.classes);
+        if (instance.kind != config.kind) {
+            throw new ConfigError(
+                `Configuration 'kind' mismatch for ${config.metadata.name} ` +
+                `class kind = '${instance.kind}' vs config kind ` +
+                `'${config.kind}'`);
+        }
+        this.artifacts.set(fqName, instance);
     }
 
     setupLogging(config: TypeCfg<LogConfigurationSpec>): void {
@@ -249,6 +276,8 @@ export class Configuration implements IConfiguration {
                     this.setupLogging(
                         config_j as TypeCfg<LogConfigurationSpec>);
                     break;
+                default:
+                    this.instantiateArtifact(config_j);
             }
         }
     }
@@ -303,6 +332,34 @@ export class Configuration implements IConfiguration {
             return authenticator;
         }
         throw new ConfigError(`No such authenticator: ${name}`);
+    }
+
+    getArtifacts<T>(kind: string, targetType: Function): Map<string, T> {
+        const results: Map<string, T> = new Map();
+        for (const artifact of this.artifacts.values()) {
+            if (artifact.kind == kind) {
+                if (artifact instanceof targetType) {
+                    results.set(artifact.name, artifact as T);
+                } else {
+                    throw new ConfigError(
+                        `'${kind}/${artifact.name}' must be a ${targetType.name}`);
+                }
+            }
+        }
+        return results;
+    }
+
+    getArtifact<T>(fqName: string, targetType: Function): T {
+        const target: unknown = this.artifacts.get(fqName);
+        if (target == undefined) {
+            throw new ConfigError(`No such artifact: ${fqName}`);
+        }
+        if (target instanceof targetType) {
+            return target as T;
+        } else {
+            throw new ConfigError(
+                `'${fqName}' must be a ${targetType.name}`);
+        }
     }
 
     registerAsyncTask(task: AsyncTask): void {

@@ -96,6 +96,9 @@ export class PgBaseClient {
         } else if (!row.get("_rev")) {
             row.put("_rev", row.get("vc_rev"));
         }
+        if (!row.has("_att")) {
+            row.add("_att", null);
+        }
         if (row.get("isdeleted")) {
             row.add("_deleted", true);
             const keep = ["_id", "_rev", "_deleted", "_revisions"];
@@ -107,6 +110,8 @@ export class PgBaseClient {
         } else {
             if (flagConflict && row.get("isconflict")) {
                 row.add("_conflict", true);
+            } else if (!row.get("isleaf")) {
+                row.add("_notleaf", true);
             }
             row.deleteNoCheck("seq");
             row.deleteNoCheck("vc_id");
@@ -167,6 +172,56 @@ export class PgBaseClient {
         }
         return this.convertDbRowToAppRow(
             Row.dataToRow(result.rows[0], entity), true);
+    }
+
+    private async getOneImmutable(logger: Logger, context: IContext,
+                                  entity: Entity, id: string): Promise<Row> {
+        const statement = `select * from ${entity.table} where _id = \$1`;
+        const parameters = [id];
+        this.log(logger, statement, parameters);
+        const result = await this._pool.query(statement, parameters);
+        if (result.rows.length === 0) {
+            return new Row();
+        }
+        return Row.dataToRow(result.rows[0], entity);
+    }
+
+    async getOne(logger: Logger, context: IContext, entity: Entity, id: string,
+                 rev?: string): Promise<Row> {
+        if (entity.immutable) {
+            return await this.getOneImmutable(logger, context, entity, id);
+        }
+        let row: Row = new Row();
+        if (rev) {
+            const statement =
+                `select ${this.fullyQualifiedVCCols("vc").join()}, v.* ` +
+                `from ${entity.table}_v as v ` +
+                `inner join ${entity.table}_vc as vc on ` +
+                `(vc._id = v._id and vc._rev = v._rev) ` +
+                `where v._id = \$1 and v._rev = \$2`;
+            const parameters = [id, rev];
+            this.log(logger, statement, parameters);
+            const result = await this._pool.query(statement, parameters);
+            if (result.rows.length > 0) {
+                row = this.convertDbRowToAppRow(
+                    Row.dataToRow(result.rows[0], entity), true);
+            }
+        } else {
+            const statement =
+                `select ${this.fullyQualifiedVCCols("vc").join()}, e.* ` +
+                `from ${entity.table} as e ` +
+                `inner join ${entity.table}_vc as vc on (vc._id = e._id and ` +
+                `vc._rev = e._rev) ` +
+                `where e._id = \$1`;
+            const parameters = [id];
+            this.log(logger, statement, parameters);
+            const result = await this._pool.query(statement, parameters);
+            if (result.rows.length > 0) {
+                row = this.convertDbRowToAppRow(
+                    Row.dataToRow(result.rows[0], entity), true);
+            }
+        }
+        return row;
     }
 
     async getDBInfo(logger: Logger, context: IContext): Promise<Row> {
@@ -232,14 +287,33 @@ export class PgBaseClient {
         }
         // Version table
         if (result.versionTable.type == "post") {
+            const row = result.versionTable.versionActionPost!.payload;
             const statement = `insert into ${entity.table}_v ` +
-                `(${result.versionTable.payload!.columns.join()}) ` +
-                `values (` +
-                `${result.versionTable.payload!.columnNumbers.join()}` +
-                `)`;
-            const parameters = result.versionTable.payload!.values();
+                `(${row.columns.join()}) ` +
+                `values (${row.columnNumbers.join()})`;
+            const parameters = row.values();
             this.log(logger, statement, parameters);
             await client.query(statement, parameters);
+        } else if (result.versionTable.type == "delcopy") {
+            const id = result.versionTable.versionActionDelcopy!._id;
+            const fromRev = result.versionTable.versionActionDelcopy!.fromRev;
+            const toRev = result.versionTable.versionActionDelcopy!.toRev;
+            const fieldCols = entity.allFieldColumns.join(", ");
+            const statement =
+                `insert into ${entity.table}_v ` +
+                `(_id, _rev, _att, ${fieldCols}) ` +
+                `select _id, '${toRev}', _att, ${fieldCols} ` +
+                `from ${entity.table}_v ` +
+                `where _id = \$1 and _rev = \$2`;
+            const parameters = [id, fromRev];
+            this.log(logger, statement, parameters);
+            const pgResult = await client.query(statement, parameters);
+            if (pgResult.rowCount != 1) {
+                throw new PgClientError(
+                    `MVCC _v delcopy: insert ${entity.table}_v, id = ${id} ` +
+                    `from = ${fromRev} to = ${toRev} rowCount was not 1: ` +
+                    `${pgResult.rowCount}`);
+            }
         }
         // Entity table
         if (result.leafTable.type == "post") {
@@ -266,12 +340,13 @@ export class PgBaseClient {
         } else if (result.leafTable.type == "swap") {
             const id = result.leafTable.leafActionSwap!._id;
             const toRev = result.leafTable.leafActionSwap!.toRev;
-            /* Over time, the entrity table diverts from the _v table, so only
+            /* Over time, the entity table diverts from the _v table, so only
              * pull the current columns using the entity definition.
              */
             const updateSet = this.getSelfUpdateSet(entity, "v");
-            // Add the _rev column to the update list.
+            // Add _rev and _att to the update list.
             updateSet.push("_rev = v._rev");
+            updateSet.push("_att = v._att");
             const statement =
                 `update ${entity.table} set ${updateSet.join(", ")} ` +
                 `from ${entity.table}_v as v ` +
@@ -295,12 +370,14 @@ export class PgBaseClient {
             const row = result.leafTable.leafActionPut!.payload;
             const targetId = row.get("_id");
             const targetRev = result.leafTable.leafActionPut!._rev;
-            const setList = row.getUpdateSet();
-            const parameters = row.values().concat(targetId, targetRev);
+            // Copy row to exclude _id without changing the original row.
+            const setRow = row.copyWithout(["_id"]);
+            const setList = setRow.getUpdateSet();
             const statement =
                 `update ${entity.table} set ${setList.join(", ")} ` +
                 `where _id = \$${setList.length + 1} and ` +
                 `_rev = \$${setList.length + 2}`;
+            const parameters = setRow.values().concat(targetId, targetRev);
             this.log(logger, statement, parameters);
             const pgResult = await client.query(statement, parameters);
             if (pgResult.rowCount != 1) {
@@ -317,6 +394,16 @@ export class PgBaseClient {
         if (parameters && parameters.length) {
             logger.debugAny(parameters);
         }
+    }
+
+    protected async pullVcTable(logger: Logger, entity: Entity,
+                                id: string): Promise<IResultSet> {
+        // Pull the version history for this id
+        const statement = `select * from ${entity.table}_vc where _id = \$1`;
+        const parameters = [id];
+        this.log(logger, statement, parameters);
+        const result = await this._pool.query(statement, parameters);
+        return new MemResultSet(result.rows);
     }
 }
 
@@ -563,56 +650,6 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
         return "" + result.rows[0].nextval;
     }
 
-    private async getOneImmutable(logger: Logger, context: IContext,
-                                  entity: Entity, id: string): Promise<Row> {
-        const statement = `select * from ${entity.table} where _id = \$1`;
-        const parameters = [id];
-        this.log(logger, statement, parameters);
-        const result = await this._pool.query(statement, parameters);
-        if (result.rows.length === 0) {
-            return new Row();
-        }
-        return Row.dataToRow(result.rows[0], entity);
-    }
-
-    async getOne(logger: Logger, context: IContext, entity: Entity, id: string,
-                 rev?: string): Promise<Row> {
-        if (entity.immutable) {
-            return await this.getOneImmutable(logger, context, entity, id);
-        }
-        let row: Row = new Row();
-        if (rev) {
-            const statement =
-                `select ${this.fullyQualifiedVCCols("vc").join()}, v.* ` +
-                `from ${entity.table}_v as v ` +
-                `inner join ${entity.table}_vc as vc on ` +
-                `(vc._id = v._id and vc._rev = v._rev) ` +
-                `where v._id = \$1 and v._rev = \$2`;
-            const parameters = [id, rev];
-            this.log(logger, statement, parameters);
-            const result = await this._pool.query(statement, parameters);
-            if (result.rows.length > 0) {
-                row = this.convertDbRowToAppRow(
-                    Row.dataToRow(result.rows[0], entity), true);
-            }
-        } else {
-            const statement =
-                `select ${this.fullyQualifiedVCCols("vc").join()}, e.* ` +
-                `from ${entity.table} as e ` +
-                `inner join ${entity.table}_vc as vc on (vc._id = e._id and ` +
-                `vc._rev = e._rev) ` +
-                `where e._id = \$1`;
-            const parameters = [id];
-            this.log(logger, statement, parameters);
-            const result = await this._pool.query(statement, parameters);
-            if (result.rows.length > 0) {
-                row = this.convertDbRowToAppRow(
-                    Row.dataToRow(result.rows[0], entity), true);
-            }
-        }
-        return row;
-    }
-
     async queryCollection(logger: Logger, context: IContext,
                           collection: Collection,
                           query?: Query): Promise<IResultSet> {
@@ -688,17 +725,12 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
             }
         }
 
-        // Pull the version history for this id
-        let statement = `select * from ${entity.table}_vc where _id = \$1`;
-        let parameters: any[] = [id];
-        this.log(logger, statement, parameters);
-        const result = await this._pool.query(statement, parameters);
-        const versions = new MemResultSet(result.rows);
+        const versions = await this.pullVcTable(logger, entity, id);
         const mvccResult = this.mvccController.putMvcc(
             row, versions, false, context);
         const client = await this._pool.connect();
         try {
-            statement = "BEGIN";
+            let statement = "BEGIN";
             this.log(logger, statement);
             await client.query(statement);
 
@@ -710,7 +742,7 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
 
             return Row.must(mvccResult.leafTable.leafActionPut?.payload);
         } catch (err: any) {
-            statement = "ROLLBACK";
+            const statement = "ROLLBACK";
             this.log(logger, statement);
             await client.query(statement);
             throw err;
@@ -801,17 +833,12 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
         if (entity.immutable) {
             await this.deleteImmutable(logger, context, entity, id);
         }
-        // Pull the version history for this id
-        let statement = `select * from ${entity.table}_vc where _id = \$1`;
-        let parameters: any[] = [id];
-        this.log(logger, statement, parameters);
-        const result = await this._pool.query(statement, parameters);
-        const versions = new MemResultSet(result.rows);
+        const versions = await this.pullVcTable(logger, entity, id);
         const mvccResult = this.mvccController.deleteMvcc(
             id, rev, versions, context);
         const client = await this._pool.connect();
         try {
-            statement = "BEGIN";
+            let statement = "BEGIN";
             this.log(logger, statement);
             await client.query(statement);
 
@@ -822,7 +849,7 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
             await client.query(statement);
 
         } catch (err: any) {
-            statement = "ROLLBACK";
+            const statement = "ROLLBACK";
             this.log(logger, statement);
             await client.query(statement);
             throw err;

@@ -23,7 +23,7 @@ import md5 from "md5";
 
 import {
     Entity, IConfiguration, AsyncTask, IContext, MemResultSet,
-    Row, TypeCfg, ClassSpec, _IError, Logger, JsonObject
+    Row, TypeCfg, ClassSpec, _IError, Logger, JsonObject, ReplicationFilter
 } from "../base/core.js";
 
 import { MvccController, MvccResult } from "./mvcc.js";
@@ -43,6 +43,13 @@ class PgReplicationError extends _IError {
     }
 }
 
+type ChangeStatements = {
+    groupFields: string[];
+    selectFields: string[];
+    from: string;
+    where: string;
+}
+
 type PgReplicationSourceSpec = ClassSpec & {
     pageSize: number;
 }
@@ -51,6 +58,7 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
     private _spec: PgReplicationSourceSpec;
     private mvccLogger: Logger;
     private mvccController: MvccController;
+    private filters: Map<string, ReplicationFilter>;
 
     constructor(spec: PgReplicationSourceSpec) {
         super();
@@ -61,13 +69,14 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
         }
         this.mvccLogger = new Logger("server/mvcc/replication");
         this.mvccController = new MvccController(this.mvccLogger);
+        this.filters = new Map();
     }
 
     configure(configuration: IConfiguration) {
         super.configure(configuration);
-        this.sessionEntity.v = configuration.getEntity("session");
-        this.userEntity.v = configuration.getEntity("useraccount");
         this.mvccLogger.configure(configuration);
+        this.filters = configuration.getArtifacts(
+            "ReplicationFilter", ReplicationFilter);
     }
 
     get isReplicable(): boolean {
@@ -79,10 +88,57 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
 
     async stop(): Promise<void> {
         if (this._pool) {
-            console.log("Ending connection pool...");
+            console.log("Ending replication connection pool...");
             await this._pool.end();
-            console.log("Connection pool ended");
+            console.log("Replication connection pool ended");
         }
+    }
+
+    private filterArguments(input: string): [string, string] {
+        if (input.includes(":")) {
+            const split = input.split(":");
+            return [split[0], split.slice(1).join(":")];
+        } else {
+            return [input, ""];
+        }
+    }
+
+    private getChangeStatements(logger: Logger, entity: Entity,
+                                query: ChangesFeedQuery): ChangeStatements {
+        const result = {
+            groupFields: ["count(*)", "max(vc.updateseq)"],
+            selectFields: ["vc.updateseq", "vc._id as vc_id",
+                           "vc._rev as vc_rev", "vc.isdeleted"],
+            from: `${entity.table}_vc as vc`,
+            where: query.since != "0" ?
+            "(vc.isleaf = true or vc.isdeleted = true) and (vc.updateseq > $1)"
+            : "(vc.isleaf = true or vc.isdeleted = true)"
+        };
+        if (query.filter) {
+            const filterArgs = this.filterArguments(query.filter);
+            const repFilter = this.filters.get(filterArgs[0]);
+            if (repFilter) {
+                result.from =
+                    `${entity.table}_vc as vc ` +
+                    `inner join ${entity.table}_v as v ` +
+                    `on (vc._id = v._id and vc._rev = v._rev)`;
+                /* A source filter changes the 'where' clause, a data filter
+                 * changes the select clause. A given filter could have both.
+                 */
+                if (repFilter.hasSourceFilter()) {
+                    result.where =
+                        result.where + " and ( " +
+                        repFilter.getSourceFilter(filterArgs[1]) +
+                        " )";
+                }
+                if (repFilter.hasDataFilter()) {
+                    result.selectFields.push("v.*");
+                }
+            } else {
+                throw new PgReplicationError(`Unknown filter: ${query.filter}`);
+            }
+        }
+        return result;
     }
 
     async getChangesNormal(logger: Logger, entity: Entity,
@@ -106,6 +162,7 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
          * 'since' query parameter can be interpreted as a bigint.
          */
         this.mvccController.toBigInt(query.since);
+        const stmts = this.getChangeStatements(logger, entity, query);
         /* The lastseq return value is always the max(updateseq) of the _vc
          * table, no matter what the 'since' value is. We have to run this
          * query first because the where clause in the 2nd query could return
@@ -120,13 +177,10 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
         let result = await this._pool.query(statement);
         const fallBackLastSeq = this.mvccController.toBigInt(
             result.rows[0].max, 0n);
-        const whereClause = query.since != "0" ?
-            "(isleaf = true or isdeleted = true) and updateseq > $1" :
-            "(isleaf = true or isdeleted = true)";
-        const parameters = query.since != "0" ? [query.since] : [];
         statement =
-            `select count(*), max(updateseq) from ${entity.table}_vc ` +
-            `where ${whereClause}`;
+            `select ${stmts.groupFields.join(", ")} from ` +
+            `${stmts.from} where ${stmts.where}`;
+        const parameters = query.since != "0" ? [query.since] : [];
         this.log(logger, statement, parameters);
         result = await this._pool.query(statement, parameters);
         if (result.rows.length == 0) {
@@ -163,8 +217,8 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
         }
         // Start a Cursor to return 'pageSize' results.
         statement =
-            `select updateseq, _id, _rev, isdeleted from ${entity.table}_vc ` +
-            `where ${whereClause} order by updateseq`;
+            `select ${stmts.selectFields.join(", ")} from ` +
+            `${stmts.from} where ${stmts.where} order by updateseq`;
         const client = await this._pool.connect();
         try {
             this.log(logger, statement, parameters);
@@ -190,8 +244,8 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
                 for (const row of rows) {
                     const currentSeq = this.mvccController.toBigInt(
                         row["updateseq"]);
-                    const id = row["_id"];
-                    const rev = row["_rev"];
+                    const id = row["vc_id"];
+                    const rev = row["vc_rev"];
                     let changeRecord = recordMap.get(id);
                     if (changeRecord) {
                         // Existing id
@@ -291,11 +345,11 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
             const statement =
                 `select ${this.fullyQualifiedVCCols("vc").join()}, v.* ` +
                 `from ${entity.table}_vc as vc ` +
-                `left join ${entity.table}_v as v on ` +
+                `inner join ${entity.table}_v as v on ` +
                 `(vc._id = v._id and vc._rev = v._rev) ` +
                 `where vc._id = \$1 and ` +
-                `(vc.isleaf = \$2 or vc.isdeleted = \$3)`;
-            const parameters = [docReq.id, true, true];
+                `(vc.isleaf = true or vc.isdeleted = true)`;
+            const parameters = [docReq.id];
             this.log(logger, statement, parameters);
             const queryResults = await this._pool.query(statement, parameters);
             if (!queryResults.rows.length) {
@@ -373,8 +427,8 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
             `from ${entity.table}_vc as vc ` +
             `inner join ${entity.table}_v as v on ` +
             `(vc._id = v._id and vc._rev = v._rev) ` +
-            `where vc._id = \$1 and vc.isleaf = \$2 `;
-        const parameters = [id, true];
+            `where vc._id = \$1 and vc.isleaf = true `;
+        const parameters = [id];
         this.log(logger, statement, parameters);
         const results = await this._pool.query(statement, parameters);
         if (!results.rows.length) {
@@ -445,7 +499,6 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
         try {
             while (inputRS.next()) {
                 let statement: string;
-                let parameters: any[];
                 const row = inputRS.getRow();
                 if (!row.hasAll(requiredColumns)) {
                     logger.error(
@@ -464,12 +517,7 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
                 }
                 const id = row.get("_id");
                 const rev = row.get("_rev");
-                // Pull the version history for this id
-                statement = `select * from ${entity.table}_vc where _id = \$1`;
-                parameters = [id];
-                this.log(logger, statement, parameters);
-                const versionResult = await client.query(statement, parameters);
-                const versions = new MemResultSet(versionResult.rows);
+                const versions = await this.pullVcTable(logger, entity, id);
                 let mvccResult: MvccResult | undefined;
                 try {
                     mvccResult = this.mvccController.putMvcc(

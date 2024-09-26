@@ -68,10 +68,6 @@ export class PersonaCollection extends Collection {
     }
 
     async createFilter(context: IContext, filter?: Filter): Promise<Filter> {
-        if (!context) {
-            throw new CollectionError(`Collection '${this.name}' requires ` +
-                                      `a context `);
-        }
         const persona = context.persona;
         const userAccountId = context.userAccountId;
         let colWhere = this.cfgFilter;
@@ -84,11 +80,10 @@ export class PersonaCollection extends Collection {
             const membershipName = match[1];
             const membership = persona.memberships.get(membershipName);
             if (!membership) {
-                throw new CollectionError(`Collection '${this.name}' cannot ` +
-                                          `parse '${match[0]}' clause because` +
-                                          ` membership '${membershipName}' ` +
-                                          `does not exist for persona ` +
-                                          `'${persona.name}'`);
+                throw new CollectionError(
+                    `Collection '${this.name}' cannot parse '${match[0]}' ` +
+                    `clause because membership '${membershipName}' does not ` +
+                    `exist for persona '${persona.name}'`);
             }
             const entity = membership.entity;
             const members = await entity.getMembers(
@@ -110,9 +105,8 @@ export class PersonaCollection extends Collection {
                 const quoted: string[] = [];
                 members.forEach((member) => quoted.push(`'${member}'`));
                 const inClause = `in (${quoted.join()})`;
-                colWhere = PersonaCollection.replaceMatch(colWhere,
-                                        matchPosition, matchLen,
-                                        inClause);
+                colWhere = PersonaCollection.replaceMatch(
+                    colWhere, matchPosition, matchLen, inClause);
             }
         }
         const finalFilter = new Filter();
@@ -164,9 +158,9 @@ export class ContainedCollection extends Collection {
         const pTable = forCollection.entity.v.table;
         const id = forCollection.entity.name + "_id";
         const innerFilter = await forCollection.createFilter(context);
-        const existsWhere = `exists (select 1 from ${pTable} where ` +
-                            `(${innerFilter.where}) ` +
-                            `and (_id = ${ourTable}.${id}) )`;
+        const existsWhere =
+            `exists (select 1 from ${pTable} where ` +
+            `(${innerFilter.where}) and (_id = ${ourTable}.${id}) )`;
 
         const finalFilter = new Filter();
         if (filter && filter.notEmpty) {

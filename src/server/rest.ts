@@ -99,7 +99,7 @@ class RestServer {
                 this.handleCORS(request, response);
                 return;
             }
-            response.setHeader('Content-Type', 'application/json');
+            response.setHeader("Content-Type", "application/json");
             /* If the request includes an "Origin" header, we respond
              * with the matching Access-Control-Allow-Origin.
              */

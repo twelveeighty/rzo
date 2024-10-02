@@ -588,13 +588,7 @@ export class CollectionAdapter extends SessionAwareAdapter {
                 resultSet = await collection.query(context);
             }
             this.policyConfig.v.guardResultSet(context, resource, resultSet);
-            resultSet.rewind();
-            const result: any[] = [];
-            while (resultSet.next()) {
-                const row = resultSet.getRow();
-                result.push(Row.rowToData(row));
-            }
-            response.end(JSON.stringify(result));
+            response.end(JSON.stringify(resultSet.getAll()));
         } catch (error) {
             AdapterError.toResponse(this.logger, error, response);
         }

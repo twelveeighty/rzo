@@ -651,7 +651,7 @@ export class EmptyResultSet implements IResultSet {
     }
 
     getAll(): Object[] {
-        throw new CoreError("Cannot call getAll() on EmptyResultSet");
+        return [];
     }
 
     getColumns(): string[] {
@@ -660,7 +660,7 @@ export class EmptyResultSet implements IResultSet {
 }
 
 export class MemResultSet implements IResultSet {
-    private _store: Object[];
+    private _store: JsonObject[];
     private _storeReadIdx: number;
     private _row: Row;
 

@@ -22,8 +22,8 @@ import Cursor from "pg-cursor";
 import md5 from "md5";
 
 import {
-    Entity, IConfiguration, AsyncTask, IContext, MemResultSet,
-    Row, TypeCfg, ClassSpec, _IError, Logger, JsonObject, ReplicationFilter
+    Entity, IConfiguration, IContext, MemResultSet, Row, TypeCfg, ClassSpec,
+    _IError, Logger, JsonObject, ReplicationFilter
 } from "../base/core.js";
 
 import { MvccController, MvccResult } from "./mvcc.js";
@@ -51,22 +51,16 @@ type ChangeStatements = {
 }
 
 type PgReplicationSourceSpec = ClassSpec & {
-    pageSize: number;
+    pool: string;
 }
 
 export class PgReplication extends PgBaseClient implements IReplicationService {
-    private _spec: PgReplicationSourceSpec;
     private mvccLogger: Logger;
     private mvccController: MvccController;
     private filters: Map<string, ReplicationFilter>;
 
     constructor(spec: PgReplicationSourceSpec) {
-        super();
-        this._spec = spec;
-        if (this._spec.pageSize <= 0) {
-            throw new PgReplicationError(
-                `Invalid pageSize: ${this._spec.pageSize}`, 400);
-        }
+        super(spec.pool);
         this.mvccLogger = new Logger("server/mvcc/replication");
         this.mvccController = new MvccController(this.mvccLogger);
         this.filters = new Map();
@@ -81,17 +75,6 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
 
     get isReplicable(): boolean {
         return true;
-    }
-
-    start(): void {
-    }
-
-    async stop(): Promise<void> {
-        if (this._pool) {
-            console.log("Ending replication connection pool...");
-            await this._pool.end();
-            console.log("Replication connection pool ended");
-        }
     }
 
     private filterArguments(input: string): [string, string] {
@@ -174,7 +157,7 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
          */
         let statement = `select max(updateseq) from ${entity.table}_vc`;
         this.log(logger, statement);
-        let result = await this._pool.query(statement);
+        let result = await this.pool.query(statement);
         const fallBackLastSeq = this.mvccController.toBigInt(
             result.rows[0].max, 0n);
         statement =
@@ -182,7 +165,7 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
             `${stmts.from} where ${stmts.where}`;
         const parameters = query.since != "0" ? [query.since] : [];
         this.log(logger, statement, parameters);
-        result = await this._pool.query(statement, parameters);
+        result = await this.pool.query(statement, parameters);
         if (result.rows.length == 0) {
             throw new PgReplicationError(
                 `No rows returned for summary version control query ` +
@@ -219,7 +202,7 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
         statement =
             `select ${stmts.selectFields.join(", ")} from ` +
             `${stmts.from} where ${stmts.where} order by updateseq`;
-        const client = await this._pool.connect();
+        const client = await this.pool.connect();
         try {
             this.log(logger, statement, parameters);
             const cursor = client.query(new Cursor(statement, parameters));
@@ -240,7 +223,7 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
              */
             let rowCount = 0;
             while (moreRows) {
-                const rows = await cursor.read(this._spec.pageSize);
+                const rows = await cursor.read(this.conn.v.pageSize);
                 for (const row of rows) {
                     const currentSeq = this.mvccController.toBigInt(
                         row["updateseq"]);
@@ -287,7 +270,7 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
                 /* Keep going unless we've reached the query.limit and broke
                  * out of the for loop or the cursor is exhausted.
                  */
-                moreRows = moreRows && (rows.length >= this._spec.pageSize);
+                moreRows = moreRows && (rows.length >= this.conn.v.pageSize);
             }
             await cursor.close();
             changesFeed.last_seq = `${lastProcessedSeq}`;
@@ -340,10 +323,10 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
             /* Get all (possibly conflicting) leaf records and deleted records,
              * and then search backward for the requested id/rev. This should
              * be faster than locating the id/rev first and then calculating
-             * its leaf or deleted decendant.
+             * its leaf or deleted descendant.
              */
             const statement =
-                `select ${this.fullyQualifiedVCCols("vc").join()}, v.* ` +
+                `select ${PgBaseClient.VC_COL_SELECT}, v.* ` +
                 `from ${entity.table}_vc as vc ` +
                 `inner join ${entity.table}_v as v on ` +
                 `(vc._id = v._id and vc._rev = v._rev) ` +
@@ -351,7 +334,7 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
                 `(vc.isleaf = true or vc.isdeleted = true)`;
             const parameters = [docReq.id];
             this.log(logger, statement, parameters);
-            const queryResults = await this._pool.query(statement, parameters);
+            const queryResults = await this.pool.query(statement, parameters);
             if (!queryResults.rows.length) {
                 outerIdObj.docs.push({ error: {
                     id: docReq.id,
@@ -423,14 +406,14 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
          * asked for through one of its ancestors.
          */
         const statement =
-            `select ${this.fullyQualifiedVCCols("vc").join()}, v.* ` +
+            `select ${PgBaseClient.VC_COL_SELECT}, v.* ` +
             `from ${entity.table}_vc as vc ` +
             `inner join ${entity.table}_v as v on ` +
             `(vc._id = v._id and vc._rev = v._rev) ` +
             `where vc._id = \$1 and vc.isleaf = true `;
         const parameters = [id];
         this.log(logger, statement, parameters);
-        const results = await this._pool.query(statement, parameters);
+        const results = await this.pool.query(statement, parameters);
         if (!results.rows.length) {
             throw new PgReplicationError(
                 `No rows returned for entity ${entity.name}, ` +
@@ -495,7 +478,7 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
         const mandatory = ["_id", "_rev", "_revisions"];
         const requiredColumns = mandatory.concat(entity.requiredFieldColumns);
 
-        const client = await this._pool.connect();
+        const client = await this.pool.connect();
         try {
             while (inputRS.next()) {
                 let statement: string;
@@ -583,7 +566,7 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
             `select _id, _rev from ${entity.table}_vc where ` +
             `_id in (${idInList}) and _rev in (${versionInList})`;
         this.log(logger, statement);
-        const results = await this._pool.query(statement);
+        const results = await this.pool.query(statement);
         // This query obviously can return more rows than intended if a given
         // version is identical between two different records. However, we
         // are only looking for those records that do NOT exist.
@@ -608,7 +591,7 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
                                   Promise<ReplicationResponse> {
         const _id = `_local/${id}`;
         let _rev = "0-0";
-        const client = await this._pool.connect();
+        const client = await this.pool.connect();
         let statement: string;
         try {
             let parameters: any[];
@@ -647,7 +630,7 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
             }
 
             this.log(logger, statement, parameters);
-            await this._pool.query(statement, parameters);
+            await this.pool.query(statement, parameters);
 
             statement = "COMMIT";
             this.log(logger, statement);
@@ -671,7 +654,7 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
             `_id = \$2`;
         const parameters = [entity.name, id];
         this.log(logger, statement, parameters);
-        const result = await this._pool.query(statement, parameters);
+        const result = await this.pool.query(statement, parameters);
         if (result.rows.length === 0) {
             return null;
         }
@@ -683,7 +666,7 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
         const statement =
             `select coalesce(max(updateseq), 0) "max" from ${entity.table}_vc`;
         this.log(logger, statement);
-        const result = await this._pool.query(statement);
+        const result = await this.pool.query(statement);
         if (result.rows.length === 0) {
             throw new PgReplicationError(
                 `No rows returned for max(updateseq) ${entity.table}_vc`, 404);
@@ -693,8 +676,7 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
 
 }
 
-export class PgReplicationSource extends ReplicationSource
-                                 implements AsyncTask {
+export class PgReplicationSource extends ReplicationSource {
     _service: PgReplication;
 
     constructor(config: TypeCfg<PgReplicationSourceSpec>,
@@ -705,19 +687,10 @@ export class PgReplicationSource extends ReplicationSource
 
     configure(configuration: IConfiguration) {
         this._service.configure(configuration);
-        configuration.registerAsyncTask(this);
     }
 
     get service(): IReplicationService {
         return this._service;
-    }
-
-    async start(): Promise<void> {
-        this._service.start();
-    }
-
-    async stop(): Promise<void> {
-        await this._service.stop();
     }
 }
 

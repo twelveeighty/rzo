@@ -24,7 +24,7 @@ import Cursor from "pg-cursor";
 import { env } from "node:process";
 
 import {
-    Entity, IResultSet, IConfiguration, Query, AsyncTask,
+    Entity, IResultSet, IConfiguration, Query, AsyncTask, DaemonWorker,
     EmptyResultSet, MemResultSet, Row, TypeCfg, ClassSpec, Collection,
     IContext, Filter, ServiceSource, _IError, Nobody, DeferredToken,
     SummaryField, Persona, Cfg, IService, SideEffects, State, Logger
@@ -63,26 +63,95 @@ class DeferredContext implements IContext {
     }
 }
 
+type PgConnectionSpec = ClassSpec & {
+    connectionTimeoutMillis: number;
+    idleTimeoutMillis: number;
+    max: number;
+    allowExitOnIdle: boolean;
+    pageSize: number;
+}
+
+export class PgConnection extends DaemonWorker {
+    private _conn_pool: Pool<pg.Client> | null;
+    pageSize: number;
+
+    constructor(config: TypeCfg<PgConnectionSpec>,
+                blueprints: Map<string, any>) {
+        super(config, blueprints);
+        if (config.spec.pageSize <= 0) {
+            throw new PgClientError(
+                `Invalid pageSize: ${config.spec.pageSize}`, 400);
+        }
+        this._conn_pool = new Pool({
+            connectionTimeoutMillis: config.spec.connectionTimeoutMillis,
+            idleTimeoutMillis: config.spec.idleTimeoutMillis,
+            max: config.spec.max,
+            allowExitOnIdle: config.spec.allowExitOnIdle
+        });
+        this.pageSize = config.spec.pageSize;
+    }
+
+    configure(configuration: IConfiguration): void {
+        configuration.registerAsyncTask(this);
+    }
+
+    async stop(): Promise<any> {
+        if (this._conn_pool) {
+            console.log("Ending connection pool...");
+            await this._conn_pool.end();
+            console.log("Connection pool ended");
+            this._conn_pool = null;
+        }
+    }
+
+    get pool(): Pool<pg.Client> {
+        if (this._conn_pool) {
+            return this._conn_pool;
+        } else {
+            throw new PgClientError("Pool was closed");
+        }
+    }
+}
+
 export class PgBaseClient {
+    private _conn_pool?: Pool<pg.Client>;
     sessionEntity: Cfg<Entity>;
     userEntity: Cfg<Entity>;
-    protected _pool: Pool<pg.Client>;
+    conn: Cfg<PgConnection>;
 
-    static VC_COL_DEFS = [
-        "seq", "_id as vc_id", "_rev as vc_rev",
-        "updated", "updatedby", "versiondepth", "ancestry",
-        "isleaf", "isdeleted", "isstub, isconflict, iswinner"
+    static VC_COLS = [
+        "vc.seq", "vc._id as vc_id", "vc._rev as vc_rev",
+        "vc.updated", "vc.updatedby", "vc.versiondepth", "vc.ancestry",
+        "vc.isleaf", "vc.isdeleted", "vc.isstub, vc.isconflict, vc.iswinner"
     ];
 
-    constructor() {
+    static VC_COL_SELECT = PgBaseClient.VC_COLS.join(",");
+
+    constructor(pool: string) {
         this.sessionEntity = new Cfg("session");
         this.userEntity = new Cfg("useraccount");
-        this._pool = new Pool();
+        this.conn = new Cfg(pool);
     }
 
     configure(configuration: IConfiguration) {
         this.sessionEntity.v = configuration.getEntity("session");
         this.userEntity.v = configuration.getEntity("useraccount");
+        const conn: unknown = configuration.workers.get(this.conn.name);
+        if (conn instanceof PgConnection) {
+            this.conn.v = conn as PgConnection;
+        } else {
+            throw new PgClientError(
+                `Worker ${this.conn.name} is not a PgConnection`);
+        }
+    }
+
+    get pool(): Pool<pg.Client> {
+        if (this._conn_pool) {
+            return this._conn_pool;
+        } else {
+            this._conn_pool = this.conn.v.pool;
+            return this._conn_pool;
+        }
     }
 
     protected convertDbRowToAppRow(row: Row, flagConflict?: boolean): Row {
@@ -132,7 +201,7 @@ export class PgBaseClient {
         const statement =
             `select coalesce(max(updateseq), 0) "max" from ${entity.table}_vc`;
         this.log(logger, statement);
-        const result = await this._pool.query(statement);
+        const result = await this.pool.query(statement);
         if (result.rows.length === 0) {
             throw new PgClientError(`No rows returned for max(updateseq) ` +
                                     `${entity.table}_vc`, 404);
@@ -146,7 +215,7 @@ export class PgBaseClient {
         const statement =
             `select * from ${entity.table} where (${filter.where}) limit 1`;
         this.log(logger, statement);
-        const result = await this._pool.query(statement);
+        const result = await this.pool.query(statement);
         if (result.rows.length === 0) {
             return new Row();
         }
@@ -160,13 +229,13 @@ export class PgBaseClient {
                 logger, context, entity, filter);
         }
         const statement =
-            `select ${this.fullyQualifiedVCCols("vc").join()}, e.* ` +
+            `select ${PgBaseClient.VC_COL_SELECT}, e.* ` +
             `from ${entity.table} as e ` +
             `inner join ${entity.table}_vc as vc on (vc._id = e._id and ` +
             `vc._rev = e._rev) ` +
             `where (${filter.where}) limit 1`;
         this.log(logger, statement);
-        const result = await this._pool.query(statement);
+        const result = await this.pool.query(statement);
         if (result.rows.length === 0) {
             return new Row();
         }
@@ -179,7 +248,7 @@ export class PgBaseClient {
         const statement = `select * from ${entity.table} where _id = \$1`;
         const parameters = [id];
         this.log(logger, statement, parameters);
-        const result = await this._pool.query(statement, parameters);
+        const result = await this.pool.query(statement, parameters);
         if (result.rows.length === 0) {
             return new Row();
         }
@@ -194,28 +263,28 @@ export class PgBaseClient {
         let row: Row = new Row();
         if (rev) {
             const statement =
-                `select ${this.fullyQualifiedVCCols("vc").join()}, v.* ` +
+                `select ${PgBaseClient.VC_COL_SELECT}, v.* ` +
                 `from ${entity.table}_v as v ` +
                 `inner join ${entity.table}_vc as vc on ` +
                 `(vc._id = v._id and vc._rev = v._rev) ` +
                 `where v._id = \$1 and v._rev = \$2`;
             const parameters = [id, rev];
             this.log(logger, statement, parameters);
-            const result = await this._pool.query(statement, parameters);
+            const result = await this.pool.query(statement, parameters);
             if (result.rows.length > 0) {
                 row = this.convertDbRowToAppRow(
                     Row.dataToRow(result.rows[0], entity), true);
             }
         } else {
             const statement =
-                `select ${this.fullyQualifiedVCCols("vc").join()}, e.* ` +
+                `select ${PgBaseClient.VC_COL_SELECT}, e.* ` +
                 `from ${entity.table} as e ` +
                 `inner join ${entity.table}_vc as vc on (vc._id = e._id and ` +
                 `vc._rev = e._rev) ` +
                 `where e._id = \$1`;
             const parameters = [id];
             this.log(logger, statement, parameters);
-            const result = await this._pool.query(statement, parameters);
+            const result = await this.pool.query(statement, parameters);
             if (result.rows.length > 0) {
                 row = this.convertDbRowToAppRow(
                     Row.dataToRow(result.rows[0], entity), true);
@@ -231,18 +300,11 @@ export class PgBaseClient {
         };
         const statement = "select db_uuid()";
         this.log(logger, statement);
-        const result = await this._pool.query(statement);
+        const result = await this.pool.query(statement);
         if (result.rows.length > 0) {
             info.uuid = result.rows[0].db_uuid;
         }
         return new Row(info);
-    }
-
-    protected fullyQualifiedVCCols(alias: string): string[] {
-        const result: string[] = [];
-        PgBaseClient.VC_COL_DEFS.forEach(
-            (col) => result.push(`${alias}.${col}`));
-        return result;
     }
 
     private getSelfUpdateSet(entity: Entity, alias: string): string[] {
@@ -396,20 +458,26 @@ export class PgBaseClient {
         }
     }
 
-    protected async pullVcTable(logger: Logger, entity: Entity,
-                                id: string): Promise<IResultSet> {
+    protected async pullVcTable(logger: Logger, entity: Entity, id: string,
+                                existingClient?: pg.Client)
+                                    : Promise<IResultSet> {
         // Pull the version history for this id
         const statement = `select * from ${entity.table}_vc where _id = \$1`;
         const parameters = [id];
         this.log(logger, statement, parameters);
-        const result = await this._pool.query(statement, parameters);
+        let result;
+        if (existingClient) {
+            result = await existingClient.query(statement, parameters);
+        } else {
+            result = await this.pool.query(statement, parameters);
+        }
         return new MemResultSet(result.rows);
     }
 }
 
 type PgClientSourceSpec = ClassSpec & {
     leaderElector: string;
-    pageSize: number;
+    pool: string;
 }
 
 export class PgClient extends PgBaseClient implements IService, IElectorService,
@@ -418,21 +486,15 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
     configuration: Cfg<IConfiguration>;
     leaderElector: Cfg<LeaderElector>;
     private _scheduler: Scheduler;
-    private _spec: PgClientSourceSpec;
     private mvccController: MvccController;
     private electionLogger: Logger;
     private deferredLogger: Logger;
     private mvccLogger: Logger;
 
     constructor(spec: PgClientSourceSpec) {
-        super();
+        super(spec.pool);
         this.configuration = new Cfg("configuration");
         this.leaderElector = new Cfg(spec.leaderElector);
-        this._spec = spec;
-        if (this._spec.pageSize <= 0) {
-            throw new PgClientError(
-                `Invalid pageSize: ${this._spec.pageSize}`, 400);
-        }
         this._scheduler = new Scheduler(30000, this);
         this.electionLogger = new Logger("server/election");
         this.deferredLogger = new Logger("server/deferred");
@@ -471,11 +533,6 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
 
     async stop(): Promise<void> {
         this._scheduler.stop();
-        if (this._pool) {
-            console.log("Ending connection pool...");
-            await this._pool.end();
-            console.log("Connection pool ended");
-        }
     }
 
     private catchupInitialization(): void {
@@ -485,7 +542,7 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
         const parameters = [now];
 
         this.log(this.deferredLogger, statement, parameters);
-        this._pool.query(statement, parameters).then((result) => {
+        this.conn.v.pool.query(statement, parameters).then((result) => {
             if (result.rows.length > 0) {
                 // Capture all the results before we delete these rows, to
                 // avoid other parallel servers picking these up.
@@ -494,7 +551,7 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
                 // picking these up.
                 statement = "delete from deferredtoken where updated < \$1";
                 this.log(this.deferredLogger, statement, parameters);
-                this._pool.query(statement, parameters).then(() => {
+                this.conn.v.pool.query(statement, parameters).then(() => {
                     while (resultSet.next()) {
                         const token = resultSet.getRow().raw() as DeferredToken;
                         const context = new DeferredContext(
@@ -602,7 +659,7 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
             `delete from ${this.sessionEntity.v.table} where expiry <= \$1`;
         const parameters = [expiry];
         this.log(logger, statement, parameters);
-        await this._pool.query(statement, parameters);
+        await this.pool.query(statement, parameters);
     }
 
     async castBallot(logger: Logger, serverId: string, rowId: number,
@@ -613,7 +670,7 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
             `returning leader, lastping`;
         const parameters = [serverId, rowId];
         this.log(logger, statement, parameters);
-        const result = await this._pool.query(statement, parameters);
+        const result = await this.pool.query(statement, parameters);
         if (result.rows.length === 0) {
             return new Row();
         }
@@ -627,7 +684,7 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
             `where id = $1 and leader = $2 returning leader, lastping`;
         const parameters = [rowId, serverId];
         this.log(logger, statement, parameters);
-        const result = await this._pool.query(statement, parameters);
+        const result = await this.pool.query(statement, parameters);
         if (result.rows.length === 0) {
             return new Row();
         }
@@ -639,7 +696,7 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
         const dbid = "RZOID" in env ? "" + env.RZOID : "";
         const statement = `select nextval('${generatorName}')`;
         logger.debug(statement);
-        const result = await this._pool.query(statement);
+        const result = await this.pool.query(statement);
         if (result.rows.length === 0) {
             throw new PgClientError(`No rows returned for sequence ` +
                                     `${generatorName}`, 404);
@@ -681,10 +738,10 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
             statement += ` order by ${orders.join()}`;
         }
         this.log(logger, statement);
-        const client = await this._pool.connect();
+        const client = await this.pool.connect();
         try {
             const cursor = client.query(new Cursor(statement, []));
-            const rows = await cursor.read(this._spec.pageSize);
+            const rows = await cursor.read(this.conn.v.pageSize);
             if (rows.length == 0) {
                 this.log(logger, `No rows returned for query: ${statement}`);
                 return new EmptyResultSet();
@@ -717,7 +774,7 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
             const statement = `select _id from ${entity.table} ` +
                 `where ${keyWhere.join(" and ")} and _id != \$${param} limit 1`;
             this.log(logger, statement, parameters);
-            const result = await this._pool.query(statement, parameters);
+            const result = await this.pool.query(statement, parameters);
             if (result.rows.length) {
                 throw new PgClientError(
                     `Duplicate '${entity.name}': ${parameters.join(", ")}`,
@@ -728,7 +785,7 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
         const versions = await this.pullVcTable(logger, entity, id);
         const mvccResult = this.mvccController.putMvcc(
             row, versions, false, context);
-        const client = await this._pool.connect();
+        const client = await this.pool.connect();
         try {
             let statement = "BEGIN";
             this.log(logger, statement);
@@ -766,7 +823,7 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
             const statement = `select _id from ${entity.table} ` +
                 `where ${keyWhere.join(" and ")} limit 1`;
             this.log(logger, statement, parameters);
-            const result = await this._pool.query(statement, parameters);
+            const result = await this.pool.query(statement, parameters);
             if (result.rows.length) {
                 throw new PgClientError(
                     `Duplicate '${entity.name}': ${parameters.join(", ")}`,
@@ -785,12 +842,12 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
                 `)`;
             const parameters = row.values();
             this.log(logger, statement, parameters);
-            await this._pool.query(statement, parameters);
+            await this.pool.query(statement, parameters);
             return row;
         } else {
             let statement: string;
             const mvccResult = this.mvccController.postMvcc(row, context);
-            const client = await this._pool.connect();
+            const client = await this.pool.connect();
             try {
                 statement = "BEGIN";
                 this.log(logger, statement);
@@ -824,7 +881,7 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
             `delete from ${entity.table} where _id = \$1`;
         const parameters = [id];
         this.log(logger, statement, parameters);
-        await this._pool.query(statement, parameters);
+        await this.pool.query(statement, parameters);
     }
 
     async delete(logger: Logger, context: IContext, entity: Entity, id: string,
@@ -836,7 +893,7 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
         const versions = await this.pullVcTable(logger, entity, id);
         const mvccResult = this.mvccController.deleteMvcc(
             id, rev, versions, context);
-        const client = await this._pool.connect();
+        const client = await this.pool.connect();
         try {
             let statement = "BEGIN";
             this.log(logger, statement);
@@ -864,7 +921,7 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
             `select * from deferredtoken where token = \$1`;
         const parameters = [tokenUuid];
         this.log(logger, statement, parameters);
-        const result = await this._pool.query(statement, parameters);
+        const result = await this.pool.query(statement, parameters);
         if (result.rows.length === 0) {
             return null;
         }
@@ -887,7 +944,7 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
             id
         ];
         this.log(logger, statement, parameters);
-        const result = await this._pool.query(statement, parameters);
+        const result = await this.pool.query(statement, parameters);
         if (result.rows.length === 0) {
             return null;
         }
@@ -901,7 +958,7 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
             const statement = `delete from deferredtoken where token = \$1`;
             const parameters = [token.token];
             this.log(logger, statement, parameters);
-            this._pool.query(statement, parameters);
+            this.conn.v.pool.query(statement, parameters);
             // Note: this delete command runs parallel to the following
             // statements.
         }
@@ -975,7 +1032,7 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
             token.id
         ];
         this.log(logger, statement, parameters);
-        const result = await this._pool.query(statement, parameters);
+        const result = await this.pool.query(statement, parameters);
         if (!result.rowCount) {
             // No update was performed, do an insert instead.
             statement =
@@ -994,7 +1051,7 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
                 token.updated
             ];
             this.log(logger, statement, parameters);
-            await this._pool.query(statement, parameters);
+            await this.pool.query(statement, parameters);
         }
         // Schedule the execution of the token expiry
         this._scheduler.schedule(Row.dataToRow(token), context);

@@ -416,7 +416,7 @@ export class ReplicationAdapter extends SessionAwareAdapter {
             if (multipart) {
                 this.logger.debug("multipart response requested");
             }
-            this.logger.debug(result);
+            // this.logger.debug(result);
         }
         if (multipart) {
             response.setHeader(

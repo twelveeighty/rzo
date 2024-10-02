@@ -1,6 +1,21 @@
 [
     {
         "apiVersion": "v1",
+        "kind": "Worker",
+        "metadata": {
+            "name": "pgconnection"
+        },
+        "spec": {
+            "type": "server.pg-client.PgConnection",
+            "connectionTimeoutMillis": 0,
+            "idleTimeoutMillis": 10000,
+            "max": 10,
+            "allowExitOnIdle": false,
+            "pageSize": 100
+        }
+    },
+    {
+        "apiVersion": "v1",
         "kind": "Source",
         "metadata": {
             "name": "db"
@@ -8,7 +23,22 @@
         "spec": {
             "type": "server.pg-client.PgClientSource",
             "leaderElector": "leaderelector",
-            "pageSize": 100
+            "pool": "pgconnection"
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Worker",
+        "metadata": {
+            "name": "leaderelector"
+        },
+        "spec": {
+            "type": "server.election.LeaderElector",
+            "source": "db",
+            "leaderElectRowId": 1,
+            "leaderCastVoteInterval": "2 minutes",
+            "leaderCastVoteFrequency": 120000,
+            "leaderReelectFrequency": 60000
         }
     },
     {
@@ -19,7 +49,7 @@
         },
         "spec": {
             "type": "server.pg-replication.PgReplicationSource",
-            "pageSize": 100
+            "pool": "pgconnection"
         }
     },
     {
@@ -30,7 +60,7 @@
         },
         "spec": {
             "type": "server.pg-attach.PgAttachSource",
-            "pageSize": 100
+            "pool": "pgconnection"
         }
     },
     {
@@ -200,21 +230,6 @@
             "type": "server.cache.APICacheWorker",
             "ttl": 30000,
             "cacheCheckFrequency": 10000
-        }
-    },
-    {
-        "apiVersion": "v1",
-        "kind": "Worker",
-        "metadata": {
-            "name": "leaderelector"
-        },
-        "spec": {
-            "type": "server.election.LeaderElector",
-            "source": "db",
-            "leaderElectRowId": 1,
-            "leaderCastVoteInterval": "2 minutes",
-            "leaderCastVoteFrequency": 120000,
-            "leaderReelectFrequency": 60000
         }
     },
     {

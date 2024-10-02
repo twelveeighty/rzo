@@ -18,8 +18,8 @@
 */
 
 import {
-    Entity, IConfiguration, AsyncTask, IContext, Row, TypeCfg, ClassSpec,
-    _IError, Logger, Attachment, Attachments
+    Entity, IConfiguration, IContext, Row, TypeCfg, ClassSpec, _IError, Logger,
+    Attachment, Attachments
 } from "../base/core.js";
 
 import { MvccController } from "./mvcc.js";
@@ -28,28 +28,16 @@ import { PgBaseClient } from "./pg-client.js";
 import { ATTACH_TABLE, IAttachService, AttachSource } from "./attach.js";
 
 
-class PgAttachError extends _IError {
-    constructor(message: string, code?: number, options?: ErrorOptions) {
-        super(code || 500, message, options);
-    }
-}
-
 type PgAttachSourceSpec = ClassSpec & {
-    pageSize: number;
+    pool: string;
 }
 
 export class PgAttach extends PgBaseClient implements IAttachService {
-    private _spec: PgAttachSourceSpec;
     private mvccLogger: Logger;
     private mvccController: MvccController;
 
     constructor(spec: PgAttachSourceSpec) {
-        super();
-        this._spec = spec;
-        if (this._spec.pageSize <= 0) {
-            throw new PgAttachError(
-                `Invalid pageSize: ${this._spec.pageSize}`, 400);
-        }
+        super(spec.pool);
         this.mvccLogger = new Logger("server/mvcc");
         this.mvccController = new MvccController(this.mvccLogger);
     }
@@ -60,17 +48,6 @@ export class PgAttach extends PgBaseClient implements IAttachService {
 
     get isAttachService(): boolean {
         return true;
-    }
-
-    start(): void {
-    }
-
-    async stop(): Promise<void> {
-        if (this._pool) {
-            console.log("Ending attach connection pool...");
-            await this._pool.end();
-            console.log("Attach connection pool ended");
-        }
     }
 
     async put(logger: Logger, context: IContext, entity: Entity, id: string,
@@ -106,12 +83,12 @@ export class PgAttach extends PgBaseClient implements IAttachService {
         let statement = `select hash from ${ATTACH_TABLE} where hash = \$1`;
         let parameters: any[] = [hash];
         this.log(logger, statement, parameters);
-        let result = await this._pool.query(statement, parameters);
+        let result = await this.pool.query(statement, parameters);
         const addAttachment = result.rows.length == 0;
         const versions = await this.pullVcTable(logger, entity, id);
         const mvccResult = this.mvccController.putMvcc(
             row, versions, false, context);
-        const client = await this._pool.connect();
+        const client = await this.pool.connect();
         try {
             statement = "BEGIN";
             this.log(logger, statement);
@@ -150,7 +127,7 @@ export class PgAttach extends PgBaseClient implements IAttachService {
             `where hash = \$1`;
         const parameters = [attObject.d];
         this.log(logger, statement, parameters);
-        const result = await this._pool.query(statement, parameters);
+        const result = await this.pool.query(statement, parameters);
         if (result.rows.length) {
             return Buffer.from(result.rows[0].data, "base64");
         } else {
@@ -159,7 +136,7 @@ export class PgAttach extends PgBaseClient implements IAttachService {
     }
 }
 
-export class PgAttachSource extends AttachSource implements AsyncTask {
+export class PgAttachSource extends AttachSource {
     _service: PgAttach;
 
     constructor(config: TypeCfg<PgAttachSourceSpec>,
@@ -170,19 +147,10 @@ export class PgAttachSource extends AttachSource implements AsyncTask {
 
     configure(configuration: IConfiguration) {
         this._service.configure(configuration);
-        configuration.registerAsyncTask(this);
     }
 
     get service(): IAttachService {
         return this._service;
-    }
-
-    async start(): Promise<void> {
-        this._service.start();
-    }
-
-    async stop(): Promise<void> {
-        await this._service.stop();
     }
 }
 

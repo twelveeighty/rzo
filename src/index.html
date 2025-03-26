@@ -31,7 +31,7 @@
   <body>
 
   <nav class="navbar navbar-expand-lg bg-body-tertiary">
-      <div class="container-fluid">
+      <div class="container">
           <a id="welcome-heading" class="navbar-brand" href="#">Drive</a>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse"
                   data-bs-target="#navbarNavDropdown"
@@ -40,21 +40,7 @@
               <span class="navbar-toggler-icon"></span>
           </button>
           <div class="collapse navbar-collapse" id="navbarNavDropdown">
-              <ul class="navbar-nav">
-                  <!--
-                  <li class="nav-item">
-                      <a class="nav-link active" aria-current="page" href="#">Home</a>
-                  </li>
-                  -->
-                  <li class="nav-item">
-                      <a id="nav-trips-a" class="nav-link" href="#">Trips</a>
-                  </li>
-                  <li class="nav-item">
-                      <a id="nav-riders-a" class="nav-link" href="#">Riders</a>
-                  </li>
-                  <li class="nav-item">
-                      <a id="nav-drivers-a" class="nav-link" href="#">Drivers</a>
-                  </li>
+              <ul id="nav-list-ul" class="navbar-nav">
                   <li class="nav-item dropdown">
                       <a class="nav-link dropdown-toggle" href="#" role="button"
                          data-bs-toggle="dropdown" aria-expanded="false">
@@ -67,13 +53,6 @@
       <path id="person-check-path" class="invisible"
       d="M2 13c0 1 1 1 1 1h5.256A4.5 4.5 0 0 1 8 12.5a4.5 4.5 0 0 1 1.544-3.393Q8.844 9.002 8 9c-5 0-6 3-6 4"/>
     </svg>
-    <!--
-    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor"
-        viewBox="0 0 16 16">
-      <path id="person-fill-path" d="M12.5 16a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7m1.679-4.493-1.335 2.226a.75.75 0 0 1-1.174.144l-.774-.773a.5.5 0 0 1 .708-.708l.547.548 1.17-1.951a.5.5 0 1 1 .858.514M11 5a3 3 0 1 1-6 0 3 3 0 0 1 6 0"/>
-      <path id="person-check-path" d="M2 13c0 1 1 1 1 1h5.256A4.5 4.5 0 0 1 8 12.5a4.5 4.5 0 0 1 1.544-3.393Q8.844 9.002 8 9c-5 0-6 3-6 4"/>
-    </svg>
-    -->
                       </a>
                       <ul class="dropdown-menu">
                           <li><a id="nav-logout-a" class="dropdown-item" href="#">Logout</a></li>
@@ -87,16 +66,19 @@
 <main>
     <h1 class="visually-hidden">Drive Happiness</h1>
 
-    <div id="toaster-div" class="toast" role="alert" aria-live="assertive"
-         aria-atomic="true">
-        <div class="toast-header">
-            <strong class="me-auto">Drive</strong>
-            <small>11 mins ago</small>
-            <button type="button" class="btn-close" data-bs-dismiss="toast"
-                    aria-label="Close"></button>
-        </div>
-        <div id="toaster-msg-div" class="toast-body">
-            Default Message
+    <div aria-live="polite" aria-atomic="true"
+        class="d-flex justify-content-center align-items-center w-100">
+        <div id="toaster-div" class="toast" role="alert" aria-live="assertive"
+             aria-atomic="true">
+            <div class="toast-header">
+                <strong class="me-auto">Drive</strong>
+                <small>11 mins ago</small>
+                <button type="button" class="btn-close" data-bs-dismiss="toast"
+                        aria-label="Close"></button>
+            </div>
+            <div id="toaster-msg-div" class="toast-body">
+                Default Message
+            </div>
         </div>
     </div>
 
@@ -115,6 +97,8 @@
             </div>
             <button id="password-reset-submit-btn" type="submit"
                 class="btn btn-primary">Reset</button>
+            <button id="password-reset-back-btn" type="button"
+                class="btn btn-primary">Go back</button>
         </form>
     </div>
 
@@ -208,17 +192,17 @@
     <div id="rider-edit-div" class="container" hidden>
         <form id="rider-edit-form">
             <div class="row">
-                <div class="col-4">
+                <div class="col-4 mb-3">
                     <label for="rider-ridernum-txt" class="form-label">ID</label>
                     <input id="rider-ridernum-txt" type="text" class="form-control"></input>
                 </div>
-                <div class="col-4">
+                <div class="col-4 mb-3">
                     <label for="rider-zone-sel" class="form-label">Zone</label>
                     <select id="rider-zone-sel" class="form-select">
                         <option selected value="">Choose...</option>
                     </select>
                 </div>
-                <div class="col-4">
+                <div class="col-4 mb-3">
                     <label for="rider-status-sel" class="form-label">Status</label>
                     <select id="rider-status-sel" class="form-select">
                         <option selected value="">Choose...</option>
@@ -227,63 +211,63 @@
                         <option value="INACTIVE">INACTIVE</option>
                     </select>
                 </div>
-                <div class="col-12">
+                <div class="col-12 mb-3">
                     <label for="rider-name-txt" class="form-label">Name</label>
                     <input id="rider-name-txt" type="text" class="form-control"></input>
                 </div>
-                <div class="col-12">
+                <div class="col-12 mb-3">
                     <label for="rider-address1-txt" class="form-label">Address</label>
                     <input id="rider-address1-txt" type="text" class="form-control"></input>
                 </div>
-                <div class="col-12">
+                <div class="col-12 mb-3">
                     <label for="rider-address2-txt" class="form-label">Address 2</label>
                     <input id="rider-address2-txt" type="text" class="form-control"></input>
                 </div>
-                <div class="col-4">
+                <div class="col-4 mb-3">
                     <label for="rider-city-txt" class="form-label">City</label>
                     <input id="rider-city-txt" type="text" class="form-control"></input>
                 </div>
-                <div class="col-4">
+                <div class="col-4 mb-3">
                     <label for="rider-stateprov-txt" class="form-label">Prov/State</label>
                     <input id="rider-stateprov-txt" type="text" class="form-control"></input>
                 </div>
-                <div class="col-4">
+                <div class="col-4 mb-3">
                     <label for="rider-postalcode-txt" class="form-label">Zip</label>
                     <input id="rider-postalcode-txt" type="text" class="form-control"></input>
                 </div>
-                <div class="col-4">
+                <div class="col-4 mb-3">
                     <label for="rider-maplink-txt" class="form-label">Map Link</label>
                     <input id="rider-maplink-txt" type="text"
                            class="form-control-plaintext"></input>
                 </div>
-                <div class="col-4">
+                <div class="col-4 mb-3">
                     <input id="rider-override-cbox" type="checkbox" class="form-check-input">
                     <label class="form-check-label" for="rider-override-cbox">
                         Override map link</label>
                 </div>
-                <div class="col-4">
+                <div class="col-4 mb-3">
                     <label for="rider-maplinkmanual-txt"
                            class="form-label">Map Link Override</label>
                     <input id="rider-maplinkmanual-txt" type="text"
                            class="form-control"></input>
                 </div>
-                <div class="col-4">
+                <div class="col-4 mb-3">
                     <label for="rider-phone1-txt" class="form-label">Phone</label>
                     <input id="rider-phone1-txt" type="text" class="form-control"></input>
                 </div>
-                <div class="col-4">
+                <div class="col-4 mb-3">
                     <label for="rider-phone2-txt" class="form-label">Phone 2</label>
                     <input id="rider-phone2-txt" type="text" class="form-control"></input>
                 </div>
-                <div class="col-4">
+                <div class="col-4 mb-3">
                     <label for="rider-phone3-txt" class="form-label">Phone 3</label>
                     <input id="rider-phone3-txt" type="text" class="form-control"></input>
                 </div>
-                <div class="col-12">
+                <div class="col-12 mb-3">
                     <label for="rider-comments-tarea" class="form-label">Comments</label>
                     <textarea id="rider-comments-tarea" class="form-control"></textarea>
                 </div>
-                <div class="col-12">
+                <div class="col-12 mb-3">
                     <label for="rider-tripinfo-tarea"
                         class="form-label">Default Trip Details</label>
                     <textarea id="rider-tripinfo-tarea" class="form-control"></textarea>
@@ -412,13 +396,33 @@
         <h4>Driver</h4>
         <p id="trip-view-driver-p">(none)
         </p>
-        <div class="d-flex gap-2 justify-content-center py-5">
-            <button id="trip-view-assign-btn" type="button"
-                class="btn btn-primary">Assign Driver...</button>
-            <button id="trip-view-edit-btn" type="button"
-                class="btn btn-primary">Edit Trip...</button>
+        <div id="trip-view-buttons-div" class="d-flex gap-2 justify-content-center py-5">
             <button id="trip-view-back-btn" type="button"
                 class="btn btn-primary">Go back</button>
+        </div>
+    </div>
+
+    <div id="trip-confirm-accept-div"
+        class="modal fade" data-bs-backdrop="static" data-bs-keyboard="false"
+        tabindex="-1" aria-labelledby="staticBackdropLabel" aria-hidden="true">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content rounded-3 shadow">
+                <div class="modal-body p-4 text-center">
+                    <h5 class="mb-0">Accept this trip?</h5>
+                    <p class="mb-0">This ride will be added to your trips.</p>
+                </div>
+                <div class="modal-footer flex-nowrap p-0">
+                    <button id="trip-accept-confirm-btn" type="button"
+                class="btn btn-lg btn-link fs-6 text-decoration-none col-6 py-3 m-0 rounded-0 border-end">
+                        <strong>Yes, accept</strong>
+                    </button>
+                    <button type="button"
+                        class="btn btn-lg btn-link fs-6 text-decoration-none col-6 py-3 m-0 rounded-0"
+                        data-bs-dismiss="modal">
+                        No
+                    </button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -632,6 +636,42 @@
         </div>
         <div class="b-divider"></div>
         <div id="trip-list-trips-div" class="list-group">
+        </div>
+    </div>
+
+    <div id="trip-my-list-div" class="container" hidden>
+        <div class="row">
+            <div class="col-4">
+                <label for="trip-my-search-time-sel" class="form-label">Timeframe</label>
+                <select id="trip-my-search-time-sel" class="form-select">
+                    <option selected value="DAY">Day</option>
+                    <option value="TWODAYS">2 days</option>
+                    <option value="WEEK">7 days</option>
+                    <option value="ALL">All</option>
+                </select>
+            </div>
+            <div class="col-1 d-flex align-items-end">
+                <button id="trip-my-search-left-btn" type="button"
+                        class="btn btn-primary">&lt;</button>
+            </div>
+            <div class="col-2 d-flex align-items-end">
+                <pre id="trip-my-search-daterange-pre"
+                     class="pre-centered">27 Apr - 03 May</pre>
+            </div>
+            <div class="col-1 d-flex align-items-end">
+                <button id="trip-my-search-right-btn" type="button"
+                        class="btn btn-primary">&gt;</button>
+            </div>
+        </div>
+        <div class="b-divider"></div>
+        <div class="row">
+            <div class="col-4">
+                <button id="trip-my-search-refresh-btn" type="button"
+                        class="btn btn-primary">Refresh</button>
+            </div>
+        </div>
+        <div class="b-divider"></div>
+        <div id="trip-my-list-trips-div" class="list-group">
         </div>
     </div>
 

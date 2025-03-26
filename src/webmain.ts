@@ -35,6 +35,7 @@ import { TripViewPanel } from "./web/trip/tripviewpanel.js";
 import { TripAssignPanel } from "./web/trip/tripassignpanel.js";
 import { TripEditPanel } from "./web/trip/tripeditpanel.js";
 import { TripsListPanel } from "./web/trip/tripslistpanel.js";
+import { TripsMyListPanel } from "./web/trip/tripsmylistpanel.js";
 
 import { DriversListPanel } from "./web/driver/driverslistpanel.js";
 import { DriverEditPanel } from "./web/driver/drivereditpanel.js";
@@ -46,63 +47,28 @@ TOASTER.initialize();
 
 const panelController = new PanelController();
 
-const createLoginPanel = new CreateLoginPanel();
-const oneTimeLoginPanel = new OneTimeLoginPanel();
-const passwordResetPanel = new PasswordResetPanel();
-const loginPanel = new LoginPanel();
-
-const openIDPanel = new OpenIDPanel();
-const navigationPanel = new NavigationPanel();
-
-const riderEditPanel = new RiderEditPanel();
-const ridersListPanel = new RidersListPanel();
-const riderViewPanel = new RiderViewPanel();
-
-const tripsListPanel = new TripsListPanel();
-const tripViewPanel = new TripViewPanel();
-const tripAssignPanel = new TripAssignPanel();
-const tripEditPanel = new TripEditPanel();
-
-const driverEditPanel = new DriverEditPanel();
-const driversListPanel = new DriversListPanel();
-const driverViewPanel = new DriverViewPanel();
-
-// Wire in the dependant panel(s) that require a login before they
-// can be initialized
-loginPanel.addSubmitInitPanel(riderEditPanel);
-loginPanel.addSubmitInitPanel(ridersListPanel);
-loginPanel.addSubmitInitPanel(riderViewPanel);
-
-loginPanel.addSubmitInitPanel(tripViewPanel);
-loginPanel.addSubmitInitPanel(tripAssignPanel);
-loginPanel.addSubmitInitPanel(tripEditPanel);
-loginPanel.addSubmitInitPanel(tripsListPanel);
-
-loginPanel.addSubmitInitPanel(driverEditPanel);
-loginPanel.addSubmitInitPanel(driversListPanel);
-loginPanel.addSubmitInitPanel(driverViewPanel);
-
 // Add panels to the controller
-panelController.add(createLoginPanel);
-panelController.add(oneTimeLoginPanel);
-panelController.add(passwordResetPanel);
-panelController.add(loginPanel);
+panelController.add(new CreateLoginPanel());
+panelController.add(new OneTimeLoginPanel());
+panelController.add(new PasswordResetPanel());
+const loginPanel = panelController.add(new LoginPanel());
 
-panelController.add(openIDPanel);
-panelController.add(navigationPanel);
+const openIDPanel = panelController.add(new OpenIDPanel());
+panelController.add(new NavigationPanel());
 
-panelController.add(ridersListPanel);
-panelController.add(riderEditPanel);
-panelController.add(riderViewPanel);
+panelController.add(new RidersListPanel());
+panelController.add(new RiderEditPanel());
+panelController.add(new RiderViewPanel());
 
-panelController.add(tripViewPanel);
-panelController.add(tripAssignPanel);
-panelController.add(tripEditPanel);
-panelController.add(tripsListPanel);
+panelController.add(new TripViewPanel());
+panelController.add(new TripAssignPanel());
+panelController.add(new TripEditPanel());
+panelController.add(new TripsListPanel());
+panelController.add(new TripsMyListPanel());
 
-panelController.add(driversListPanel);
-panelController.add(driverEditPanel);
-panelController.add(driverViewPanel);
+panelController.add(new DriversListPanel());
+panelController.add(new DriverEditPanel());
+panelController.add(new DriverViewPanel());
 
 function locationHashToMap(hash: string): Map<string, string> {
     const result = new Map();
@@ -143,11 +109,7 @@ import(metadataName)
     if (METADATA) {
         RZO.bootstrap(METADATA)
         .then(() => {
-            navigationPanel.initialize();
-            createLoginPanel.initialize();
-            oneTimeLoginPanel.initialize();
-            passwordResetPanel.initialize();
-            loginPanel.initialize();
+            panelController.initialize();
             entryPoint();
         })
         .catch((error) => {

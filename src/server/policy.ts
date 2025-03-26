@@ -57,6 +57,9 @@ type PolicyStatement = {
 type PolicyResult = {
     result: boolean;
     doBreak: boolean;
+    attr?: string;
+    op?: string;
+    subject?: string;
 }
 
 export type PolicySpec = ClassSpec & {
@@ -148,7 +151,9 @@ export class Policy {
     private checkNull(op: MatchOperand, statement: PolicyStatement,
                       value: string): PolicyResult {
         const valueNull = value.length == 0;
-        const check = { result: false, doBreak: false };
+        const attr = valueNull ? "<null>" : value;
+        const check : PolicyResult = {
+            result: false, doBreak: false, op: op, attr: attr };
         const conditionResult = (op == "isNull" ? valueNull : !valueNull);
         if (conditionResult) {
             check.result = true;
@@ -169,8 +174,9 @@ export class Policy {
                         subjectCache: Map<string, string>, attrValue: string,
                         row: Row): PolicyResult {
         const attrValueNull = attrValue.length == 0;
-        const check = { result: false, doBreak: false };
+        const check : PolicyResult = { result: false, doBreak: false, op: op };
         if (!attrValueNull) {
+            check.attr = attrValue;
             let subjectValue = "";
             if (condition.subject.startsWith("${")) {
                 subjectValue = this.personaSubject(
@@ -178,7 +184,9 @@ export class Policy {
             } else {
                 subjectValue = row.getString(condition.subject);
             }
+            check.subject = subjectValue;
             if (subjectValue.length == 0) {
+                check.subject = "<empty>";
                 check.result = false;
                 if (statement.where!.match == "all") {
                     check.doBreak = true;
@@ -194,6 +202,8 @@ export class Policy {
                 }
             }
         } else {
+            check.attr = "<null>";
+            check.subject = "<ignored>";
             check.result = false;
             if (statement.where!.match == "all") {
                 check.doBreak = true;
@@ -215,6 +225,7 @@ export class Policy {
     guardRow(context: IContext, resource: string, action: PolicyAction,
              row: Row, cache?: Map<string, string>): Row {
         let allowed = false;
+        let check: PolicyResult | null = null;
         const subjectCache: Map<string, string> = cache || new Map();
         for (const statement of this.statements) {
             if (statement.resource == resource &&
@@ -230,7 +241,7 @@ export class Policy {
                         const attrValue = row.getString(condition.attr);
                         if (condition.op == "isNull" ||
                             condition.op == "isNotNull") {
-                            const check = this.checkNull(
+                            check = this.checkNull(
                                 condition.op, statement, attrValue);
                             conditionAllowed = check.result;
                             if (check.doBreak) {
@@ -238,7 +249,7 @@ export class Policy {
                             }
                         } else if (condition.op == "eq" ||
                                    condition.op == "ne") {
-                            const check = this.checkEquals(
+                            check = this.checkEquals(
                                 condition.op, context, statement, condition,
                                 subjectCache, attrValue, row);
                             conditionAllowed = check.result;
@@ -265,13 +276,21 @@ export class Policy {
             }
         }
         if (!allowed) {
+            const id = row.has("_id") ? row.get("_id") : "<null>";
+            const op = check?.op || "<unknown>";
+            const attr = check?.attr || "<unknown>";
+            const subject = check?.subject || "<unknown>";
             console.log(
                 `Policy violation: row guard ` +
                 `policy: [${this.name}] ` +
                 `resource: [${resource}] ` +
+                `_id: [${id}] ` +
                 `userAccountId: [${context.userAccountId}] ` +
                 `persona: [${context.persona.name}] ` +
                 `action: [${action}] ` +
+                `op: [${op}] ` +
+                `attr: [${attr}] ` +
+                `subject: [${subject}] ` +
                 `reason: No [allow] rule evaluated to true`);
             throw new PolicyError();
         }

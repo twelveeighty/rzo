@@ -19,7 +19,7 @@
 
 import {
     IConfiguration, Cfg, IContext, TypeCfg, Collection, CollectionSpec, Filter,
-    Entity, ContainedEntity, Query
+    Entity, ContainedEntity, Query, IResultSet
 } from "./core.js";
 
 class CollectionError extends Error {
@@ -250,6 +250,37 @@ export class JoinedCollection extends Collection {
         const result = new Query(finalFields, finalFilter, finalOrderBy);
         result.fromClause = fromClause;
         return result;
+    }
+}
+
+type PagedCollectionSpec = CollectionSpec & {
+    pagedOn: string;
+}
+
+export class PagedCollection extends Collection {
+    pagedOn: string;
+    headers: string[];
+
+    constructor(config: TypeCfg<PagedCollectionSpec>,
+                blueprints: Map<string, any>) {
+        super(config, blueprints);
+        this.pagedOn = config.spec.pagedOn;
+        this.headers = [];
+    }
+
+    configure(configuration: IConfiguration): void {
+        super.configure(configuration);
+        if (!this.entity.v.hasField(this.pagedOn)) {
+            throw new CollectionError(
+                `PagedCollection '${this.name}': entity ` +
+                `'${this.entity.name}' does not have a field called ` +
+                `${this.pagedOn}`);
+        }
+    }
+
+    async query(context: IContext, query?: Query): Promise<IResultSet> {
+        this.headers = [];
+        return await super.query(context, query);
     }
 }
 

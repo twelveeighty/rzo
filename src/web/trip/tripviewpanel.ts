@@ -17,13 +17,17 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { Field, Cfg, Row, ServiceSource } from "../../base/core.js";
+import { Modal } from "bootstrap";
+
+import { Entity, Field, Cfg, Row, ServiceSource } from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
 
 import * as X from "../common.js";
 import { TOASTER } from "../toaster.js";
 
-import { IPanel, BasePanel, PanelData, AttributeJoiner } from "../panel.js";
+import {
+    IPanel, BasePanel, PanelMessage, PanelData, AttributeJoiner, PanelButton
+} from "../panel.js";
 
 export class TripViewPanel extends BasePanel implements IPanel {
     appointmentTsField: Cfg<Field>;
@@ -37,11 +41,18 @@ export class TripViewPanel extends BasePanel implements IPanel {
 
     driverElement: HTMLElement;
 
-    assignBtn: HTMLButtonElement;
-    editBtn: HTMLButtonElement;
+    acceptButton: PanelButton;
+    assignButton: PanelButton;
+    editButton: PanelButton;
     backBtn: HTMLButtonElement;
 
+    confirmModal: Modal;
+    tripAcceptConfirmBtn: HTMLButtonElement;
+
+    driverEntity: Cfg<Entity>;
+    driver: Row | null;
     row: Row | null;
+
     dateFormat: Intl.DateTimeFormat;
     timeFormat: Intl.DateTimeFormat;
 
@@ -57,12 +68,22 @@ export class TripViewPanel extends BasePanel implements IPanel {
 
         this.driverElement = X.p("trip-view-driver-p");
 
-        this.assignBtn = X.btn("trip-view-assign-btn");
-        this.editBtn = X.btn("trip-view-edit-btn");
+        const parentDiv = X.div("trip-view-buttons-div");
+        this.acceptButton = new PanelButton(
+            parentDiv, "trip-view-accept-btn", "Accept ride...");
+        this.assignButton = new PanelButton(
+            parentDiv, "trip-view-assign-btn", "Assign Driver...");
+        this.editButton = new PanelButton(
+            parentDiv, "trip-view-edit-btn", "Edit Trip...");
         this.backBtn = X.btn("trip-view-back-btn");
+
+        this.confirmModal = new Modal(X.div("trip-confirm-accept-div"));
+        this.tripAcceptConfirmBtn = X.btn("trip-accept-confirm-btn");
 
         this.appointmentTsField = new Cfg("appointmentTsField");
 
+        this.driverEntity = new Cfg("driver");
+        this.driver = null;
         this.row = null;
         this.dateFormat = new Intl.DateTimeFormat(
             "en",
@@ -80,22 +101,93 @@ export class TripViewPanel extends BasePanel implements IPanel {
         return "trip-view-panel";
     }
 
+    private async loadDriver(): Promise<void> {
+        const driverId = CONTEXT.session.getSubject("driver");
+        this.driver = await this.service.v.getOne(
+            this.logger, CONTEXT.session, this.driverEntity.v,
+            driverId);
+    }
+
+    private onLogin(): void {
+        this.driver = null;
+        const persona = CONTEXT.session.persona.name;
+        if (persona == "drivers") {
+            this.acceptButton.show();
+            this.assignButton.hide();
+            this.editButton.hide();
+            this.loadDriver();
+        } else if (persona == "planners" || persona == "admins") {
+            this.acceptButton.hide();
+            this.assignButton.show();
+            this.editButton.show();
+        } else {
+            this.acceptButton.hide();
+            this.assignButton.hide();
+            this.editButton.hide();
+        }
+    }
+
+    async onMessage(message: PanelMessage): Promise<void> {
+        if (message == "logged-in") {
+            this.onLogin();
+        }
+    }
+
     initialize(): void {
         super.initialize();
         this.entity.v = RZO.getEntity("trip");
+        this.driverEntity.v = RZO.getEntity("driver");
+
         this.service.v =
             (<ServiceSource>RZO.getSource("db").ensure(ServiceSource)).service;
         this.appointmentTsField.v = RZO.getField("trip.appointmentts");
 
-        this.editBtn.addEventListener("click", (evt) => {
-            this.onEdit(evt);
+        this.acceptButton.initialize((evt) => {
+            this.onAccept(evt);
         });
-        this.assignBtn.addEventListener("click", (evt) => {
+        this.assignButton.initialize((evt) => {
             this.onAssign(evt);
+        });
+        this.editButton.initialize((evt) => {
+            this.onEdit(evt);
         });
         this.backBtn.addEventListener("click", (evt) => {
             this.onBack(evt);
         });
+        this.tripAcceptConfirmBtn.addEventListener("click", (evt) => {
+            this.onAcceptConfirm(evt);
+        });
+    }
+
+    private onAcceptConfirm(evt: Event): void {
+        if (this.row && this.driver) {
+            this.confirmModal.hide();
+            const state = this.entity.v.rowToState(this.row);
+            this.entity.v.setValue(
+                state, "drivernum", this.driver.get("drivernum"),
+                CONTEXT.session)
+            .then(() => {
+                this.entity.v.put(this.service.v, state, CONTEXT.session)
+                .then((row) => {
+                    TOASTER.info(`Saved: ${row.getString("_id")}`);
+                    this.row = row;
+                    this.rowToUI(this.row);
+                })
+                .catch((err) => {
+                    console.error(err);
+                    TOASTER.error(`ERROR: ${err}`);
+                });
+            })
+            .catch((err) => {
+                TOASTER.error(`ERROR: ${err}`);
+            });
+        }
+    }
+
+    private onAccept(evt: Event): void {
+        if (this.row) {
+            this.confirmModal.show();
+        }
     }
 
     private onAssign(evt: Event): void {
@@ -168,6 +260,11 @@ export class TripViewPanel extends BasePanel implements IPanel {
             this.driverElement.innerText = row.getString("drivername");
         } else {
             this.driverElement.innerText = "(none)";
+        }
+
+        const persona = CONTEXT.session.persona.name;
+        if (persona == "drivers") {
+            this.acceptButton.enabled = row.isNull("drivername");
         }
     }
 

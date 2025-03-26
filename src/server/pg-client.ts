@@ -632,7 +632,7 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
             validations.push(
                 this.sessionEntity.v.setValue(
                 session,
-                "subjectMap", serializeSubjectMap(subjectMap),
+                "subjects", serializeSubjectMap(subjectMap),
                 NOCONTEXT)
             );
         }

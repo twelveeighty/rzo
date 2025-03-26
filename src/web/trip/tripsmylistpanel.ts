@@ -26,15 +26,14 @@ import * as X from "../common.js";
 import { TOASTER } from "../toaster.js";
 
 import {
-    IPanel, BasePanel, PanelMessage, PanelData, AttributeJoiner
+    IPanel, BasePanel, PanelData, AttributeJoiner
 } from "../panel.js";
 
-export class TripsListPanel extends BasePanel implements IPanel {
+export class TripsMyListPanel extends BasePanel implements IPanel {
     collection: Cfg<Collection>;
     appointmentTsField: Cfg<Field>;
 
     div: HTMLElement;
-    zones: HTMLSelectElement;
     timeframes: HTMLSelectElement;
     leftBtn: HTMLButtonElement;
     rightBtn: HTMLButtonElement;
@@ -57,14 +56,13 @@ export class TripsListPanel extends BasePanel implements IPanel {
         this.collection = new Cfg("collection");
         this.appointmentTsField = new Cfg("appointmentTsField");
 
-        this.div = X.div("trip-list-div");
-        this.zones = X.sel("trip-search-zone-sel");
-        this.timeframes = X.sel("trip-search-time-sel");
-        this.refreshBtn = X.btn("trip-search-refresh-btn");
-        this.leftBtn = X.btn("trip-search-left-btn");
-        this.rightBtn = X.btn("trip-search-right-btn");
-        this.listDiv = X.div("trip-list-trips-div");
-        this.daterangePre = X.pre("trip-search-daterange-pre");
+        this.div = X.div("trip-my-list-div");
+        this.timeframes = X.sel("trip-my-search-time-sel");
+        this.refreshBtn = X.btn("trip-my-search-refresh-btn");
+        this.leftBtn = X.btn("trip-my-search-left-btn");
+        this.rightBtn = X.btn("trip-my-search-right-btn");
+        this.listDiv = X.div("trip-my-list-trips-div");
+        this.daterangePre = X.pre("trip-my-search-daterange-pre");
 
         this.abortController = null;
         this.dayOfMonthFormat = new Intl.DateTimeFormat(
@@ -86,13 +84,7 @@ export class TripsListPanel extends BasePanel implements IPanel {
     }
 
     get id(): string {
-        return "trips-panel";
-    }
-
-    async onMessage(message: PanelMessage): Promise<void> {
-        if (message == "logged-in") {
-            this.loadZones();
-        }
+        return "my-trips-panel";
     }
 
     initialize(): void {
@@ -100,10 +92,6 @@ export class TripsListPanel extends BasePanel implements IPanel {
         this.appointmentTsField.v = RZO.getField("trip.appointmentts");
         this.service.v =
             (<ServiceSource>RZO.getSource("db").ensure(ServiceSource)).service;
-
-        this.zones.addEventListener("change", (evt) => {
-            this.queryList(this.startDate, this.endDate);
-        });
 
         this.timeframes.addEventListener("change", (evt) => {
             this.onTimeframeChange(evt);
@@ -135,25 +123,6 @@ export class TripsListPanel extends BasePanel implements IPanel {
         return result;
     }
 
-    private loadZones(): void {
-        this.service.v.queryCollection(
-            this.logger, CONTEXT.session, RZO.getCollection("zones"))
-        .then((resultSet) => {
-            while (this.zones.options.length > 1) {
-                this.zones.remove(1);
-            }
-            while (resultSet.next()) {
-                const opt = document.createElement("option");
-                opt.value = resultSet.getString("_id");
-                opt.text = resultSet.getString("zone");
-                this.zones.add(opt);
-            }
-        })
-        .catch((err) => {
-            TOASTER.error(`ERROR: ${err}`);
-        });
-    }
-
     private shiftTimeWindow(numDays: number): Date[] {
         const startDayOfMonth = this.startDate.getDate();
         let newStartDate = new Date(this.startDate);
@@ -181,6 +150,9 @@ export class TripsListPanel extends BasePanel implements IPanel {
                 case "ALL":
                     break;
                 case "DAY":
+                    newDates = this.shiftTimeWindow(direction * 1);
+                    break;
+                case "TWODAYS":
                     newDates = this.shiftTimeWindow(direction * 2);
                     break;
                 case "WEEK":
@@ -200,8 +172,9 @@ export class TripsListPanel extends BasePanel implements IPanel {
                 this.rightBtn.disabled = true;
                 break;
             case "DAY":
+            case "TWODAYS":
             case "WEEK":
-                this.leftBtn.disabled = true;
+                this.leftBtn.disabled = false;
                 this.rightBtn.disabled = false;
                 break;
         }
@@ -244,6 +217,10 @@ export class TripsListPanel extends BasePanel implements IPanel {
                 endDate.setDate(startDayOfMonth + 1);
                 endDate.setHours(23, 23, 23, 23);
                 return endDate;
+            case "TWODAYS":
+                endDate.setDate(startDayOfMonth + 2);
+                endDate.setHours(23, 23, 23, 23);
+                return endDate;
             case "WEEK":
                 endDate.setDate(startDayOfMonth + 6);
                 endDate.setHours(23, 23, 23, 23);
@@ -260,14 +237,11 @@ export class TripsListPanel extends BasePanel implements IPanel {
             }
             const filter = new Filter()
                 .op("appointmentts", ">=", newStartDate.toISOString());
-            const zoneFilter = this.zones.value;
-            if (zoneFilter) {
-                filter.op("zone_id", "=", zoneFilter);
-            }
             if (newEndDate) {
                 filter.op("appointmentts", "<=", newEndDate.toISOString());
             }
-            filter.isNull("drivernum_id");
+            filter.op("drivernum_id", "=",
+                      CONTEXT.session.getSubject("driver"));
             this.startDate = newStartDate;
             this.endDate = newEndDate;
             this.daterangePre.innerText = this.shortDates(
@@ -286,7 +260,7 @@ export class TripsListPanel extends BasePanel implements IPanel {
                     anchor.href = "#";
                     anchor.className =
                         "list-group-item list-group-item-action";
-                    anchor.id = `tpl-${resultSet.getString("_id")}`;
+                    anchor.id = `tpm-${resultSet.getString("_id")}`;
 
                     anchor.addEventListener("click", (evt) => {
                         evt.preventDefault();

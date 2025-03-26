@@ -22,10 +22,11 @@ import { RZO, CONTEXT } from "../../base/configuration.js";
 
 import { TOASTER } from "../toaster.js";
 import * as X from "../common.js";
-import { IPanel, FormPanel, Control, PanelData } from "../panel.js";
+import {
+    IPanel, FormPanel, Control, PanelMessage, PanelData
+} from "../panel.js";
 
 export class RiderEditPanel extends FormPanel implements IPanel {
-
     overrideCheckbox: HTMLInputElement;
     maplinkManual: HTMLInputElement;
     maplinkManualControl: Control;
@@ -86,11 +87,15 @@ export class RiderEditPanel extends FormPanel implements IPanel {
     protected initUI(): void {
         super.initUI();
 
-        this.loadZones();
-
         this.overrideCheckbox.addEventListener("change", (evt) => {
             this.toggleOverride();
         });
+    }
+
+    async onMessage(message: PanelMessage): Promise<void> {
+        if (message == "logged-in") {
+            this.loadZones();
+        }
     }
 
     initialize(): void {

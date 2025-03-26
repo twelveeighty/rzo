@@ -30,9 +30,9 @@
                   "effect": "allow",
                   "where": {
                       "match": "all", "conditions": [
-                          { "attr": "id",
+                          { "attr": "_id",
                             "op": "eq",
-                            "subject": "${my.driver_id}"
+                            "subject": "${my.driver}"
                           }
                       ]
                   }
@@ -45,8 +45,8 @@
                             "op": "isNull"
                           },
                           { "attr": "drivernum_id",
-                            "op": "=",
-                            "subject": "${my.driver_id}"
+                            "op": "eq",
+                            "subject": "${my.driver}"
                           }
                       ]
                   }
@@ -57,7 +57,7 @@
                       "match": "any", "conditions": [
                           { "attr": "drivernum_id",
                             "op": "eq",
-                            "subject": "${my.driver_id}"
+                            "subject": "${my.driver}"
                           },
                           { "attr": "drivernum_id",
                             "op": "isNull"
@@ -96,9 +96,9 @@
                   "effect": "allow",
                   "where": {
                       "match": "all", "conditions": [
-                          { "attr": "id",
+                          { "attr": "_id",
                             "op": "eq",
-                            "subject": "${my.rider_id}"
+                            "subject": "${my.rider}"
                           }
                       ]
                   }
@@ -112,7 +112,7 @@
                       "match": "all", "conditions": [
                           { "attr": "ridernum_id",
                             "op": "eq",
-                            "subject": "${my.rider_id}"
+                            "subject": "${my.rider}"
                           }
                       ]
                   }
@@ -123,7 +123,7 @@
                       "match": "any", "conditions": [
                           { "attr": "ridernum_id",
                             "op": "eq",
-                            "subject": "${my.rider_id}"
+                            "subject": "${my.rider}"
                           },
                           { "attr": "ridernum_id",
                             "op": "isNull"

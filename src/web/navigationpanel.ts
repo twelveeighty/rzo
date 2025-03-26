@@ -25,13 +25,19 @@ import * as X from "./common.js";
 
 import { TOASTER } from "./toaster.js";
 
-import { PanelController, IPanel, PanelData, PanelMessage } from "./panel.js";
+import {
+    PanelController, IPanel, PanelData, PanelMessage, NavMenuItem
+} from "./panel.js";
 
 export class NavigationPanel implements IPanel {
-    navTrips: HTMLAnchorElement;
-    navRiders: HTMLAnchorElement;
-    navDrivers: HTMLAnchorElement;
     navLogout: HTMLAnchorElement;
+
+    myTripsMenu: NavMenuItem;
+    tripsMenu: NavMenuItem;
+    ridersMenu: NavMenuItem;
+    driversMenu: NavMenuItem;
+
+    welcomeHeading: HTMLElement;
     controller?: PanelController;
     authenticator: Cfg<IAuthenticator>;
     loggedIn: boolean;
@@ -39,12 +45,25 @@ export class NavigationPanel implements IPanel {
 
     constructor() {
         this.logger = new Logger("client");
-        this.navTrips = X.a("nav-trips-a");
-        this.navRiders = X.a("nav-riders-a");
-        this.navDrivers = X.a("nav-drivers-a");
+        const navList = X.ul("nav-list-ul");
+        this.myTripsMenu = new NavMenuItem(
+            navList, "nav-my-trips-a", "My Trips");
+        this.tripsMenu = new NavMenuItem(navList, "nav-trips-a", "Open Trips");
+        this.ridersMenu = new NavMenuItem(navList, "nav-riders-a", "Riders");
+        this.driversMenu = new NavMenuItem(
+            navList, "nav-drivers-a", "Drivers");
         this.navLogout = X.a("nav-logout-a");
+        this.welcomeHeading = X.heading("welcome-heading");
         this.authenticator = new Cfg("auth");
         this.loggedIn = false;
+    }
+
+    private onMyTrips(evt: Event): void {
+        if (this.loggedIn) {
+            this.controller!.show("my-trips-panel");
+        } else {
+            TOASTER.error("You must log in first.");
+        }
     }
 
     private onTrips(evt: Event): void {
@@ -76,6 +95,11 @@ export class NavigationPanel implements IPanel {
             this.authenticator.v.logout(this.logger, CONTEXT.session)
             .then(() => {
                 CONTEXT.reset();
+                this.myTripsMenu.hide();
+                this.tripsMenu.hide();
+                this.ridersMenu.hide();
+                this.driversMenu.hide();
+                this.welcomeHeading.innerText = "Drive";
                 this.controller!.broadcast("logged-out");
                 this.controller!.show("login-panel");
             })
@@ -88,6 +112,20 @@ export class NavigationPanel implements IPanel {
         }
     }
 
+    private onLogin(): void {
+        this.loggedIn = true;
+        const persona = CONTEXT.session.persona.name;
+        if (persona == "drivers") {
+            this.myTripsMenu.show();
+            this.tripsMenu.show();
+        }
+        if (persona == "planners" || persona == "admins") {
+            this.tripsMenu.show();
+            this.ridersMenu.show();
+            this.driversMenu.show();
+        }
+    }
+
     get id(): string {
         return "nav-panel";
     }
@@ -96,15 +134,19 @@ export class NavigationPanel implements IPanel {
         this.logger.configure(RZO);
         this.authenticator.v = RZO.getAuthenticator("auth").service;
 
-        this.navTrips.addEventListener("click", (evt) => {
+        this.myTripsMenu.initialize((evt) => {
+            evt.preventDefault();
+            this.onMyTrips(evt);
+        });
+        this.tripsMenu.initialize((evt) => {
             evt.preventDefault();
             this.onTrips(evt);
         });
-        this.navRiders.addEventListener("click", (evt) => {
+        this.ridersMenu.initialize((evt) => {
             evt.preventDefault();
             this.onRiders(evt);
         });
-        this.navDrivers.addEventListener("click", (evt) => {
+        this.driversMenu.initialize((evt) => {
             evt.preventDefault();
             this.onDrivers(evt);
         });
@@ -132,7 +174,7 @@ export class NavigationPanel implements IPanel {
 
     async onMessage(message: PanelMessage): Promise<void> {
         if (message == "logged-in") {
-            this.loggedIn = true;
+            this.onLogin();
         } else if (message == "logged-out") {
             this.loggedIn = false;
         }

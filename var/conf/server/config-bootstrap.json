@@ -1,6 +1,21 @@
 [
     {
         "apiVersion": "v1",
+        "kind": "Worker",
+        "metadata": {
+            "name": "pgconnection"
+        },
+        "spec": {
+            "type": "server.pg-client.PgConnection",
+            "connectionTimeoutMillis": 0,
+            "idleTimeoutMillis": 10000,
+            "max": 10,
+            "allowExitOnIdle": false,
+            "pageSize": 100
+        }
+    },
+    {
+        "apiVersion": "v1",
         "kind": "Source",
         "metadata": {
             "name": "db"
@@ -8,7 +23,7 @@
         "spec": {
             "type": "server.pg-client.PgClientSource",
             "leaderElector": "leaderelector",
-            "pageSize": 100
+            "pool": "pgconnection"
         }
     },
     {

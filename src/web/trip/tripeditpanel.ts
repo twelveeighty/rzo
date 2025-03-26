@@ -23,7 +23,7 @@ import { RZO, CONTEXT } from "../../base/configuration.js";
 import { TOASTER } from "../toaster.js";
 import * as X from "../common.js";
 import {
-    IPanel, FormPanel, Control, LocalDateControl, PanelData
+    IPanel, FormPanel, Control, LocalDateControl, PanelMessage, PanelData
 } from "../panel.js";
 
 export class TripEditPanel extends FormPanel implements IPanel {
@@ -107,14 +107,18 @@ export class TripEditPanel extends FormPanel implements IPanel {
     protected initUI(): void {
         super.initUI();
 
-        this.loadZones();
-
         this.ooverrideCheckbox.addEventListener("change", (evt) => {
             this.toggleOriginOverride();
         });
         this.doverrideCheckbox.addEventListener("change", (evt) => {
             this.toggleDestOverride();
         });
+    }
+
+    async onMessage(message: PanelMessage): Promise<void> {
+        if (message == "logged-in") {
+            this.loadZones();
+        }
     }
 
     initialize(): void {

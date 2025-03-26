@@ -255,8 +255,8 @@
                 { "name": "server/restserver", "level": "Info" },
                 { "name": "adapter", "level": "Info" },
                 { "name": "adapter/replicationadapter", "level": "Info" },
-                { "name": "adapter/entityadapter", "level": "Debug" },
-                { "name": "adapter/attachadapter", "level": "Debug" }
+                { "name": "adapter/entityadapter", "level": "Info" },
+                { "name": "adapter/attachadapter", "level": "Info" }
             ]
         }
     }

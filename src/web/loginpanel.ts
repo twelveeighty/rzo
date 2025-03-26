@@ -141,6 +141,7 @@ export class OneTimeLoginPanel extends BasePanel implements IPanel {
 export class PasswordResetPanel extends BasePanel implements IPanel {
     div: HTMLElement;
     form: HTMLFormElement;
+    goBackBtn: HTMLButtonElement;
     userTxt: HTMLInputElement;
     authenticator: Cfg<IAuthenticator>;
 
@@ -150,6 +151,7 @@ export class PasswordResetPanel extends BasePanel implements IPanel {
         this.div = X.div("password-reset-div");
         this.form = X.form("password-reset-form");
         this.userTxt = X.txt("password-reset-user-txt");
+        this.goBackBtn = X.btn("password-reset-back-btn");
     }
 
     get id(): string {
@@ -165,6 +167,13 @@ export class PasswordResetPanel extends BasePanel implements IPanel {
             evt.preventDefault();
             this.onSubmit(evt);
         });
+        this.goBackBtn.addEventListener("click", (evt) => {
+            this.onBack(evt);
+        });
+    }
+
+    private onBack(evt: Event): void {
+        this.controller.v.show("login-panel");
     }
 
     private onSubmit(evt: Event): void {
@@ -191,8 +200,6 @@ export class PasswordResetPanel extends BasePanel implements IPanel {
 }
 
 export class LoginPanel extends BasePanel implements IPanel {
-    onSubmitInitPanels: IPanel[];
-
     form: HTMLFormElement;
     welcomeHeading: HTMLElement;
     loginDiv: HTMLElement;
@@ -217,16 +224,11 @@ export class LoginPanel extends BasePanel implements IPanel {
         this.personCheckPath = X.path("person-check-path");
         this.passwordResetBtn = X.btn("login-reset-btn");
 
-        this.onSubmitInitPanels = [];
         this.authenticator = new Cfg("auth");
     }
 
     get id(): string {
         return "login-panel";
-    }
-
-    addSubmitInitPanel(panel: IPanel) {
-        this.onSubmitInitPanels.push(panel);
     }
 
     initialize(): void {
@@ -263,10 +265,6 @@ export class LoginPanel extends BasePanel implements IPanel {
             .then((session) => {
                 CONTEXT.session = session;
                 this.welcomeHeading.innerText = targetUsername;
-                // Initialize panels that required a login
-                for (const panel of this.onSubmitInitPanels) {
-                    panel.initialize();
-                }
 
                 // Broadcast the "logged-in" message
                 this.controller.v.broadcast("logged-in");

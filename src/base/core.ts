@@ -1029,7 +1029,7 @@ class CoreColumns {
 
     static V_NAMES = ["_id", "_rev", "_att"];
 
-    static addToEntity(columns: string[]): string[] {
+    static addTo(columns: string[]): string[] {
         // Prevent duplicates of already existing core columns
         return columns.filter(
             (column) => !CoreColumns.V_NAMES.includes(column)
@@ -3112,7 +3112,7 @@ export class Collection {
         if (Query.isSelectStar(config.spec.fields)) {
             this.fields = config.spec.fields;
         } else {
-            this.fields = CoreColumns.addToEntity(config.spec.fields);
+            this.fields = CoreColumns.addTo(config.spec.fields);
         }
         this.orderBy = config.spec.orderBy || [];
         this.logger = new Logger(`collection/${this.name}`);

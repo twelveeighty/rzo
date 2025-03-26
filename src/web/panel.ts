@@ -90,6 +90,120 @@ export class AttributeJoiner {
     }
 }
 
+export class NavMenuItem {
+    parent: HTMLUListElement;
+    title: string;
+    id: string;
+    listener: EventListener | null;
+    li: HTMLLIElement | null;
+    anchor: HTMLAnchorElement | null;
+
+    constructor(parent: HTMLUListElement, id: string, title: string) {
+        this.parent = parent;
+        this.id = id;
+        this.title = title;
+        this.listener = null;
+        this.li = null;
+        this.anchor = null;
+    }
+
+    initialize(listener: EventListener): void {
+        this.listener = listener;
+    }
+
+    set enabled(value: boolean) {
+        if (this.anchor) {
+            if (value) {
+                this.anchor.classList.remove("disabled");
+                this.anchor.ariaDisabled = "false";
+            } else {
+                this.anchor.classList.add("disabled");
+                this.anchor.ariaDisabled = "true";
+            }
+        }
+    }
+
+    show(): void {
+        if (!this.li && !this.anchor) {
+            this.li = document.createElement("li") as HTMLLIElement;
+            this.li.className = "nav-item";
+
+            this.anchor = document.createElement("a") as HTMLAnchorElement;
+            this.anchor.id = this.id;
+            this.anchor.className = "nav-link";
+            this.anchor.ariaDisabled = "false";
+            this.anchor.href = "#";
+            this.anchor.innerHTML = this.title;
+
+            if (this.listener) {
+                this.anchor.addEventListener("click", this.listener, false);
+            }
+            this.li.appendChild(this.anchor);
+            this.parent.appendChild(this.li);
+        }
+    }
+
+    hide(): void {
+        if (this.li && this.anchor) {
+            if (this.listener) {
+                this.anchor.removeEventListener("click", this.listener, false);
+            }
+            this.li.removeChild(this.anchor);
+            this.anchor = null;
+            this.parent.removeChild(this.li);
+            this.li = null;
+        }
+    }
+}
+
+export class PanelButton {
+    parent: HTMLElement;
+    title: string;
+    id: string;
+    listener: EventListener | null;
+    btn: HTMLButtonElement | null;
+
+    constructor(parent: HTMLElement, id: string, title: string) {
+        this.parent = parent;
+        this.id = id;
+        this.title = title;
+        this.listener = null;
+        this.btn = null;
+    }
+
+    initialize(listener: EventListener): void {
+        this.listener = listener;
+    }
+
+    set enabled(value: boolean) {
+        if (this.btn) {
+            this.btn.disabled = !value;
+        }
+    }
+
+    show(): void {
+        this.btn = document.createElement("button") as HTMLButtonElement;
+        this.btn.id = this.id;
+        this.btn.type = "button";
+        this.btn.className = "btn btn-primary";
+        this.btn.innerHTML = this.title;
+        if (this.listener) {
+            this.btn.addEventListener("click", this.listener, false);
+        }
+        this.parent.appendChild(this.btn);
+    }
+
+    hide(): void {
+        if (this.btn) {
+            if (this.listener) {
+                this.btn.removeEventListener("click", this.listener, false);
+            }
+            this.parent.removeChild(this.btn);
+            this.btn = null;
+        }
+    }
+}
+
 export class BasePanel {
     entity: Cfg<Entity>;
     service: Cfg<IService>;
@@ -389,9 +503,16 @@ export class PanelController {
         this.panels = new Map();
     }
 
-    add(panel: IPanel): void {
+    add(panel: IPanel): IPanel {
         panel.register(this);
         this.panels.set(panel.id, panel);
+        return panel;
+    }
+
+    initialize(): void {
+        for (const panel of this.panels.values()) {
+            panel.initialize();
+        }
     }
 
     get(id?: string): IPanel {

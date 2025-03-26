@@ -182,6 +182,15 @@ export function sel(id: string): HTMLSelectElement {
     }
 }
 
+export function ul(id: string): HTMLUListElement {
+    const element = checkElement("ul", id);
+    if (element instanceof HTMLUListElement) {
+        return element as HTMLUListElement;
+    } else {
+        throw new Error(`Element ${id} is not an HTMLUListElement`);
+    }
+}
+
 export function heading(id: string): HTMLElement {
     const element = checkElement("heading", id);
     return element as HTMLElement;

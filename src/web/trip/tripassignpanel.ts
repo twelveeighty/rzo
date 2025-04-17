@@ -101,9 +101,9 @@ export class TripAssignPanel extends BasePanel implements IPanel {
     private onUnassign(evt: Event): void {
         if (this.state && this.row) {
             const trip_id = this.row.getString("_id");
-            this.drivernumField.v.setValue(this.state, null, CONTEXT.session)
+            this.drivernumField.v.setValue(this.state, null, CONTEXT.c)
             .then(() => {
-                this.entity.v.put(this.service.v, this.state!, CONTEXT.session)
+                this.entity.v.put(this.service.v, this.state!, CONTEXT.c)
                 .then((row) => {
                     this.controller.v.pop(new PanelData("string", trip_id));
                 })
@@ -124,10 +124,10 @@ export class TripAssignPanel extends BasePanel implements IPanel {
             if (this.state && this.row) {
                 const trip_id = this.row.getString("_id");
                 this.drivernumField.v.setValue(
-                    this.state, driver_num, CONTEXT.session)
+                    this.state, driver_num, CONTEXT.c)
                 .then(() => {
                     this.entity.v.put(
-                        this.service.v, this.state!, CONTEXT.session)
+                        this.service.v, this.state!, CONTEXT.c)
                     .then((row) => {
                         this.controller.v.pop(new PanelData("string", trip_id));
                     })
@@ -152,7 +152,7 @@ export class TripAssignPanel extends BasePanel implements IPanel {
                 [],
                 new Filter().op("status", "=", "ACTIVE")
             );
-            this.collection.v.query(CONTEXT.session, query)
+            this.collection.v.query(CONTEXT.c, query)
             .then((resultSet) => {
                 this.abortController = new AbortController();
                 this.driversDiv.innerHTML = "";
@@ -237,8 +237,8 @@ export class TripAssignPanel extends BasePanel implements IPanel {
     }
 
     async show(panelData?: PanelData): Promise<void> {
-        if (panelData && panelData.dataType == "Row") {
-            this.row = panelData.row;
+        if (PanelData.typeOf(panelData) == "Row") {
+            this.row = PanelData.rowOf(panelData);
         }
         if (this.row) {
             this.state = new State(this.entity.v, this.row.core);

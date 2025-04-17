@@ -26,6 +26,8 @@ import * as X from "../common.js";
 import { TOASTER } from "../toaster.js";
 
 import { IPanel, BasePanel, PanelData } from "../panel.js";
+import { TripList } from "../trip/triplist.js";
+
 
 export class RiderViewPanel extends BasePanel implements IPanel {
     tripEntity: Cfg<Entity>;
@@ -41,14 +43,12 @@ export class RiderViewPanel extends BasePanel implements IPanel {
     commentsDiv: HTMLElement;
     tripInfoHeading: HTMLElement;
     tripInfoDiv: HTMLElement;
-    tripsDivElement: HTMLElement;
     createBtn: HTMLButtonElement;
     editBtn: HTMLButtonElement;
+    tripList: TripList;
 
-    abortController: AbortController | null;
     state: State | null;
     dateTimeFormat: Intl.DateTimeFormat;
-
 
     constructor() {
         super();
@@ -61,7 +61,9 @@ export class RiderViewPanel extends BasePanel implements IPanel {
         this.commentsDiv = X.div("rider-view-comments-div");
         this.tripInfoHeading = X.heading("rider-view-tripinfo-heading");
         this.tripInfoDiv = X.div("rider-view-tripinfo-div");
-        this.tripsDivElement = X.div("rider-view-trips-div");
+
+        this.tripList = new TripList(X.div("rider-view-trips-div"), "vtl");
+
         this.createBtn = X.btn("rider-view-create-btn");
         this.editBtn = X.btn("rider-view-edit-btn");
 
@@ -71,7 +73,6 @@ export class RiderViewPanel extends BasePanel implements IPanel {
         this.appointmentTsField = new Cfg("appointmentTsField");
 
         this.state = null;
-        this.abortController = null;
 
         this.dateTimeFormat = new Intl.DateTimeFormat(
             "en",
@@ -99,15 +100,20 @@ export class RiderViewPanel extends BasePanel implements IPanel {
         this.editBtn.addEventListener("click", (evt) => {
             this.onEdit(evt);
         });
+
+        this.tripList.initialize((evt) => {
+            evt.preventDefault();
+            this.onAnchorClick(evt);
+        });
     }
 
     private onCreateTrip(evt: Event): void {
         if (this.state) {
             const ridernum = this.state.value("ridernum");
-            this.tripEntity.v.create(CONTEXT.session, this.service.v)
+            this.tripEntity.v.create(CONTEXT.c, this.service.v)
             .then((newTrip) => {
                 this.tripRidernumField.v.setValue(
-                    newTrip, ridernum, CONTEXT.session)
+                    newTrip, ridernum, CONTEXT.c)
                 .then(() => {
                     this.controller.v.stack(
                         "trip-edit-panel", new PanelData("State", newTrip));
@@ -144,74 +150,23 @@ export class RiderViewPanel extends BasePanel implements IPanel {
             return;
         }
         try {
-            if (this.abortController !== null) {
-                this.abortController.abort();
-                this.abortController = null;
-            }
             const query = new Query(
                 [],
                 new Filter().op(
                     "ridernum_id", "=", this.state.id),
                 [ { field: "appointmentts", order: "desc" } ]
             );
-            this.tripsCollection.v.query(CONTEXT.session, query)
+            this.tripsCollection.v.query(CONTEXT.c, query)
             .then((resultSet) => {
-                this.abortController = new AbortController();
-                this.tripsDivElement.innerHTML = "";
-                while (resultSet.next()) {
-                    const anchor = document.createElement("a");
-                    anchor.href = "#";
-                    anchor.className =
-                        "list-group-item list-group-item-action";
-                    anchor.id = `vtl-${resultSet.getString("_id")}`;
-
-                    anchor.addEventListener("click", (evt) => {
-                        evt.preventDefault();
-                        this.onAnchorClick(evt);
-                    },
-                    { signal: this.abortController.signal }
-                    );
-
-                    this.tripsDivElement.appendChild(anchor);
-
-                    const headingDiv = document.createElement("div");
-                    headingDiv.className =
-                        "d-flex w-100 justify-content-between";
-
-                    anchor.appendChild(headingDiv);
-
-                    const heading5 = document.createElement("h5");
-                    heading5.className = "mb-1";
-                    heading5.innerText =
-                        `${resultSet.getString("description")}`;
-
-                    const statusSmall = document.createElement("small");
-                    const appointmentts = this.dateTimeFormat.format(
-                        this.appointmentTsField.v.transform(
-                            resultSet.get("appointmentts")));
-                    // statusSmall.innerText = resultSet.getString("status");
-                    statusSmall.innerText = appointmentts;
-
-                    headingDiv.appendChild(heading5);
-                    headingDiv.appendChild(statusSmall);
-
-                    const para = document.createElement("p");
-                    para.className = "mb-1";
-                    para.innerText = resultSet.getString("daddress1");
-
-                    anchor.appendChild(para);
-
-                    const regionSmall = document.createElement("small");
-                    regionSmall.innerText = resultSet.getString("zone");
-
-                    anchor.appendChild(regionSmall);
-                }
+                this.tripList.render(resultSet);
             })
             .catch((err) => {
+                console.error(err);
                 TOASTER.error(`ERROR: ${err}`);
             });
         } catch (err) {
             console.error(err);
+            TOASTER.error(`ERROR: ${err}`);
         }
     }
 
@@ -267,13 +222,13 @@ export class RiderViewPanel extends BasePanel implements IPanel {
     }
 
     async show(panelData?: PanelData): Promise<void> {
-        if (panelData && panelData.dataType == "Row") {
-            this.state = this.entity.v.rowToState(panelData.row);
+        if (PanelData.typeOf(panelData) == "Row") {
+            this.state = this.entity.v.rowToState(PanelData.rowOf(panelData));
             this.stateToUI(this.state);
             this.div.hidden = false;
-        } else if (panelData) {
+        } else if (PanelData.typeOf(panelData) == "string") {
             this.entity.v.load(
-                this.service.v, CONTEXT.session, panelData.asString)
+                this.service.v, CONTEXT.c, PanelData.stringOf(panelData))
             .then((state) => {
                 this.state = state;
                 this.stateToUI(this.state);
@@ -282,8 +237,10 @@ export class RiderViewPanel extends BasePanel implements IPanel {
             .catch((err) => {
                 TOASTER.error(`ERROR: ${err}`);
             });
-        } else if (this.state) {
+        } else if (!PanelData.isParam("NoRefresh", panelData) && this.state) {
             this.stateToUI(this.state);
+            this.div.hidden = false;
+        } else {
             this.div.hidden = false;
         }
     }

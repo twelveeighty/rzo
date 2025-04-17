@@ -26,8 +26,10 @@ import * as X from "../common.js";
 import { TOASTER } from "../toaster.js";
 
 import {
-    IPanel, BasePanel, PanelMessage, PanelData, AttributeJoiner
+    IPanel, BasePanel, PanelMessage, PanelData
 } from "../panel.js";
+import { TripList } from "./triplist.js";
+
 
 export class TripsListPanel extends BasePanel implements IPanel {
     collection: Cfg<Collection>;
@@ -39,14 +41,11 @@ export class TripsListPanel extends BasePanel implements IPanel {
     leftBtn: HTMLButtonElement;
     rightBtn: HTMLButtonElement;
     refreshBtn: HTMLButtonElement;
-    listDiv: HTMLElement;
     daterangePre: HTMLPreElement;
 
-    abortController: AbortController | null;
+    tripList: TripList;
     dayOfMonthFormat: Intl.DateTimeFormat;
     monthFormat: Intl.DateTimeFormat;
-    dateFormat: Intl.DateTimeFormat;
-    timeFormat: Intl.DateTimeFormat;
 
     startDate: Date;
     endDate: Date | null;
@@ -63,24 +62,14 @@ export class TripsListPanel extends BasePanel implements IPanel {
         this.refreshBtn = X.btn("trip-search-refresh-btn");
         this.leftBtn = X.btn("trip-search-left-btn");
         this.rightBtn = X.btn("trip-search-right-btn");
-        this.listDiv = X.div("trip-list-trips-div");
         this.daterangePre = X.pre("trip-search-daterange-pre");
 
-        this.abortController = null;
+        this.tripList = new TripList(X.div("trip-list-trips-div"), "tpl");
+
         this.dayOfMonthFormat = new Intl.DateTimeFormat(
             "en", { day: "2-digit", formatMatcher: "basic" });
         this.monthFormat = new Intl.DateTimeFormat(
             "en", { month: "short", formatMatcher: "basic" });
-        this.dateFormat = new Intl.DateTimeFormat(
-            "en",
-            { hour12: true, hourCycle: "h12", weekday: "short", month: "short",
-              day: "2-digit", formatMatcher: "basic" }
-        );
-        this.timeFormat = new Intl.DateTimeFormat(
-            "en",
-            { hour12: true, hourCycle: "h12", hour: "numeric",
-              minute: "2-digit", formatMatcher: "basic" }
-        );
         this.startDate = new Date();
         this.endDate = null;
     }
@@ -122,6 +111,11 @@ export class TripsListPanel extends BasePanel implements IPanel {
         this.rightBtn.addEventListener("click", (evt) => {
             this.onRight(evt);
         });
+
+        this.tripList.initialize((evt) => {
+            evt.preventDefault();
+            this.onAnchorClick(evt);
+        });
     }
 
     private shortDates(date1: Date, date2: Date | null): string {
@@ -137,7 +131,7 @@ export class TripsListPanel extends BasePanel implements IPanel {
 
     private loadZones(): void {
         this.service.v.queryCollection(
-            this.logger, CONTEXT.session, RZO.getCollection("zones"))
+            this.logger, CONTEXT.c, RZO.getCollection("zones"))
         .then((resultSet) => {
             while (this.zones.options.length > 1) {
                 this.zones.remove(1);
@@ -242,11 +236,11 @@ export class TripsListPanel extends BasePanel implements IPanel {
                 break;
             case "DAY":
                 endDate.setDate(startDayOfMonth + 1);
-                endDate.setHours(23, 23, 23, 23);
+                endDate.setHours(23, 59, 59);
                 return endDate;
             case "WEEK":
                 endDate.setDate(startDayOfMonth + 6);
-                endDate.setHours(23, 23, 23, 23);
+                endDate.setHours(23, 59, 59);
                 return endDate;
         }
         return null;
@@ -254,10 +248,6 @@ export class TripsListPanel extends BasePanel implements IPanel {
 
     private queryList(newStartDate: Date, newEndDate: Date | null): void {
         try {
-            if (this.abortController !== null) {
-                this.abortController.abort();
-                this.abortController = null;
-            }
             const filter = new Filter()
                 .op("appointmentts", ">=", newStartDate.toISOString());
             const zoneFilter = this.zones.value;
@@ -277,74 +267,9 @@ export class TripsListPanel extends BasePanel implements IPanel {
                 filter,
                 [{field: "appointmentts", order: "asc"}]
             );
-            this.collection.v.query(CONTEXT.session, query)
+            this.collection.v.query(CONTEXT.c, query)
             .then((resultSet) => {
-                this.abortController = new AbortController();
-                this.listDiv.innerHTML = "";
-                while (resultSet.next()) {
-                    const anchor = document.createElement("a");
-                    anchor.href = "#";
-                    anchor.className =
-                        "list-group-item list-group-item-action";
-                    anchor.id = `tpl-${resultSet.getString("_id")}`;
-
-                    anchor.addEventListener("click", (evt) => {
-                        evt.preventDefault();
-                        this.onAnchorClick(evt);
-                    },
-                    { signal: this.abortController.signal }
-                    );
-
-                    this.listDiv.appendChild(anchor);
-
-                    const headingDiv = document.createElement("div");
-                    headingDiv.className =
-                        "d-flex w-100 justify-content-between";
-
-                    anchor.appendChild(headingDiv);
-
-                    const heading5 = document.createElement("h5");
-                    heading5.className = "mb-1";
-                    heading5.innerText =
-                        `${resultSet.getString("ridername")} - ` +
-                        `${resultSet.getString("description")}`;
-
-                    const appointmentts =
-                        this.appointmentTsField.v.transform(
-                            resultSet.get("appointmentts"));
-                    const returnts = resultSet.get("returnts") ?
-                            this.appointmentTsField.v.transform(
-                                resultSet.get("returnts")) :
-                            null;
-
-                    const appointmentDateTime =
-                        `${this.dateFormat.format(appointmentts)} ` +
-                        `${this.timeFormat.format(appointmentts)}`;
-                    const returnTime = returnts ?
-                        ` - ${this.timeFormat.format(returnts)}` : "";
-
-                    const statusSmall = document.createElement("small");
-                    statusSmall.innerText =
-                        `${resultSet.get("triptype")} - ` +
-                        `${appointmentDateTime}${returnTime}`;
-
-                    headingDiv.appendChild(heading5);
-                    headingDiv.appendChild(statusSmall);
-
-                    const para = document.createElement("p");
-                    para.className = "mb-1";
-                    para.innerText = new AttributeJoiner().
-                        add("", resultSet.getString("daddress1")).
-                        add("", resultSet.getString("comments")).
-                        toText();
-
-                    anchor.appendChild(para);
-
-                    const regionSmall = document.createElement("small");
-                    regionSmall.innerText = resultSet.getString("zone");
-
-                    anchor.appendChild(regionSmall);
-                }
+                this.tripList.render(resultSet);
             })
             .catch((err) => {
                 console.error(err);
@@ -352,15 +277,24 @@ export class TripsListPanel extends BasePanel implements IPanel {
             });
         } catch (err) {
             console.error(err);
+            TOASTER.error(`ERROR: ${err}`);
         }
     }
 
     async show(panelData?: PanelData): Promise<void> {
+        const nav = X.a("nav-trips-a");
+        nav.classList.add("active");
+        nav.ariaCurrent = "page";
         this.div.hidden = false;
-        this.onRefresh();
+        if (!PanelData.isParam("NoRefresh", panelData)) {
+            this.onRefresh();
+        }
     }
 
     hide(): void {
+        const nav = X.a("nav-trips-a");
+        nav.classList.remove("active");
+        nav.ariaCurrent = "false";
         this.div.hidden = true;
     }
 

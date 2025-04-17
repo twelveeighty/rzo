@@ -26,8 +26,11 @@ import * as X from "../common.js";
 import { TOASTER } from "../toaster.js";
 
 import {
-    IPanel, BasePanel, PanelData, AttributeJoiner
+    IPanel, BasePanel, PanelData
 } from "../panel.js";
+
+import { TripList } from "./triplist.js";
+
 
 export class TripsMyListPanel extends BasePanel implements IPanel {
     collection: Cfg<Collection>;
@@ -38,14 +41,12 @@ export class TripsMyListPanel extends BasePanel implements IPanel {
     leftBtn: HTMLButtonElement;
     rightBtn: HTMLButtonElement;
     refreshBtn: HTMLButtonElement;
-    listDiv: HTMLElement;
     daterangePre: HTMLPreElement;
 
-    abortController: AbortController | null;
+    tripList: TripList;
+
     dayOfMonthFormat: Intl.DateTimeFormat;
     monthFormat: Intl.DateTimeFormat;
-    dateFormat: Intl.DateTimeFormat;
-    timeFormat: Intl.DateTimeFormat;
 
     startDate: Date;
     endDate: Date | null;
@@ -61,24 +62,14 @@ export class TripsMyListPanel extends BasePanel implements IPanel {
         this.refreshBtn = X.btn("trip-my-search-refresh-btn");
         this.leftBtn = X.btn("trip-my-search-left-btn");
         this.rightBtn = X.btn("trip-my-search-right-btn");
-        this.listDiv = X.div("trip-my-list-trips-div");
         this.daterangePre = X.pre("trip-my-search-daterange-pre");
 
-        this.abortController = null;
+        this.tripList = new TripList(X.div("trip-my-list-trips-div"), "tpm");
+
         this.dayOfMonthFormat = new Intl.DateTimeFormat(
             "en", { day: "2-digit", formatMatcher: "basic" });
         this.monthFormat = new Intl.DateTimeFormat(
             "en", { month: "short", formatMatcher: "basic" });
-        this.dateFormat = new Intl.DateTimeFormat(
-            "en",
-            { hour12: true, hourCycle: "h12", weekday: "short", month: "short",
-              day: "2-digit", formatMatcher: "basic" }
-        );
-        this.timeFormat = new Intl.DateTimeFormat(
-            "en",
-            { hour12: true, hourCycle: "h12", hour: "numeric",
-              minute: "2-digit", formatMatcher: "basic" }
-        );
         this.startDate = new Date();
         this.endDate = null;
     }
@@ -101,8 +92,6 @@ export class TripsMyListPanel extends BasePanel implements IPanel {
             this.onRefresh();
         });
 
-        this.leftBtn.disabled = true;
-
         this.leftBtn.addEventListener("click", (evt) => {
             this.onLeft(evt);
         });
@@ -110,11 +99,16 @@ export class TripsMyListPanel extends BasePanel implements IPanel {
         this.rightBtn.addEventListener("click", (evt) => {
             this.onRight(evt);
         });
+
+        this.tripList.initialize((evt) => {
+            evt.preventDefault();
+            this.onAnchorClick(evt);
+        });
     }
 
-    private shortDates(date1: Date, date2: Date | null): string {
-        let result = `${this.dayOfMonthFormat.format(date1)} ` +
-               `${this.monthFormat.format(date1)} -`;
+    private shortDates(date1: Date | null, date2: Date | null): string {
+        let result = date1 ? `${this.dayOfMonthFormat.format(date1)} ` +
+               `${this.monthFormat.format(date1)} -` : "All";
         if (date2) {
             result =
                 `${result} ${this.dayOfMonthFormat.format(date2)} ` +
@@ -127,13 +121,6 @@ export class TripsMyListPanel extends BasePanel implements IPanel {
         const startDayOfMonth = this.startDate.getDate();
         let newStartDate = new Date(this.startDate);
         newStartDate.setDate(startDayOfMonth + numDays);
-        const now = new Date();
-        if (newStartDate.valueOf() < now.valueOf()) {
-            newStartDate = now;
-            this.leftBtn.disabled = true;
-        } else if (this.leftBtn.disabled) {
-            this.leftBtn.disabled = false;
-        }
         const newEndDate = this.applyTimeframe(newStartDate);
         if (newEndDate) {
             return [newStartDate, newEndDate];
@@ -143,12 +130,10 @@ export class TripsMyListPanel extends BasePanel implements IPanel {
     }
 
     private shiftBy(direction: number): void {
-        if (this.startDate && this.endDate) {
-            const selTimeframe = this.timeframes.value;
+        const selTimeframe = this.timeframes.value;
+        if (this.endDate && selTimeframe != "ALL") {
             let newDates: Date[] = [];
             switch (selTimeframe) {
-                case "ALL":
-                    break;
                 case "DAY":
                     newDates = this.shiftTimeWindow(direction * 1);
                     break;
@@ -192,7 +177,7 @@ export class TripsMyListPanel extends BasePanel implements IPanel {
     private onRefresh(): void {
         const now = new Date();
         const endDate = this.applyTimeframe(now);
-        this.queryList(now, endDate);
+        this.queryList(endDate ? now : null, endDate);
     }
 
     private onAnchorClick(evt: Event): void {
@@ -207,12 +192,13 @@ export class TripsMyListPanel extends BasePanel implements IPanel {
 
     private applyTimeframe(fromDate: Date): Date | null {
         const selTimeframe = this.timeframes.value;
+        if (selTimeframe == "ALL") {
+            return null;
+        }
         fromDate.setHours(0, 0, 0, 0);
         const endDate = new Date(fromDate);
         const startDayOfMonth = fromDate.getDate();
         switch (selTimeframe) {
-            case "ALL":
-                break;
             case "DAY":
                 endDate.setDate(startDayOfMonth + 1);
                 endDate.setHours(23, 23, 23, 23);
@@ -225,24 +211,25 @@ export class TripsMyListPanel extends BasePanel implements IPanel {
                 endDate.setDate(startDayOfMonth + 6);
                 endDate.setHours(23, 23, 23, 23);
                 return endDate;
+            default:
+                return null;
         }
-        return null;
     }
 
-    private queryList(newStartDate: Date, newEndDate: Date | null): void {
+    private queryList(newStartDate: Date | null,
+                      newEndDate: Date | null): void {
         try {
-            if (this.abortController !== null) {
-                this.abortController.abort();
-                this.abortController = null;
+            const filter = new Filter();
+            if (newStartDate) {
+                filter.op("appointmentts", ">=", newStartDate.toISOString());
             }
-            const filter = new Filter()
-                .op("appointmentts", ">=", newStartDate.toISOString());
             if (newEndDate) {
                 filter.op("appointmentts", "<=", newEndDate.toISOString());
             }
-            filter.op("drivernum_id", "=",
-                      CONTEXT.session.getSubject("driver"));
-            this.startDate = newStartDate;
+            filter.op("drivernum_id", "=", CONTEXT.c.getSubject("driver"));
+            if (newStartDate) {
+                this.startDate = newStartDate;
+            }
             this.endDate = newEndDate;
             this.daterangePre.innerText = this.shortDates(
                 newStartDate, newEndDate);
@@ -251,74 +238,9 @@ export class TripsMyListPanel extends BasePanel implements IPanel {
                 filter,
                 [{field: "appointmentts", order: "asc"}]
             );
-            this.collection.v.query(CONTEXT.session, query)
+            this.collection.v.query(CONTEXT.c, query)
             .then((resultSet) => {
-                this.abortController = new AbortController();
-                this.listDiv.innerHTML = "";
-                while (resultSet.next()) {
-                    const anchor = document.createElement("a");
-                    anchor.href = "#";
-                    anchor.className =
-                        "list-group-item list-group-item-action";
-                    anchor.id = `tpm-${resultSet.getString("_id")}`;
-
-                    anchor.addEventListener("click", (evt) => {
-                        evt.preventDefault();
-                        this.onAnchorClick(evt);
-                    },
-                    { signal: this.abortController.signal }
-                    );
-
-                    this.listDiv.appendChild(anchor);
-
-                    const headingDiv = document.createElement("div");
-                    headingDiv.className =
-                        "d-flex w-100 justify-content-between";
-
-                    anchor.appendChild(headingDiv);
-
-                    const heading5 = document.createElement("h5");
-                    heading5.className = "mb-1";
-                    heading5.innerText =
-                        `${resultSet.getString("ridername")} - ` +
-                        `${resultSet.getString("description")}`;
-
-                    const appointmentts =
-                        this.appointmentTsField.v.transform(
-                            resultSet.get("appointmentts"));
-                    const returnts = resultSet.get("returnts") ?
-                            this.appointmentTsField.v.transform(
-                                resultSet.get("returnts")) :
-                            null;
-
-                    const appointmentDateTime =
-                        `${this.dateFormat.format(appointmentts)} ` +
-                        `${this.timeFormat.format(appointmentts)}`;
-                    const returnTime = returnts ?
-                        ` - ${this.timeFormat.format(returnts)}` : "";
-
-                    const statusSmall = document.createElement("small");
-                    statusSmall.innerText =
-                        `${resultSet.get("triptype")} - ` +
-                        `${appointmentDateTime}${returnTime}`;
-
-                    headingDiv.appendChild(heading5);
-                    headingDiv.appendChild(statusSmall);
-
-                    const para = document.createElement("p");
-                    para.className = "mb-1";
-                    para.innerText = new AttributeJoiner().
-                        add("", resultSet.getString("daddress1")).
-                        add("", resultSet.getString("comments")).
-                        toText();
-
-                    anchor.appendChild(para);
-
-                    const regionSmall = document.createElement("small");
-                    regionSmall.innerText = resultSet.getString("zone");
-
-                    anchor.appendChild(regionSmall);
-                }
+                this.tripList.render(resultSet);
             })
             .catch((err) => {
                 console.error(err);
@@ -330,11 +252,19 @@ export class TripsMyListPanel extends BasePanel implements IPanel {
     }
 
     async show(panelData?: PanelData): Promise<void> {
+        const nav = X.a("nav-my-trips-a");
+        nav.classList.add("active");
+        nav.ariaCurrent = "page";
         this.div.hidden = false;
-        this.onRefresh();
+        if (!PanelData.isParam("NoRefresh", panelData)) {
+            this.onRefresh();
+        }
     }
 
     hide(): void {
+        const nav = X.a("nav-my-trips-a");
+        nav.classList.remove("active");
+        nav.ariaCurrent = "false";
         this.div.hidden = true;
     }
 

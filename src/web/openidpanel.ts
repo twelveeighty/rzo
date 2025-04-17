@@ -40,8 +40,8 @@ export class OpenIDPanel extends BasePanel implements IPanel {
     }
 
     async show(panelData?: PanelData): Promise<void> {
-        if (panelData?.dataType == "string") {
-            this.errorPre.innerText = panelData?.asString || "";
+        if (PanelData.typeOf(panelData) == "string") {
+            this.errorPre.innerText = PanelData.stringOf(panelData);
         } else {
             this.errorPre.innerText = "";
         }

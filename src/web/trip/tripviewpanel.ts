@@ -19,8 +19,12 @@
 
 import { Modal } from "bootstrap";
 
-import { Entity, Field, Cfg, Row, ServiceSource } from "../../base/core.js";
+import {
+    Entity, Field, Cfg, Row, ServiceSource
+} from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
+
+import { Trip } from "../../scheduler/trip.js";
 
 import * as X from "../common.js";
 import { TOASTER } from "../toaster.js";
@@ -28,6 +32,7 @@ import { TOASTER } from "../toaster.js";
 import {
     IPanel, BasePanel, PanelMessage, PanelData, AttributeJoiner, PanelButton
 } from "../panel.js";
+
 
 export class TripViewPanel extends BasePanel implements IPanel {
     appointmentTsField: Cfg<Field>;
@@ -44,10 +49,15 @@ export class TripViewPanel extends BasePanel implements IPanel {
     acceptButton: PanelButton;
     assignButton: PanelButton;
     editButton: PanelButton;
+    cloneButton: PanelButton;
+    splitButton: PanelButton;
     backBtn: HTMLButtonElement;
 
     confirmModal: Modal;
     tripAcceptConfirmBtn: HTMLButtonElement;
+
+    splitModal: Modal;
+    tripSplitConfirmBtn: HTMLButtonElement;
 
     driverEntity: Cfg<Entity>;
     driver: Row | null;
@@ -55,6 +65,7 @@ export class TripViewPanel extends BasePanel implements IPanel {
 
     dateFormat: Intl.DateTimeFormat;
     timeFormat: Intl.DateTimeFormat;
+    dirty: boolean;
 
     constructor() {
         super();
@@ -75,10 +86,17 @@ export class TripViewPanel extends BasePanel implements IPanel {
             parentDiv, "trip-view-assign-btn", "Assign Driver...");
         this.editButton = new PanelButton(
             parentDiv, "trip-view-edit-btn", "Edit Trip...");
+        this.splitButton = new PanelButton(
+            parentDiv, "trip-view-split-btn", "Split Return Trip");
+        this.cloneButton = new PanelButton(
+            parentDiv, "trip-view-clone-btn", "Create Similar...");
         this.backBtn = X.btn("trip-view-back-btn");
 
         this.confirmModal = new Modal(X.div("trip-confirm-accept-div"));
         this.tripAcceptConfirmBtn = X.btn("trip-accept-confirm-btn");
+
+        this.splitModal = new Modal(X.div("trip-confirm-split-div"));
+        this.tripSplitConfirmBtn = X.btn("trip-split-confirm-btn");
 
         this.appointmentTsField = new Cfg("appointmentTsField");
 
@@ -95,6 +113,7 @@ export class TripViewPanel extends BasePanel implements IPanel {
             { hour12: true, hourCycle: "h12", hour: "numeric",
               minute: "2-digit", formatMatcher: "basic" }
         );
+        this.dirty = false;
     }
 
     get id(): string {
@@ -102,28 +121,34 @@ export class TripViewPanel extends BasePanel implements IPanel {
     }
 
     private async loadDriver(): Promise<void> {
-        const driverId = CONTEXT.session.getSubject("driver");
+        const driverId = CONTEXT.c.getSubject("driver");
         this.driver = await this.service.v.getOne(
-            this.logger, CONTEXT.session, this.driverEntity.v,
+            this.logger, CONTEXT.c, this.driverEntity.v,
             driverId);
     }
 
     private onLogin(): void {
         this.driver = null;
-        const persona = CONTEXT.session.persona.name;
+        const persona = CONTEXT.c.persona.name;
         if (persona == "drivers") {
             this.acceptButton.show();
             this.assignButton.hide();
             this.editButton.hide();
+            this.splitButton.hide();
+            this.cloneButton.hide();
             this.loadDriver();
         } else if (persona == "planners" || persona == "admins") {
             this.acceptButton.hide();
             this.assignButton.show();
             this.editButton.show();
+            this.splitButton.show();
+            this.cloneButton.show();
         } else {
             this.acceptButton.hide();
             this.assignButton.hide();
             this.editButton.hide();
+            this.splitButton.hide();
+            this.cloneButton.hide();
         }
     }
 
@@ -151,23 +176,47 @@ export class TripViewPanel extends BasePanel implements IPanel {
         this.editButton.initialize((evt) => {
             this.onEdit(evt);
         });
+        this.splitButton.initialize((evt) => {
+            this.onSplit(evt);
+        });
+        this.cloneButton.initialize((evt) => {
+            this.onClone(evt);
+        });
         this.backBtn.addEventListener("click", (evt) => {
             this.onBack(evt);
+        });
+        this.tripSplitConfirmBtn.addEventListener("click", (evt) => {
+            this.onSplitConfirm(evt);
         });
         this.tripAcceptConfirmBtn.addEventListener("click", (evt) => {
             this.onAcceptConfirm(evt);
         });
     }
 
+    private onSplitConfirm(evt: Event): void {
+        this.splitModal.hide();
+        if (this.row) {
+            (<Trip>this.entity.v).splitReturnTrip(
+                CONTEXT.c, this.service.v, this.row)
+            .then((returnTrip) => {
+                this.controller.v.show(
+                    "trip-edit-panel", new PanelData("State", returnTrip));
+            })
+            .catch((err) => {
+                TOASTER.error(`ERROR: ${err}`);
+            });
+        }
+    }
+
     private onAcceptConfirm(evt: Event): void {
+        this.confirmModal.hide();
         if (this.row && this.driver) {
-            this.confirmModal.hide();
             const state = this.entity.v.rowToState(this.row);
             this.entity.v.setValue(
                 state, "drivernum", this.driver.get("drivernum"),
-                CONTEXT.session)
+                CONTEXT.c)
             .then(() => {
-                this.entity.v.put(this.service.v, state, CONTEXT.session)
+                this.entity.v.put(this.service.v, state, CONTEXT.c)
                 .then((row) => {
                     TOASTER.info(`Saved: ${row.getString("_id")}`);
                     this.row = row;
@@ -181,6 +230,12 @@ export class TripViewPanel extends BasePanel implements IPanel {
             .catch((err) => {
                 TOASTER.error(`ERROR: ${err}`);
             });
+        }
+    }
+
+    private onSplit(evt: Event): void {
+        if (this.row) {
+            this.splitModal.show();
         }
     }
 
@@ -198,19 +253,36 @@ export class TripViewPanel extends BasePanel implements IPanel {
     }
 
     private onBack(evt: Event): void {
-        this.controller.v.pop();
+        if (!this.dirty) {
+            this.controller.v.pop(new PanelData("Parameter", "NoRefresh"));
+        } else {
+            this.dirty = false;
+            this.controller.v.pop();
+        }
     }
 
     private onEdit(evt: Event): void {
-        // Stack on the 'TripEdit' panel
         if (this.row) {
             this.controller.v.stack(
                 "trip-edit-panel", new PanelData("string", this.row.core._id));
         }
     }
 
-    private rowToUI(row: Row): void {
+    private onClone(evt: Event): void {
+        if (this.row) {
+            (<Trip>this.entity.v).cloneTrip(CONTEXT.c, this.service.v,
+                                            this.row)
+            .then((newTrip) => {
+                this.controller.v.stack(
+                    "trip-edit-panel", new PanelData("State", newTrip));
+            })
+            .catch((err) => {
+                TOASTER.error(`ERROR: ${err}`);
+            });
+        }
+    }
 
+    private rowToUI(row: Row): void {
         const appointmentts =
             this.appointmentTsField.v.transform(row.get("appointmentts"));
         const returnts = row.get("returnts") ?
@@ -262,17 +334,22 @@ export class TripViewPanel extends BasePanel implements IPanel {
             this.driverElement.innerText = "(none)";
         }
 
-        const persona = CONTEXT.session.persona.name;
+        const persona = CONTEXT.c.persona.name;
         if (persona == "drivers") {
             this.acceptButton.enabled = row.isNull("drivername");
+        } else if (persona == "planners" || persona == "admins") {
+            this.splitButton.enabled = row.isNull("drivername") &&
+                row.get("triptype") == "RETURN";
         }
     }
 
     async show(panelData?: PanelData): Promise<void> {
-        if (panelData) {
+        if (PanelData.typeOf(panelData) == "string") {
             this.service.v.getOne(
-                this.logger, CONTEXT.session, this.entity.v, panelData.asString)
+                this.logger, CONTEXT.c, this.entity.v,
+                PanelData.stringOf(panelData))
             .then((row) => {
+                this.dirty = false;
                 this.row = row;
                 this.rowToUI(this.row);
                 this.div.hidden = false;
@@ -280,8 +357,15 @@ export class TripViewPanel extends BasePanel implements IPanel {
             .catch((err) => {
                 TOASTER.error(`ERROR: ${err}`);
             });
-        } else if (this.row) {
+        } else if (PanelData.typeOf(panelData) == "Row") {
+            this.row = PanelData.rowOf(panelData);
+            this.dirty = true;
             this.rowToUI(this.row);
+            this.div.hidden = false;
+        } else if (PanelData.isParam("NoRefresh", panelData)) {
+            this.dirty = false;
+            this.div.hidden = false;
+        } else {
             this.div.hidden = false;
         }
     }

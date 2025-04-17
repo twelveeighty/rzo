@@ -26,13 +26,54 @@ import { RZO, CONTEXT } from "../base/configuration.js";
 import { TOASTER } from "./toaster.js";
 import * as X from "./common.js";
 
-type PanelDataType = "State" | "Row" | "string";
+type PanelDataType = "None" | "State" | "Row" | "string" | "Parameter";
+type PanelParameter = "Refresh" | "NoRefresh";
 
 export class PanelData {
-    constructor(
-        public dataType: PanelDataType,
-        public data: State | Row | string
-    ) {
+
+    static isParam(value: PanelParameter, panelData?: PanelData): boolean {
+        return !!panelData && panelData.dataType == "Parameter" &&
+            panelData.parameter == value;
+    }
+
+    static typeOf(panelData?: PanelData): PanelDataType {
+        if (!panelData) {
+            return "None";
+        }
+        return panelData.dataType;
+    }
+
+    static stateOf(panelData?: PanelData): State {
+        if (panelData) {
+            return panelData.state;
+        }
+        throw new Error("panelData is undefined");
+    }
+
+    static rowOf(panelData?: PanelData): Row {
+        if (panelData) {
+            return panelData.row;
+        }
+        throw new Error("panelData is undefined");
+    }
+
+    static stringOf(panelData?: PanelData): string {
+        if (panelData) {
+            return panelData.asString;
+        }
+        throw new Error("panelData is undefined");
+    }
+
+    static parameterOf(panelData?: PanelData): PanelParameter {
+        if (panelData) {
+            return panelData.parameter;
+        }
+        throw new Error("panelData is undefined");
+    }
+
+
+    constructor(public dataType: PanelDataType,
+                public data: State | Row | string) {
     }
 
     get state(): State {
@@ -54,6 +95,13 @@ export class PanelData {
             throw new Error(`Data type ${this.dataType} is not string`);
         }
         return this.data as string;
+    }
+
+    get parameter(): PanelParameter {
+        if (this.dataType != "Parameter") {
+            throw new Error(`Data type ${this.dataType} is not Parameter`);
+        }
+        return this.data as PanelParameter;
     }
 }
 
@@ -182,15 +230,17 @@ export class PanelButton {
     }
 
     show(): void {
-        this.btn = document.createElement("button") as HTMLButtonElement;
-        this.btn.id = this.id;
-        this.btn.type = "button";
-        this.btn.className = "btn btn-primary";
-        this.btn.innerHTML = this.title;
-        if (this.listener) {
-            this.btn.addEventListener("click", this.listener, false);
+        if (!this.btn) {
+            this.btn = document.createElement("button") as HTMLButtonElement;
+            this.btn.id = this.id;
+            this.btn.type = "button";
+            this.btn.className = "btn btn-primary";
+            this.btn.innerHTML = this.title;
+            if (this.listener) {
+                this.btn.addEventListener("click", this.listener, false);
+            }
+            this.parent.appendChild(this.btn);
         }
-        this.parent.appendChild(this.btn);
     }
 
     hide(): void {
@@ -407,7 +457,7 @@ export class FormPanel extends BasePanel {
     protected onBlur(control: Control, evt?: Event): void {
         if (this.state) {
             control.element.setCustomValidity("");
-            control.setValue(this.entity.v, this.state!, CONTEXT.session)
+            control.setValue(this.entity.v, this.state!, CONTEXT.c)
             .then((sideEffects) => {
                 if (sideEffects) {
                     for (const field of sideEffects) {
@@ -453,7 +503,7 @@ export class FormPanel extends BasePanel {
         const validations: Promise<SideEffects>[] = [];
         for (const control of this.controls.values()) {
             validations.push(
-                control.setValue(this.entity.v, this.state!, CONTEXT.session));
+                control.setValue(this.entity.v, this.state!, CONTEXT.c));
         }
         return Promise.all(validations);
     }
@@ -471,9 +521,9 @@ export class FormPanel extends BasePanel {
             .then(() => {
                 const action = this.state?.hasId() ?
                     this.entity.v.put(
-                        this.service.v, this.state!, CONTEXT.session) :
+                        this.service.v, this.state!, CONTEXT.c) :
                     this.entity.v.post(
-                        this.service.v, this.state!, CONTEXT.session);
+                        this.service.v, this.state!, CONTEXT.c);
                 action.then((row) => {
                     TOASTER.info(`Saved: ${row.getString("_id")}`);
                     this.controller.v.pop(new PanelData("Row", row));
@@ -490,15 +540,17 @@ export class FormPanel extends BasePanel {
 
     protected onCancel(evt: Event): void {
         this.reset();
-        this.controller.v.pop();
+        this.controller.v.pop(new PanelData("Parameter", "NoRefresh"));
     }
 }
 
 export class PanelController {
     private panels: Map<string, IPanel>;
     private current: string[];
+    private rootId: string;
 
-    constructor() {
+    constructor(rootId: string) {
+        this.rootId = rootId;
         this.current = [];
         this.panels = new Map();
     }
@@ -553,8 +605,9 @@ export class PanelController {
             const old = this.current.pop();
             this.get(old).hide();
             return this.get(target).show(panelData);
+        } else {
+            return this.show(this.rootId, panelData);
         }
-        return Promise.resolve();
     }
 
     async broadcast(message: PanelMessage): Promise<void> {

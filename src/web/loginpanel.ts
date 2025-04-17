@@ -57,8 +57,8 @@ export class CreateLoginPanel extends BasePanel implements IPanel {
     private onSubmit(evt: Event): void {
         const row = new Row(
             { "password": this.passwordTxt.value });
-        this.authenticator.v.createLogin(this.logger, CONTEXT.session, row)
-        .then((session) => {
+        this.authenticator.v.createLogin(this.logger, CONTEXT.c, row)
+        .then(() => {
             CONTEXT.reset();
             this.controller.v.show("login-panel");
         })
@@ -114,8 +114,8 @@ export class OneTimeLoginPanel extends BasePanel implements IPanel {
         const row = new Row(
             { "username": this.userTxt.value, "code": this.codeTxt.value });
         this.authenticator.v.oneTimeLogin(this.logger, row)
-        .then((session) => {
-            CONTEXT.session = session;
+        .then((context) => {
+            CONTEXT.c = context;
             this.controller.v.show("create-password-panel");
         })
         .catch((err) => {
@@ -262,8 +262,8 @@ export class LoginPanel extends BasePanel implements IPanel {
             const credsRow = new Row(
                 { "username": targetUsername, "password": targetPassword });
             this.authenticator.v.login(this.logger, credsRow)
-            .then((session) => {
-                CONTEXT.session = session;
+            .then((context) => {
+                CONTEXT.c = context;
                 this.welcomeHeading.innerText = targetUsername;
 
                 // Broadcast the "logged-in" message

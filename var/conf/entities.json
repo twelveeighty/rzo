@@ -249,7 +249,6 @@
                           { "from": "city", "to": "ocity" },
                           { "from": "stateprov", "to": "ostateprov" },
                           { "from": "postalcode", "to": "opostalcode" },
-                          { "from": "city", "to": "ocity" },
                           { "from": "maplinkmanual", "to": "omaplinkmanual" },
                           { "from": "maplink", "to": "omaplink" },
                           { "from": "phone1", "to": "ophone" },
@@ -257,7 +256,7 @@
                       ]
                 },
                 { "name": "ridername", "type": "StringField", "required": true },
-                { "name": "drivernum", "type": "CrossoverForeignKey",
+                { "name": "drivernum", "type": "scheduler.trip.TripDriverNumField",
                       "target": "driver",
                       "value": "drivernum",
                       "collection": "drivers",
@@ -332,12 +331,9 @@
                 { "name": "status", "type": "AliasValueList",
                       "required": true,
                       "maxlength": 32,
-                      "internal": [ "NEW", "WAPPR", "APPR", "SCHED", "REJECT", "INPRG",
-                                    "COMP", "ARCHIVED" ],
-                      "aliases": [
-                          { "for": "APPR", "aliases": ["ACTIVE"] },
-                          { "for": "ARCHIVED", "aliases": ["CANCEL", "CLOSED"] }
-                      ]
+                      "default": "SCHED",
+                      "internal": [ "SCHED", "ACCEPT" ],
+                      "aliases": []
                 },
                 { "name": "statusmemo", "type": "StringField" },
                 { "name": "statushistory", "type": "HistoryField",

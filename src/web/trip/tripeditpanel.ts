@@ -1,7 +1,7 @@
 /*
     RZO - A Business Application Framework
 
-    Copyright (C) 2024 Frank Vanderham
+    Copyright (C) 2024-2025 Frank Vanderham
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -20,11 +20,14 @@
 import { Cfg, Entity, ServiceSource } from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
 
+import { Trip } from "../../scheduler/trip.js";
+
 import { TOASTER } from "../toaster.js";
 import * as X from "../common.js";
 import {
     IPanel, FormPanel, Control, LocalDateControl, PanelMessage, PanelData
 } from "../panel.js";
+
 
 export class TripEditPanel extends FormPanel implements IPanel {
 
@@ -34,6 +37,7 @@ export class TripEditPanel extends FormPanel implements IPanel {
     dmaplinkManual: HTMLInputElement;
     riderNum: HTMLInputElement;
     riderName: HTMLInputElement;
+    reverseBtn: HTMLButtonElement;
 
     riderEntity: Cfg<Entity>;
 
@@ -75,6 +79,7 @@ export class TripEditPanel extends FormPanel implements IPanel {
         this.dmaplinkManual = this.getInput("trip-dmaplinkmanual-txt");
         this.riderNum = X.txt("trip-ridernum-txt");
         this.riderName = X.txt("trip-ridername-txt");
+        this.reverseBtn = X.btn("trip-edit-reverse-btn");
 
         this.riderEntity = new Cfg("riderEntity");
     }
@@ -86,7 +91,7 @@ export class TripEditPanel extends FormPanel implements IPanel {
     private loadZones(): void {
         const tripZoneSel = this.getSelect("trip-zone-sel");
         this.service.v.queryCollection(
-            this.logger, CONTEXT.session, RZO.getCollection("zones"))
+            this.logger, CONTEXT.c, RZO.getCollection("zones"))
         .then((resultSet) => {
             while (tripZoneSel.options.length > 1) {
                 tripZoneSel.remove(1);
@@ -113,6 +118,9 @@ export class TripEditPanel extends FormPanel implements IPanel {
         this.doverrideCheckbox.addEventListener("change", (evt) => {
             this.toggleDestOverride();
         });
+        this.reverseBtn.addEventListener("click", (evt) => {
+            this.onReverse(evt);
+        });
     }
 
     async onMessage(message: PanelMessage): Promise<void> {
@@ -131,16 +139,13 @@ export class TripEditPanel extends FormPanel implements IPanel {
     }
 
     async show(panelData?: PanelData): Promise<void> {
-        if (panelData) {
-            if (panelData.dataType == "string") {
-                this.state = await this.entity.v.load(
-                    this.service.v, CONTEXT.session, panelData.asString);
-            } else if (panelData.dataType == "State") {
-                this.state = panelData.state;
-            }
+        if (PanelData.typeOf(panelData) == "string") {
+            this.state = await this.entity.v.load(
+                this.service.v, CONTEXT.c, PanelData.stringOf(panelData));
+        } else if (PanelData.typeOf(panelData) == "State") {
+            this.state = PanelData.stateOf(panelData);
         } else {
-            this.state = await this.entity.v.create(
-                CONTEXT.session, this.service.v);
+            this.state = await this.entity.v.create(CONTEXT.c, this.service.v);
         }
         this.fromState();
         if (this.state) {
@@ -154,7 +159,7 @@ export class TripEditPanel extends FormPanel implements IPanel {
 
     private async showRider(ridernum_id: string): Promise<void> {
         const riderState = await this.riderEntity.v.load(
-            this.service.v, CONTEXT.session, ridernum_id);
+            this.service.v, CONTEXT.c, ridernum_id);
         this.riderNum.value = riderState.value("ridernum");
         this.riderName.value = riderState.value("name");
     }
@@ -165,6 +170,13 @@ export class TripEditPanel extends FormPanel implements IPanel {
         }
         this.toggleReadOnly(
             this.omaplinkManual, !this.ooverrideCheckbox.checked);
+    }
+
+    private onReverse(evt: Event): void {
+        if (this.state) {
+            (<Trip>this.entity.v).reverseTrip(this.state);
+            this.fromState();
+        }
     }
 
     private toggleDestOverride(): void {
@@ -195,12 +207,11 @@ export class TripEditPanel extends FormPanel implements IPanel {
             .then(() => {
                 const action = this.state?.hasId() ?
                     this.entity.v.put(
-                        this.service.v, this.state!, CONTEXT.session) :
+                        this.service.v, this.state!, CONTEXT.c) :
                     this.entity.v.post(
-                        this.service.v, this.state!, CONTEXT.session);
+                        this.service.v, this.state!, CONTEXT.c);
                 action.then((row) => {
-                    TOASTER.info(`Saved: ${row.getString("_id")}`);
-                    this.controller.v.pop();
+                    this.controller.v.pop(new PanelData("Row", row));
                 })
                 .catch((err) => {
                     console.error(err);

@@ -464,14 +464,14 @@ class NobodyContext implements IContext {
 }
 
 class ClientContext {
-    session: IContext;
+    c: IContext;
 
     constructor() {
-        this.session = new NobodyContext();
+        this.c = new NobodyContext();
     }
 
     reset(): void {
-        this.session = new NobodyContext();
+        this.c = new NobodyContext();
     }
 }
 

@@ -80,7 +80,7 @@ export class DriversListPanel extends BasePanel implements IPanel {
                 this.abortController.abort();
                 this.abortController = null;
             }
-            this.collection.v.query(CONTEXT.session)
+            this.collection.v.query(CONTEXT.c)
             .then((resultSet) => {
                 this.abortController = new AbortController();
                 this.listDiv.innerHTML = "";
@@ -138,11 +138,17 @@ export class DriversListPanel extends BasePanel implements IPanel {
     }
 
     async show(panelData?: PanelData): Promise<void> {
+        const nav = X.a("nav-drivers-a");
+        nav.classList.add("active");
+        nav.ariaCurrent = "page";
         this.div.hidden = false;
         this.queryList();
     }
 
     hide(): void {
+        const nav = X.a("nav-drivers-a");
+        nav.classList.remove("active");
+        nav.ariaCurrent = "false";
         this.div.hidden = true;
     }
 

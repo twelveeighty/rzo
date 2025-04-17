@@ -38,13 +38,14 @@ export class NavigationPanel implements IPanel {
     driversMenu: NavMenuItem;
 
     welcomeHeading: HTMLElement;
-    controller?: PanelController;
+    controller: Cfg<PanelController>;
     authenticator: Cfg<IAuthenticator>;
     loggedIn: boolean;
     logger: Logger;
 
     constructor() {
         this.logger = new Logger("client");
+        this.controller = new Cfg("controller");
         const navList = X.ul("nav-list-ul");
         this.myTripsMenu = new NavMenuItem(
             navList, "nav-my-trips-a", "My Trips");
@@ -60,7 +61,7 @@ export class NavigationPanel implements IPanel {
 
     private onMyTrips(evt: Event): void {
         if (this.loggedIn) {
-            this.controller!.show("my-trips-panel");
+            this.controller.v.show("my-trips-panel");
         } else {
             TOASTER.error("You must log in first.");
         }
@@ -68,7 +69,7 @@ export class NavigationPanel implements IPanel {
 
     private onTrips(evt: Event): void {
         if (this.loggedIn) {
-            this.controller!.show("trips-panel");
+            this.controller.v.show("trips-panel");
         } else {
             TOASTER.error("You must log in first.");
         }
@@ -76,7 +77,7 @@ export class NavigationPanel implements IPanel {
 
     private onRiders(evt: Event): void {
         if (this.loggedIn) {
-            this.controller!.show("riders-panel");
+            this.controller.v.show("riders-panel");
         } else {
             TOASTER.error("You must log in first.");
         }
@@ -84,7 +85,7 @@ export class NavigationPanel implements IPanel {
 
     private onDrivers(evt: Event): void {
         if (this.loggedIn) {
-            this.controller!.show("drivers-panel");
+            this.controller.v.show("drivers-panel");
         } else {
             TOASTER.error("You must log in first.");
         }
@@ -92,16 +93,17 @@ export class NavigationPanel implements IPanel {
 
     private onLogout(evt: Event): void {
         if (this.loggedIn) {
-            this.authenticator.v.logout(this.logger, CONTEXT.session)
+            this.authenticator.v.logout(this.logger, CONTEXT.c)
             .then(() => {
                 CONTEXT.reset();
-                this.myTripsMenu.hide();
-                this.tripsMenu.hide();
-                this.ridersMenu.hide();
-                this.driversMenu.hide();
                 this.welcomeHeading.innerText = "Drive";
-                this.controller!.broadcast("logged-out");
-                this.controller!.show("login-panel");
+                this.controller.v.broadcast("logged-out");
+                this.controller.v.show("login-panel").then(() => {
+                    this.myTripsMenu.hide();
+                    this.tripsMenu.hide();
+                    this.ridersMenu.hide();
+                    this.driversMenu.hide();
+                });
             })
             .catch((err) => {
                 console.error(err);
@@ -114,7 +116,7 @@ export class NavigationPanel implements IPanel {
 
     private onLogin(): void {
         this.loggedIn = true;
-        const persona = CONTEXT.session.persona.name;
+        const persona = CONTEXT.c.persona.name;
         if (persona == "drivers") {
             this.myTripsMenu.show();
             this.tripsMenu.show();
@@ -157,7 +159,7 @@ export class NavigationPanel implements IPanel {
     }
 
     register(controller: PanelController): void {
-        this.controller = controller;
+        this.controller.v = controller;
     }
 
     async show(panelData?: PanelData): Promise<void> {

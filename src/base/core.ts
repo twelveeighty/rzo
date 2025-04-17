@@ -533,7 +533,8 @@ export class Row {
 
     get core(): CoreColumns {
         return new CoreColumns(
-            this.get("_id"), this.get("_rev"), this.get("_att"));
+            this.get("_id"), this.get("_rev"),
+            this.has("_att") ? this.get("_att") : null);
     }
 
     deleteNoCheck(column: string): void {
@@ -2771,7 +2772,7 @@ export class GeneratorField extends StringField {
 
     async create(state: State, context: IContext,
                  service?: IService): Promise<void> {
-        if (service && context) {
+        if (service) {
             const nextVal =
                 await service.getGeneratorNext(
                     this.logger, context, this.generatorName);
@@ -2785,6 +2786,9 @@ export class GeneratorField extends StringField {
             }
             result = result.replaceAll("$NEXT", nextVal);
             state.field(this.name).value = result;
+        } else {
+            throw new CoreError(
+                `${this.fqName}: this field requires a Service to be created`);
         }
     }
 

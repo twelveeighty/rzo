@@ -45,7 +45,8 @@ const metadataName = "./metadata.js";
 
 TOASTER.initialize();
 
-const panelController = new PanelController();
+const tripsListPanel = new TripsListPanel();
+const panelController = new PanelController(tripsListPanel.id);
 
 // Add panels to the controller
 panelController.add(new CreateLoginPanel());
@@ -63,7 +64,7 @@ panelController.add(new RiderViewPanel());
 panelController.add(new TripViewPanel());
 panelController.add(new TripAssignPanel());
 panelController.add(new TripEditPanel());
-panelController.add(new TripsListPanel());
+panelController.add(tripsListPanel);
 panelController.add(new TripsMyListPanel());
 
 panelController.add(new DriversListPanel());

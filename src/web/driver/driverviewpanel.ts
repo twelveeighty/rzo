@@ -27,6 +27,8 @@ import * as X from "../common.js";
 import { TOASTER } from "../toaster.js";
 
 import { IPanel, BasePanel, PanelData } from "../panel.js";
+import { TripList } from "../trip/triplist.js";
+
 
 export class DriverViewPanel extends BasePanel implements IPanel {
     tripEntity: Cfg<Entity>;
@@ -38,10 +40,9 @@ export class DriverViewPanel extends BasePanel implements IPanel {
     nameElement: HTMLElement;
     statusElement: HTMLElement;
     addressPre: HTMLPreElement;
-    tripsDivElement: HTMLElement;
     editBtn: HTMLButtonElement;
+    tripList: TripList;
 
-    abortController: AbortController | null;
     state: State | null;
     dateTimeFormat: Intl.DateTimeFormat;
 
@@ -53,7 +54,8 @@ export class DriverViewPanel extends BasePanel implements IPanel {
         this.nameElement = X.heading("driver-view-name-heading");
         this.statusElement = X.p("driver-view-status-p");
         this.addressPre = X.pre("driver-view-address-pre");
-        this.tripsDivElement = X.div("driver-view-trips-div");
+        this.tripList = new TripList(X.div("driver-view-trips-div"), "dtl");
+
         this.editBtn = X.btn("driver-view-edit-btn");
 
         this.tripEntity = new Cfg("tripEntity");
@@ -62,7 +64,6 @@ export class DriverViewPanel extends BasePanel implements IPanel {
         this.appointmentTsField = new Cfg("appointmentTsField");
 
         this.state = null;
-        this.abortController = null;
 
         this.dateTimeFormat = new Intl.DateTimeFormat(
             "en",
@@ -85,6 +86,11 @@ export class DriverViewPanel extends BasePanel implements IPanel {
 
         this.editBtn.addEventListener("click", (evt) => {
             this.onEdit(evt);
+        });
+
+        this.tripList.initialize((evt) => {
+            evt.preventDefault();
+            this.onAnchorClick(evt);
         });
     }
 
@@ -110,68 +116,15 @@ export class DriverViewPanel extends BasePanel implements IPanel {
             return;
         }
         try {
-            if (this.abortController !== null) {
-                this.abortController.abort();
-                this.abortController = null;
-            }
             const query = new Query(
                 [],
                 new Filter().op(
                     "drivernum_id", "=", this.state.id),
                 [ { field: "appointmentts", order: "desc" } ]
             );
-            this.tripsCollection.v.query(CONTEXT.session, query)
+            this.tripsCollection.v.query(CONTEXT.c, query)
             .then((resultSet) => {
-                this.abortController = new AbortController();
-                this.tripsDivElement.innerHTML = "";
-                while (resultSet.next()) {
-                    const anchor = document.createElement("a");
-                    anchor.href = "#";
-                    anchor.className =
-                        "list-group-item list-group-item-action";
-                    anchor.id = `dtl-${resultSet.getString("_id")}`;
-
-                    anchor.addEventListener("click", (evt) => {
-                        evt.preventDefault();
-                        this.onAnchorClick(evt);
-                    },
-                    { signal: this.abortController.signal }
-                    );
-
-                    this.tripsDivElement.appendChild(anchor);
-
-                    const headingDiv = document.createElement("div");
-                    headingDiv.className =
-                        "d-flex w-100 justify-content-between";
-
-                    anchor.appendChild(headingDiv);
-
-                    const heading5 = document.createElement("h5");
-                    heading5.className = "mb-1";
-                    heading5.innerText =
-                        `${resultSet.getString("description")}`;
-
-                    const statusSmall = document.createElement("small");
-                    const appointmentts = this.dateTimeFormat.format(
-                        this.appointmentTsField.v.transform(
-                            resultSet.get("appointmentts")));
-                    // statusSmall.innerText = resultSet.getString("status");
-                    statusSmall.innerText = appointmentts;
-
-                    headingDiv.appendChild(heading5);
-                    headingDiv.appendChild(statusSmall);
-
-                    const para = document.createElement("p");
-                    para.className = "mb-1";
-                    para.innerText = resultSet.getString("daddress1");
-
-                    anchor.appendChild(para);
-
-                    const regionSmall = document.createElement("small");
-                    regionSmall.innerText = resultSet.getString("zone");
-
-                    anchor.appendChild(regionSmall);
-                }
+                this.tripList.render(resultSet);
             })
             .catch((err) => {
                 TOASTER.error(`ERROR: ${err}`);
@@ -212,15 +165,15 @@ export class DriverViewPanel extends BasePanel implements IPanel {
     }
 
     async show(panelData?: PanelData): Promise<void> {
-        if (panelData && panelData.dataType == "Row") {
-            const rs = MemResultSet.fromRow(panelData.row);
+        if (PanelData.typeOf(panelData) == "Row") {
+            const rs = MemResultSet.fromRow(PanelData.rowOf(panelData));
             rs.next();
             this.state = this.entity.v.from(rs);
             this.stateToUI(this.state);
             this.div.hidden = false;
-        } else if (panelData) {
+        } else if (PanelData.typeOf(panelData) == "string") {
             this.entity.v.load(
-                this.service.v, CONTEXT.session, panelData.asString)
+                this.service.v, CONTEXT.c, PanelData.stringOf(panelData))
             .then((state) => {
                 this.state = state;
                 this.stateToUI(this.state);
@@ -229,8 +182,10 @@ export class DriverViewPanel extends BasePanel implements IPanel {
             .catch((err) => {
                 TOASTER.error(`ERROR: ${err}`);
             });
-        } else if (this.state) {
+        } else if (!PanelData.isParam("NoRefresh", panelData) && this.state) {
             this.stateToUI(this.state);
+            this.div.hidden = false;
+        } else {
             this.div.hidden = false;
         }
     }

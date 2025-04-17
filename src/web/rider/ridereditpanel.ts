@@ -66,7 +66,7 @@ export class RiderEditPanel extends FormPanel implements IPanel {
     private loadZones(): void {
         const riderZoneSel = this.getSelect("rider-zone-sel");
         this.service.v.queryCollection(
-            this.logger, CONTEXT.session, RZO.getCollection("zones"))
+            this.logger, CONTEXT.c, RZO.getCollection("zones"))
         .then((resultSet) => {
             while (riderZoneSel.options.length > 1) {
                 riderZoneSel.remove(1);
@@ -107,13 +107,12 @@ export class RiderEditPanel extends FormPanel implements IPanel {
     }
 
     async show(panelData?: PanelData): Promise<void> {
-        if (panelData && panelData.dataType == "State") {
-            this.state = panelData.state;
-        } else if (panelData && panelData.dataType == "Row") {
-            this.state = this.entity.v.rowToState(panelData.row);
+        if (PanelData.typeOf(panelData) == "State") {
+            this.state = PanelData.stateOf(panelData);
+        } else if (PanelData.typeOf(panelData) == "Row") {
+            this.state = this.entity.v.rowToState(PanelData.rowOf(panelData));
         } else {
-            this.state = await this.entity.v.create(
-                CONTEXT.session, this.service.v);
+            this.state = await this.entity.v.create(CONTEXT.c, this.service.v);
         }
         this.fromState();
         this.toggleUI(true);

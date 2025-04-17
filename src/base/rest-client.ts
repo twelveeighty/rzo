@@ -365,7 +365,7 @@ export class RestClient implements IService, IAuthenticator {
     }
 
     async post(logger: Logger, context: IContext, entity: Entity,
-         row: Row): Promise<Row> {
+               row: Row): Promise<Row> {
         if (!context.sessionId) {
             throw new RestClientError("Session ID missing");
         }

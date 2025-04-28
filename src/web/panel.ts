@@ -525,7 +525,6 @@ export class FormPanel extends BasePanel {
                     this.entity.v.post(
                         this.service.v, this.state!, CONTEXT.c);
                 action.then((row) => {
-                    TOASTER.info(`Saved: ${row.getString("_id")}`);
                     this.controller.v.pop(new PanelData("Row", row));
                 })
                 .catch((err) => {

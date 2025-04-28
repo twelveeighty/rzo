@@ -33,34 +33,23 @@ export class RiderViewPanel extends BasePanel implements IPanel {
     tripEntity: Cfg<Entity>;
     tripRidernumField: Cfg<Field>;
     tripsCollection: Cfg<Collection>;
-    appointmentTsField: Cfg<Field>;
 
     div: HTMLElement;
-    nameElement: HTMLElement;
-    statusElement: HTMLElement;
-    addressPre: HTMLPreElement;
-    commentsHeading: HTMLElement;
-    commentsDiv: HTMLElement;
-    tripInfoHeading: HTMLElement;
-    tripInfoDiv: HTMLElement;
     createBtn: HTMLButtonElement;
     editBtn: HTMLButtonElement;
     tripList: TripList;
 
+    tableTBody: HTMLTableSectionElement;
+    statusElement: HTMLElement;
+
     state: State | null;
-    dateTimeFormat: Intl.DateTimeFormat;
 
     constructor() {
         super();
 
         this.div = X.div("rider-view-div");
-        this.nameElement = X.heading("rider-view-name-heading");
-        this.statusElement = X.p("rider-view-status-p");
-        this.addressPre = X.pre("rider-view-address-pre");
-        this.commentsHeading = X.heading("rider-view-comments-heading");
-        this.commentsDiv = X.div("rider-view-comments-div");
-        this.tripInfoHeading = X.heading("rider-view-tripinfo-heading");
-        this.tripInfoDiv = X.div("rider-view-tripinfo-div");
+        this.tableTBody = X.tsec("rider-view-tsec");
+        this.statusElement = X.htmlElement("rider-view-status-sm");
 
         this.tripList = new TripList(X.div("rider-view-trips-div"), "vtl");
 
@@ -70,14 +59,8 @@ export class RiderViewPanel extends BasePanel implements IPanel {
         this.tripEntity = new Cfg("tripEntity");
         this.tripRidernumField = new Cfg("tripRidernumField");
         this.tripsCollection = new Cfg("tripsCollection");
-        this.appointmentTsField = new Cfg("appointmentTsField");
 
         this.state = null;
-
-        this.dateTimeFormat = new Intl.DateTimeFormat(
-            "en",
-            { dateStyle: "full", timeStyle: "short" }
-        );
     }
 
     get id(): string {
@@ -92,7 +75,6 @@ export class RiderViewPanel extends BasePanel implements IPanel {
         this.tripEntity.v = RZO.getEntity("trip");
         this.tripRidernumField.v = this.tripEntity.v.getField("ridernum");
         this.tripsCollection.v = RZO.getCollection("trips");
-        this.appointmentTsField.v = RZO.getField("trip.appointmentts");
 
         this.createBtn.addEventListener("click", (evt) => {
             this.onCreateTrip(evt);
@@ -170,53 +152,32 @@ export class RiderViewPanel extends BasePanel implements IPanel {
         }
     }
 
-    private addIfPresent(target: string[], prefix: string, value?: string) {
-        if (value) {
-            const header = prefix ? `${prefix}: ` : "";
-            target.push(`${header}${value}`);
-        }
-    }
-
     private stateToUI(state: State): void {
-        this.nameElement.innerText = state.asString("name");
-        this.statusElement.innerText =
-            `${state.asString("ridernum")} (${state.asString("status")})`;
+        this.tableTBody.innerHTML = "";
+        X.addRowText(this.tableTBody, "Rider", state.asString("name"));
+        X.addRowText(this.tableTBody, "Rider Num", state.asString("ridernum"));
+        X.addRowText(this.tableTBody, "Status", state.asString("status"));
+        X.addRowText(this.tableTBody, "Zone", state.asString("zone"));
+        X.addRowElement(this.tableTBody, "Address",
+                    X.addressMapAnchor(state.asString("address1"),
+                                      state.asString("maplink")));
+        X.addRowText(this.tableTBody, "Address2", state.asString("address2"));
+        X.addRowText(this.tableTBody, "City", state.asString("city"));
+        X.addRowText(this.tableTBody, "Prov/State", state.asString("stateprov"));
+        X.addRowText(this.tableTBody, "Zip", state.asString("postalcode"));
 
-        const values: string[] = [];
-        this.addIfPresent(values, "_id", state.id);
-        this.addIfPresent(values, "_rev", state.rev);
-        this.addIfPresent(values, "Zone", state.asString("zone"));
-        this.addIfPresent(values, "Address", state.asString("address1"));
-        this.addIfPresent(values, "Address2", state.asString("address2"));
-        this.addIfPresent(values, "City", state.asString("city"));
-        this.addIfPresent(values, "Prov/State", state.asString("stateprov"));
-        this.addIfPresent(values, "Zip", state.asString("postalcode"));
-        this.addIfPresent(values, "Map", state.asString("maplink"));
-        this.addIfPresent(values, state.asString("phone1label"),
-                          state.asString("phone1"));
-        this.addIfPresent(values, state.asString("phone2label"),
-                          state.asString("phone2"));
-        this.addIfPresent(values, state.asString("phone3label"),
-                          state.asString("phone3"));
-        this.addressPre.innerText = values.join(`\n`);
+        X.addRowText(this.tableTBody, state.asString("phone1label"),
+                     state.asString("phone1"));
+        X.addRowText(this.tableTBody, state.asString("phone2label"),
+                     state.asString("phone2"));
+        X.addRowText(this.tableTBody, state.asString("phone3label"),
+                     state.asString("phone3"));
+        X.addRowText(this.tableTBody, "Comments", state.asString("comments"),
+                           true);
+        X.addRowText(this.tableTBody, "Trip Comments",
+                     state.asString("tripinfo"), true);
 
-        const comments = state.asString("comments");
-        if (comments) {
-            this.commentsHeading.hidden = false;
-            this.commentsDiv.innerText = comments;
-        } else {
-            this.commentsDiv.innerText = "";
-            this.commentsHeading.hidden = true;
-        }
-
-        const tripinfo = state.asString("tripinfo");
-        if (tripinfo) {
-            this.tripInfoHeading.hidden = false;
-            this.tripInfoDiv.innerText = tripinfo;
-        } else {
-            this.tripInfoDiv.innerText = "";
-            this.tripInfoHeading.hidden = true;
-        }
+        this.statusElement.innerText = `${state.id} / ${state.rev}`;
 
         this.queryTrips();
     }

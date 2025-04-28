@@ -17,7 +17,6 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-
 function checkElement(suffix: string, id: string): HTMLElement {
     const element = document.getElementById(id);
     if (element) {
@@ -81,6 +80,15 @@ export function control(id: string): ControlType {
         } else {
             throw new Error(`Cannot parse element id: ${id}`);
         }
+    } else {
+        throw new Error(`No such element: ${id}`);
+    }
+}
+
+export function htmlElement(id: string): HTMLElement {
+    const element = document.getElementById(id);
+    if (element) {
+        return element;
     } else {
         throw new Error(`No such element: ${id}`);
     }
@@ -191,6 +199,15 @@ export function ul(id: string): HTMLUListElement {
     }
 }
 
+export function tsec(id: string): HTMLTableSectionElement {
+    const element = checkElement("tsec", id);
+    if (element instanceof HTMLTableSectionElement) {
+        return element as HTMLTableSectionElement;
+    } else {
+        throw new Error(`Element ${id} is not an HTMLTableSectionElement`);
+    }
+}
+
 export function heading(id: string): HTMLElement {
     const element = checkElement("heading", id);
     return element as HTMLElement;
@@ -203,5 +220,73 @@ export function path(id: string): SVGPathElement {
     } else {
         throw new Error(`Element ${id} is not an SVGPathElement`);
     }
+}
+
+export function addRowElement(tbody: HTMLTableSectionElement, header: string,
+                              value: HTMLElement): void {
+    if (value) {
+        const tr = document.createElement("tr");
+        const th = document.createElement("th");
+        th.setAttribute("scope", "row");
+        th.innerText = header;
+        const td = document.createElement("td");
+        td.appendChild(value);
+        tr.appendChild(th);
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+    }
+}
+
+export function addRowText(tbody: HTMLTableSectionElement, header: string,
+                   value: string, asHTML?: boolean): void {
+    if (value) {
+        const tr = document.createElement("tr");
+        const th = document.createElement("th");
+        th.setAttribute("scope", "row");
+        th.innerText = header;
+        const td = document.createElement("td");
+        if (asHTML) {
+            td.innerHTML = value;
+        } else {
+            td.innerText = value;
+        }
+        tr.appendChild(th);
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+    }
+}
+
+export function addSVG(td: HTMLElement, useRef: string): void {
+    const svgElement = document.createElementNS(
+        "http://www.w3.org/2000/svg", "svg");
+    svgElement.setAttribute("class", "bi me-1");
+    svgElement.setAttribute("width", "32px");
+    svgElement.setAttribute("height", "32px");
+    svgElement.setAttribute("role", "img");
+    svgElement.setAttribute("aria-label", useRef);
+
+    const useElement = document.createElementNS(
+        "http://www.w3.org/2000/svg", "use");
+    useElement.setAttribute("href", `#${useRef}`);
+    svgElement.appendChild(useElement);
+    td.appendChild(svgElement);
+}
+
+export function mapLink(input: string): string {
+    if (input.startsWith("q=")) {
+        return input.slice(2);
+    }
+    return encodeURIComponent(input);
+}
+
+export function addressMapAnchor(address: string,
+                                 mapvalue: string): HTMLElement {
+    const maplink =
+        `https://maps.google.com/maps?q=${mapLink(mapvalue)}`;
+    const anchor = document.createElement("a");
+    anchor.setAttribute("href", maplink);
+    anchor.setAttribute("target", "new");
+    anchor.innerText = address;
+    return anchor;
 }
 

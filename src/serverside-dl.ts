@@ -22,8 +22,8 @@ import { readFile } from "node:fs/promises";
 import { argv } from 'node:process';
 
 import {
-    State, KeyValue, IService, IContext, Entity, SideEffects, Row, Logger,
-    ServiceSource
+    State, KeyValue, IService, IContext, Entity, Row, Logger,
+    ServiceSource, JsonObject
 } from "./base/core.js";
 
 import { RZO } from "./base/configuration.js";
@@ -34,7 +34,7 @@ type EntityLoad = {
     operation?: string;
     id?: string;
     version?: string;
-    values: KeyValue[];
+    values: JsonObject;
 }
 
 type Ops = "post" | "put" | "delete";
@@ -53,6 +53,15 @@ function getUrl(filename: string, subdir?: string): URL {
     return result;
 }
 
+function entityKeys(entity: Entity, values: JsonObject): KeyValue[] {
+    const row = new Row(values);
+    const keys: KeyValue[] = [];
+    for (const keyName of entity.keyFields.keys()) {
+        keys.push({"k": keyName, "v": row.getString(keyName)});
+    }
+    return keys;
+}
+
 async function loadEntityState(service: IService, context: IContext,
                                entityCfg: EntityLoad,
                                entity: Entity): Promise<State> {
@@ -63,7 +72,8 @@ async function loadEntityState(service: IService, context: IContext,
     } else if (entityCfg.id) {
         state = await entity.load(service, context, entityCfg.id);
     } else {
-        state = await entity.queryOne(service, entityCfg.values, context);
+        state = await entity.queryOne(
+            service, entityKeys(entity, entityCfg.values), context);
     }
     return state;
 }
@@ -135,25 +145,20 @@ try {
             const entity = RZO.getEntity(entityCfg.entity);
             if (operation == "post") {
                 const state = await entity.create(context, service);
-                const validations: Promise<SideEffects>[] = [];
-                for (const fieldCfg of entityCfg.values) {
-                    validations.push(
-                        entity.setValue(
-                            state, fieldCfg.k, fieldCfg.v, context));
+                for (const key of Object.keys(entityCfg.values)) {
+                    await entity.setValue(
+                            state, key, entityCfg.values[key], context);
                 }
-                await Promise.all(validations);
                 await entity.post(service, state, context);
             } else if (operation == "put") {
                 const state = await loadEntityState(
                     service, context, entityCfg, entity);
-                const validations: Promise<SideEffects>[] = [];
-                for (const fieldCfg of entityCfg.values) {
-                    if (entityCfg.id || !entity.keyFields.has(fieldCfg.k)) {
-                        validations.push(entity.setValue(state, fieldCfg.k,
-                                                         fieldCfg.v, context));
+                for (const key of Object.keys(entityCfg.values)) {
+                    if (entityCfg.id || !entity.keyFields.has(key)) {
+                        await entity.setValue(
+                                state, key, entityCfg.values[key], context);
                     }
                 }
-                await Promise.all(validations);
                 await entity.put(service, state, context);
             } else if (operation == "delete") {
                 if (!entityCfg.id || !entityCfg.version) {

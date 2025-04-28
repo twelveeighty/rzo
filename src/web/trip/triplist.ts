@@ -20,8 +20,6 @@
 import { IResultSet, Field, Cfg } from "../../base/core.js";
 import { RZO } from "../../base/configuration.js";
 
-import { AttributeJoiner } from "../panel.js";
-
 
 export class TripList {
     abortController: AbortController | null;
@@ -115,7 +113,7 @@ export class TripList {
             heading5.className = "mb-1";
             heading5.innerText =
                 `${resultSet.getString("ridername")} - ` +
-                `${resultSet.getString("description")}`;
+                `${resultSet.getString("odescription")}`;
 
             const returnts = resultSet.get("returnts") ?
                     this.appointmentTsField.v.transform(
@@ -158,11 +156,9 @@ export class TripList {
 
             const para = document.createElement("p");
             para.className = "mb-1";
-            para.innerText = new AttributeJoiner().
-                add("", resultSet.getString("daddress1")).
-                add("", resultSet.getString("comments")).
-                toText();
-
+            const contents = `${resultSet.getString("daddress1")}<br/>` +
+                `${resultSet.getString("comments")}`;
+            para.innerHTML = contents;
             anchor.appendChild(para);
 
             const regionSmall = document.createElement("small");

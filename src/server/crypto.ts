@@ -17,7 +17,7 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { Buffer } from "node:buffer";
+// import { Buffer } from "node:buffer";
 
 import {
     _IError, FieldCfg, StringField, Entity, Phase, State, FieldState,
@@ -30,6 +30,7 @@ class CryptoError extends _IError {
     }
 }
 
+/*
 export type JwkType = {
     n: string;
     e: string;
@@ -84,8 +85,7 @@ export class Jwk {
         const outBuf = Buffer.alloc(seqHeaderLen + nLen + eLen);
         let offset = 0;
 
-        /* Sequence
-         */
+        // Sequence
         offset = outBuf.writeUInt8(0x30, offset);
         if (payloadLenBytes > 1) {
             // LENGTH
@@ -95,8 +95,7 @@ export class Jwk {
             offset = outBuf.writeUInt8(payloadLen, offset); // LENGTH
         }
 
-        /* Integer - Modulus 'n'
-         */
+        // Integer - Modulus 'n'
         offset = outBuf.writeUInt8(0x02, offset); // INTEGER
         if (nLenBytes > 1) {
             // LENGTH
@@ -105,15 +104,13 @@ export class Jwk {
         } else {
             offset = outBuf.writeUInt8(nLen, offset); // LENGTH
         }
-        /* Modulus payload
-         */
+        // Modulus payload
         if (nPadded) {
             offset = outBuf.writeUInt8(0x00, offset); // integer-pad
         }
         offset += nBuffer.copy(outBuf, offset);
 
-        /* Integer - Exponent 'e'
-         */
+        // Integer - Exponent 'e'
         offset = outBuf.writeUInt8(0x02, offset); // INTEGER
         if (eLenBytes > 1) {
             // LENGTH
@@ -122,8 +119,7 @@ export class Jwk {
         } else {
             offset = outBuf.writeUInt8(eLen, offset); // LENGTH
         }
-        /* Exponent payload
-         */
+        // Exponent payload
         if (ePadded) {
             offset = outBuf.writeUInt8(0x00, offset); // integer-pad
         }
@@ -140,6 +136,7 @@ export class Jwk {
         return outputArray.join(`\n`);
     }
 }
+*/
 
 type PasswordFieldCfg = FieldCfg & {
     minLength: number;

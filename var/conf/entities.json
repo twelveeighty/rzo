@@ -271,8 +271,8 @@
                       "value": "zone",
                       "collection": "zones"
                 },
-                { "name": "description", "type": "StringField" },
                 { "name": "comments", "type": "StringField" },
+                { "name": "odescription", "type": "StringField", "default": "Home" },
                 { "name": "oaddress1", "type": "people.person.MapLinkSrcField",
                     "required": true, "target": "omaplink"
                 },
@@ -295,6 +295,7 @@
                     "required": true
                 },
                 { "name": "ophone", "type": "StringField", "required": true },
+                { "name": "ddescription", "type": "StringField" },
                 { "name": "daddress1", "type": "people.person.MapLinkSrcField",
                     "required": true, "target": "dmaplink"
                 },

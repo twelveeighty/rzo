@@ -221,7 +221,7 @@ export class TripAssignPanel extends BasePanel implements IPanel {
 
         this.statusElement.innerText = new AttributeJoiner().
             add("", `${row.getString("tripnum")} (${row.getString("status")})`).
-            add("", row.getString("description")).
+            add("", row.getString("odescription")).
             add("", row.getString("triptype")).
             add("Pickup", appointmentts).
             add("Return", returnts).

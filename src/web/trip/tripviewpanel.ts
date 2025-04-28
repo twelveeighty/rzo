@@ -38,14 +38,12 @@ export class TripViewPanel extends BasePanel implements IPanel {
     appointmentTsField: Cfg<Field>;
 
     div: HTMLElement;
-    nameElement: HTMLElement;
     statusElement: HTMLElement;
-
-    fromAddressPre: HTMLPreElement;
-    toAddressPre: HTMLPreElement;
 
     driverElement: HTMLElement;
 
+    pickupTBody: HTMLTableSectionElement;
+    destTBody: HTMLTableSectionElement;
     acceptButton: PanelButton;
     assignButton: PanelButton;
     editButton: PanelButton;
@@ -71,13 +69,11 @@ export class TripViewPanel extends BasePanel implements IPanel {
         super();
 
         this.div = X.div("trip-view-div");
-        this.nameElement = X.heading("trip-view-name-heading");
-        this.statusElement = X.p("trip-view-status-p");
-
-        this.fromAddressPre = X.pre("trip-view-fromaddress-pre");
-        this.toAddressPre = X.pre("trip-view-toaddress-pre");
+        this.statusElement = X.htmlElement("trip-view-status-sm");
 
         this.driverElement = X.p("trip-view-driver-p");
+        this.pickupTBody = X.tsec("trip-view-pickup-table-tsec");
+        this.destTBody = X.tsec("trip-view-dest-table-tsec");
 
         const parentDiv = X.div("trip-view-buttons-div");
         this.acceptButton = new PanelButton(
@@ -282,57 +278,104 @@ export class TripViewPanel extends BasePanel implements IPanel {
         }
     }
 
+    private addDirections(tBody: HTMLTableSectionElement, row: Row): void {
+        const driverHome = this.driver != null ?
+            X.mapLink(this.driver.get("maplink")) : null;
+        const riderOrigin = X.mapLink(row.get("omaplink"));
+        const riderDest = X.mapLink(row.get("dmaplink"));
+        const tr = document.createElement("tr");
+        const th = document.createElement("th");
+        th.setAttribute("scope", "row");
+        th.innerText = "Directions";
+
+        const td = document.createElement("td");
+
+        const dirAnchor = document.createElement("a");
+        dirAnchor.setAttribute(
+            "href", `https://maps.google.com/maps?saddr=${riderOrigin}&` +
+                `daddr=${riderDest}`);
+        dirAnchor.setAttribute("target", "new");
+        X.addSVG(dirAnchor, "trip-directions-sym");
+        dirAnchor.appendChild(new Text("Trip Directions"));
+
+        let threeWayAnchor;
+        if (driverHome) {
+            threeWayAnchor = document.createElement("a");
+            threeWayAnchor.setAttribute(
+                "href", `https://maps.google.com/maps?saddr=${driverHome}&` +
+                    `daddr=${riderOrigin}+to:${riderDest}`);
+            threeWayAnchor.setAttribute("target", "new");
+            X.addSVG(threeWayAnchor, "trip-3way-sym");
+            threeWayAnchor.appendChild(new Text("Three-way directions"));
+        }
+
+        td.appendChild(dirAnchor);
+        if (threeWayAnchor) {
+            td.appendChild(new Text("\u00A0\u00A0"));
+            td.appendChild(threeWayAnchor);
+        }
+
+        tr.appendChild(th);
+        tr.appendChild(td);
+        tBody.appendChild(tr);
+    }
+
     private rowToUI(row: Row): void {
+        this.pickupTBody.innerHTML = "";
+        this.destTBody.innerHTML = "";
         const appointmentts =
             this.appointmentTsField.v.transform(row.get("appointmentts"));
         const returnts = row.get("returnts") ?
                 this.appointmentTsField.v.transform(row.get("returnts")) :
                 null;
-
         const appointmentDateTime =
             `${this.dateFormat.format(appointmentts)} ` +
             `${this.timeFormat.format(appointmentts)}`;
         const returnTime =
             returnts ? ` - ${this.timeFormat.format(returnts)}` : "";
 
-        this.nameElement.innerText =
-            `${row.getString("ridername")} - ` +
-            `${appointmentDateTime}${returnTime}`;
+        X.addRowText(this.pickupTBody, "Rider", row.getString("ridername"));
+        X.addRowText(this.pickupTBody, "Date/Time",
+                    `${appointmentDateTime}${returnTime}`);
+        X.addRowText(this.pickupTBody, "Type", row.getString("triptype"));
+        X.addRowText(this.pickupTBody, "Zone", row.getString("zone"));
+        X.addRowText(this.pickupTBody, "From",
+                        row.getString("odescription"));
+        X.addRowElement(this.pickupTBody, "Address",
+                    X.addressMapAnchor(row.getString("oaddress1"),
+                                       row.getString("omaplink")));
+        X.addRowText(this.pickupTBody, "Address2", row.getString("oaddress2"));
+        X.addRowText(this.pickupTBody, "City", row.getString("ocity"));
+        X.addRowText(this.pickupTBody, "Prov/State",
+                    row.getString("ostateprov"));
+        X.addRowText(this.pickupTBody, "Zip", row.getString("opostalcode"));
+        X.addRowText(this.pickupTBody, "Phone", row.getString("ophone"));
+        X.addRowText(this.pickupTBody, "Notes", row.getString("comments"),
+                           true);
 
-        this.statusElement.innerText = new AttributeJoiner().
-            add("", `${row.getString("status")} ` +
-                    `${row.getString("triptype")} - ` +
-                    `${row.getString("description")}`).
-            add("", `${row.getString("tripnum")}`).
-            add("", `${row.getString("_id")} / ${row.getString("_rev")}`).
-            toText();
-
-        this.fromAddressPre.innerText = new AttributeJoiner().
-            add("Zone", row.getString("zone")).
-            add("Address", row.getString("oaddress1")).
-            add("Address2", row.getString("oaddress2")).
-            add("City", row.getString("ocity")).
-            add("Prov/State", row.getString("ostateprov")).
-            add("Zip", row.getString("opostalcode")).
-            add("Map", row.getString("omaplink")).
-            add("Phone", row.getString("ophone")).
-            toText();
-
-        this.toAddressPre.innerText = new AttributeJoiner().
-            add("Address", row.getString("daddress1")).
-            add("Address2", row.getString("daddress2")).
-            add("City", row.getString("dcity")).
-            add("Prov/State", row.getString("dstateprov")).
-            add("Zip", row.getString("dpostalcode")).
-            add("Map", row.getString("dmaplink")).
-            add("Phone", row.getString("dphone")).
-            toText();
+        X.addRowText(this.destTBody, "To", row.getString("ddescription"));
+        X.addRowElement(this.destTBody, "Address",
+                    X.addressMapAnchor(row.getString("daddress1"),
+                                       row.getString("dmaplink")));
+        X.addRowText(this.destTBody, "Address2", row.getString("daddress2"));
+        X.addRowText(this.destTBody, "City", row.getString("dcity"));
+        X.addRowText(this.destTBody, "Prov/State",
+                    row.getString("dstateprov"));
+        X.addRowText(this.destTBody, "Zip", row.getString("dpostalcode"));
+        X.addRowText(this.destTBody, "Phone", row.getString("dphone"));
+        this.addDirections(this.destTBody, row);
 
         if (!row.isNull("drivername")) {
             this.driverElement.innerText = row.getString("drivername");
         } else {
             this.driverElement.innerText = "(none)";
         }
+
+        this.statusElement.innerText = new AttributeJoiner().
+            add("", `${row.getString("status")} `).
+            add("", `${row.getString("tripnum")}`).
+            add("", `${row.getString("_id")} / ${row.getString("_rev")}`).
+            toText();
 
         const persona = CONTEXT.c.persona.name;
         if (persona == "drivers") {

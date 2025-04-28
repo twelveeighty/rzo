@@ -251,6 +251,7 @@ export class Trip extends Entity {
         sideEffects.push(this.setValue(
             newTrip, "zone", trip.get("zone"), context));
         await Promise.all(sideEffects);
+        newTrip.field("odescription").value = trip.get("odescription");
         newTrip.field("oaddress1").value = trip.get("oaddress1");
         newTrip.field("oaddress2").value = trip.get("oaddress2");
         newTrip.field("ocity").value = trip.get("ocity");
@@ -259,8 +260,8 @@ export class Trip extends Entity {
         newTrip.field("omaplink").value = trip.get("omaplink");
         newTrip.field("omaplinkmanual").value = trip.get("omaplinkmanual");
         newTrip.field("ophone").value = trip.get("ophone");
-        newTrip.field("description").value = trip.get("description");
         newTrip.field("comments").value = trip.get("comments");
+        newTrip.field("ddescription").value = trip.get("ddescription");
         newTrip.field("daddress1").value = trip.get("daddress1");
         newTrip.field("daddress2").value = trip.get("daddress2");
         newTrip.field("dcity").value = trip.get("dcity");

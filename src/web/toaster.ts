@@ -19,29 +19,41 @@
 
 import { Toast } from "bootstrap";
 
+import { Cfg } from "../base/core.js";
 import * as X from "./common.js";
 
 export class Toaster {
-    private bsToast?: Toast;
-    private toasterMsgDiv?: HTMLElement;
+    private bsToast: Cfg<Toast>;
+    private toasterMsgDiv: Cfg<HTMLElement>;
+    private toasterTimestamp: Cfg<HTMLElement>;
 
     constructor() {
+        this.bsToast = new Cfg("toaster-div");
+        this.toasterMsgDiv = new Cfg("toaster-msg-div");
+        this.toasterTimestamp = new Cfg("toaster-timestamp-sm");
     }
 
     initialize(): void {
-        this.bsToast = Toast.getOrCreateInstance(X.div("toaster-div"));
-        this.toasterMsgDiv = X.div("toaster-msg-div");
+        this.bsToast.v = Toast.getOrCreateInstance(X.div(this.bsToast.name));
+        this.toasterMsgDiv.v = X.div(this.toasterMsgDiv.name);
+        this.toasterTimestamp.v = X.htmlElement(this.toasterTimestamp.name);
+    }
+
+    private timestamp(): void {
+        this.toasterTimestamp.v.innerText = (new Date()).toLocaleTimeString();
     }
 
     info(msg: string): void {
-        this.toasterMsgDiv!.innerText = msg;
-        this.bsToast!.show();
+        this.timestamp();
+        this.toasterMsgDiv.v.innerText = msg;
+        this.bsToast.v.show();
     }
 
     error(msg: string): void {
+        this.timestamp();
         console.error(msg);
-        this.toasterMsgDiv!.innerText = msg;
-        this.bsToast!.show();
+        this.toasterMsgDiv.v.innerText = msg;
+        this.bsToast.v.show();
     }
 }
 

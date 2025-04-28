@@ -47,11 +47,11 @@ export class TripEditPanel extends FormPanel implements IPanel {
                   new Control("trip-tripnum-txt", "tripnum", false),
                   new Control("trip-zone-sel", "zone", true),
                   new Control("trip-status-sel", "status", true),
-                  new Control("trip-description-txt", "description", false),
                   new Control("trip-triptype-sel", "triptype", true),
                   new LocalDateControl("trip-appointmentts-txt",
                                        "appointmentts", true),
                   new LocalDateControl("trip-returnts-txt", "returnts", false),
+                  new Control("trip-odescription-txt", "odescription", false),
                   new Control("trip-oaddress1-txt", "oaddress1", true),
                   new Control("trip-oaddress2-txt", "oaddress2", false),
                   new Control("trip-ocity-txt", "ocity", false),
@@ -61,6 +61,7 @@ export class TripEditPanel extends FormPanel implements IPanel {
                   new Control("trip-omaplinkmanual-txt", "omaplinkmanual",
                               false),
                   new Control("trip-ophone-txt", "ophone", true),
+                  new Control("trip-ddescription-txt", "ddescription", false),
                   new Control("trip-daddress1-txt", "daddress1", true),
                   new Control("trip-daddress2-txt", "daddress2", false),
                   new Control("trip-dcity-txt", "dcity", false),
@@ -214,7 +215,6 @@ export class TripEditPanel extends FormPanel implements IPanel {
                     this.controller.v.pop(new PanelData("Row", row));
                 })
                 .catch((err) => {
-                    console.error(err);
                     TOASTER.error(`ERROR: ${err}`);
                 });
             })

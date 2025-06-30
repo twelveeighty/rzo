@@ -112,7 +112,7 @@ export class RZOOneTimeAdapter extends SessionAwareAdapter {
                 blueprints: Map<string, any>) {
         super(config, blueprints);
         this.oneTimeEntity = new Cfg("onetimelogin");
-        this.loginEntity = new Cfg("loginentity");
+        this.loginEntity = new Cfg("login");
         this.userAccountEntity = new Cfg("useraccount");
         this.persona = new Cfg(config.spec.persona);
     }
@@ -141,7 +141,7 @@ export class RZOOneTimeAdapter extends SessionAwareAdapter {
         const existingRow = await this.source.v.getQueryOne(
             this.logger, NOCONTEXT, this.oneTimeEntity.v, filter);
         if (!existingRow.empty) {
-            await this.source.v.deleteImmutable(
+            await this.source.v.delete(
                 this.logger, NOCONTEXT, this.oneTimeEntity.v,
                 existingRow.get("_id"));
         }
@@ -229,9 +229,9 @@ export class RZOOneTimeAdapter extends SessionAwareAdapter {
                 if (!loginRow.empty) {
                     this.policyConfig.v.guardRow(
                         sessionContext, "entity/login", "delete", loginRow);
-                    await this.source.v.deleteImmutable(
+                    await this.source.v.delete(
                         this.logger, sessionContext, this.loginEntity.v,
-                        loginRow.get("_id"));
+                        loginRow.get("_id"), loginRow.get("_rev"));
                 }
                 response.end(JSON.stringify(Row.rowToData(sessionRow)));
             } else {

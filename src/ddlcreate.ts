@@ -43,8 +43,10 @@ let creator: PgCreator | null = null;
 try {
     const contents = await Promise.all([
         readFile(getUrl("entities"), { encoding: 'utf8' }),
+        readFile(getUrl("accting"), { encoding: 'utf8' }),
         readFile(getUrl("entities-server", "server"), { encoding: 'utf8' }),
         readFile(getUrl("collections", "server"), { encoding: 'utf8' }),
+        readFile(getUrl("accting-collections", "server"), { encoding: 'utf8' }),
         readFile(getUrl("config-ddl", "server"), { encoding: 'utf8' })
     ]);
     await RZO.load(contents);

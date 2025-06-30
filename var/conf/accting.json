@@ -1,0 +1,288 @@
+[
+    {
+        "apiVersion": "v1",
+        "kind": "Entity",
+        "metadata": {
+            "name": "holding"
+        },
+        "spec": {
+            "type": "Entity",
+            "table": "holding",
+            "retention": { "style": "keep" },
+            "keyFields": [
+                { "name": "name", "type": "StringField", "required": true,
+                  "maxlength": 32
+                }
+            ],
+            "coreFields": [
+                { "name": "label", "type": "StringField", "required": true,
+                  "maxlength": 32
+                },
+                { "name": "holdtype", "type": "AliasValueList",
+                      "required": true,
+                      "default": "CURRENCY",
+                      "maxlength": 32,
+                      "internal": [ "CURRENCY", "COMMODITY" ],
+                      "aliases": []
+                },
+                { "name": "blocksize", "type": "IntegerField", "required": true,
+                  "default": "1"
+                },
+                { "name": "price", "type": "AmountField", "required": true,
+                  "precision": 15, "scale": 2,
+                  "default": "1"
+                }
+            ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Entity",
+        "metadata": {
+            "name": "ledger"
+        },
+        "spec": {
+            "type": "Entity",
+            "table": "ledger",
+            "retention": { "style": "keep" },
+            "keyFields": [
+                { "name": "name", "type": "StringField", "required": true }
+            ],
+            "coreFields": [
+                { "name": "holding", "type": "CrossoverForeignKey",
+                      "required": true,
+                      "target": "holding",
+                      "value": "name",
+                      "collection": "holdings",
+                      "copies": [
+                          { "from": "label", "to": "currency" }
+                      ]
+                },
+                { "name": "currency", "type": "StringField", "required": true,
+                  "maxlength": 32
+                }
+            ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Entity",
+        "metadata": {
+            "name": "account"
+        },
+        "spec": {
+            "type": "Entity",
+            "table": "account",
+            "retention": { "style": "keep" },
+            "keyFields": [
+                { "name": "name", "type": "PathField", "required": true }
+            ],
+            "coreFields": [
+                { "name": "ledger", "type": "CrossoverForeignKey",
+                      "required": true,
+                      "target": "ledger",
+                      "value": "name",
+                      "collection": "ledgers",
+                      "copies": [
+                          { "from": "holding", "to": "lholding" },
+                          { "from": "currency", "to": "lcurrency" }
+                      ]
+                },
+                { "name": "lholding", "type": "CrossoverForeignKey",
+                      "required": true,
+                      "target": "holding",
+                      "value": "name",
+                      "collection": "holdings",
+                      "copies": [
+                          { "from": "label", "to": "lcurrency" }
+                      ]
+                },
+                { "name": "holding", "type": "CrossoverForeignKey",
+                      "required": true,
+                      "target": "holding",
+                      "value": "name",
+                      "collection": "holdings",
+                      "copies": [
+                          { "from": "holdtype", "to": "holdtype" },
+                          { "from": "label", "to": "currency" }
+                      ]
+                },
+                { "name": "lcurrency", "type": "StringField", "required": true,
+                  "maxlength": 32
+                },
+                { "name": "currency", "type": "StringField",
+                  "maxlength": 32
+                },
+                { "name": "holdtype", "type": "AliasValueList",
+                      "required": true,
+                      "default": "CURRENCY",
+                      "maxlength": 32,
+                      "internal": [ "CURRENCY", "COMMODITY" ],
+                      "aliases": []
+                },
+                { "name": "elementtype", "type": "AliasValueList",
+                      "required": true,
+                      "maxlength": 32,
+                      "internal": [ "ASSET", "LIABILITY", "EQUITY", "INCOME", "EXPENSE" ],
+                      "aliases": []
+                },
+                { "name": "iscontra", "type": "BooleanField", "required": true,
+                  "default": "false"
+                },
+                { "name": "description", "type": "StringField" },
+                { "name": "status", "type": "AliasValueList",
+                      "required": true,
+                      "maxlength": 32,
+                      "internal": [ "ACTIVE", "INACTIVE", "CLOSED" ],
+                      "aliases": []
+                },
+                { "name": "statusmemo", "type": "StringField" },
+                { "name": "statushistory", "type": "HistoryField",
+                    "target": "status",
+                    "alsoLogs": ["statusmemo"]
+                },
+                { "name": "targetstatus", "type": "AliasValueList",
+                      "maxlength": 32,
+                      "internal": [ "ACTIVE", "INACTIVE", "CLOSED" ],
+                      "aliases": []
+                },
+                { "name": "effective", "type": "DateTimeField" }
+            ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Entity",
+        "metadata": {
+            "name": "accountbalance"
+        },
+        "spec": {
+            "type": "LocalContainedEntity",
+            "table": "accountbalance",
+            "parents": ["account"],
+            "canUpdate": true,
+            "canDelete": false,
+            "keyFields": [
+                { "name": "account", "type": "ForeignKey",
+                      "required": true,
+                      "target": "account",
+                      "value": "name",
+                      "collection": "accounts"
+                }
+            ],
+            "coreFields": [
+                { "name": "balance", "type": "AmountField", "required": true,
+                    "precision": 15, "scale": 2,
+                    "default": "0.00"
+                },
+                { "name": "presentvalue", "type": "AmountField", "required": true,
+                    "precision": 15, "scale": 2,
+                    "default": "0.00"
+                }
+            ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Entity",
+        "metadata": {
+            "name": "acctrans"
+        },
+        "spec": {
+            "type": "accting.acc-core.AccTrans",
+            "table": "acctrans",
+            "retention": { "style": "keep" },
+            "keyFields": [
+                { "name": "transnum", "type": "GeneratorField", "required": true,
+                      "maxlength": 32,
+                      "format": "T$YY-$NEXT",
+                      "min": 100000,
+                      "max": 999999
+                }
+            ],
+            "coreFields": [
+                { "name": "account", "type": "ForeignKey",
+                      "required": true,
+                      "target": "account",
+                      "value": "name",
+                      "collection": "accounts"
+                },
+                { "name": "memo", "type": "StringField", "required": true },
+                { "name": "created", "type": "DateTimeField", "required": true },
+                { "name": "posted", "type": "DateField", "required": true }
+            ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Entity",
+        "metadata": {
+            "name": "accsplit"
+        },
+        "spec": {
+            "type": "accting.acc-core.AccSplit",
+            "table": "accsplit",
+            "retention": { "style": "keep" },
+            "keyFields": [
+                { "name": "splitnum", "type": "GeneratorField", "required": true,
+                      "maxlength": 32,
+                      "format": "S$YY-$NEXT",
+                      "min": 1000000,
+                      "max": 9999999
+                }
+            ],
+            "coreFields": [
+                { "name": "acctrans", "type": "ForeignKey",
+                      "required": true,
+                      "target": "acctrans",
+                      "value": "transnum",
+                      "collection": "acctransactions"
+                },
+                { "name": "account", "type": "CrossoverForeignKey",
+                      "required": true,
+                      "target": "account",
+                      "value": "name",
+                      "collection": "accounts",
+                      "copies": [
+                          { "from": "elementtype", "to": "elementtype" },
+                          { "from": "holding", "to": "holding" }
+                      ]
+                },
+                { "name": "elementtype", "type": "StringField", "required": true,
+                      "maxlength": 32
+                },
+                { "name": "holding", "type": "ForeignKey",
+                      "required": true,
+                      "target": "holding",
+                      "value": "name",
+                      "collection": "holdings"
+                },
+                { "name": "memo", "type": "StringField" },
+                { "name": "change", "type": "ValueList", "required": true,
+                      "maxlength": 2,
+                      "values": [ "Dr", "Cr" ]
+                },
+                { "name": "quantity", "type": "AmountField",
+                    "precision": 15, "scale": 2
+                },
+                { "name": "price", "type": "AmountField",
+                    "precision": 15, "scale": 2
+                },
+                { "name": "amount", "type": "AmountField", "required": true,
+                    "precision": 15, "scale": 2
+                },
+                { "name": "created", "type": "DateTimeField", "required": true },
+                { "name": "posted", "type": "DateField", "required": true }
+            ],
+            "indexes": [
+                { "name": "accposted",
+                  "columns": [
+                      { "name": "account_id", "order": "asc" },
+                      { "name": "posted", "order": "desc" }
+                  ]
+                }
+            ]
+        }
+    }
+]
+

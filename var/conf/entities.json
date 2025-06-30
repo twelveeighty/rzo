@@ -8,6 +8,7 @@
         "spec": {
             "type": "Entity",
             "table": "useraccount",
+            "retention": { "style": "keep" },
             "keyFields": [
                 { "name": "useraccountnum", "type": "StringField", "required": true }
             ],
@@ -37,8 +38,10 @@
             "name": "session"
         },
         "spec": {
-            "type": "ImmutableEntity",
+            "type": "LocalEntity",
             "table": "session",
+            "canUpdate": false,
+            "canDelete": true,
             "keyFields": [],
             "coreFields": [
                 { "name": "useraccountnum", "type": "CrossoverForeignKey",
@@ -64,6 +67,7 @@
         "spec": {
             "type": "Entity",
             "table": "zone",
+            "retention": { "style": "delete" },
             "keyFields": [
                 { "name": "zone", "type": "StringField", "required": true,
                       "maxlength": 32
@@ -89,6 +93,7 @@
         "spec": {
             "type": "scheduler.trip.SubjectEntity",
             "table": "rider",
+            "retention": { "style": "delete" },
             "keyFields": [
                 { "name": "ridernum", "type": "StringField", "required": true,
                       "maxlength": 32
@@ -162,6 +167,7 @@
         "spec": {
             "type": "scheduler.trip.SubjectEntity",
             "table": "driver",
+            "retention": { "style": "delete" },
             "keyFields": [
                 { "name": "drivernum", "type": "StringField", "required": true,
                     "maxlength": 32
@@ -227,6 +233,7 @@
         "spec": {
             "type": "scheduler.trip.Trip",
             "table": "trip",
+            "retention": { "style": "delete" },
             "keyFields": [
                 { "name": "tripnum", "type": "GeneratorField", "required": true,
                       "maxlength": 32,

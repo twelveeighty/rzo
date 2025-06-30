@@ -247,6 +247,12 @@ export class Configuration implements IConfiguration {
             if (!config_j) {
                 break;
             }
+            if (config_j.metadata.voided) {
+                console.log(
+                    `Voided: kind: ${config_j.kind}, name: ` +
+                    `${config_j.metadata.name}`);
+                continue;
+            }
             switch (config_j.kind) {
                 case "Entity":
                     this.instantiate<Entity,EntityClass>(

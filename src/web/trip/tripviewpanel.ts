@@ -116,23 +116,36 @@ export class TripViewPanel extends BasePanel implements IPanel {
         return "trip-view-panel";
     }
 
-    private async loadDriver(): Promise<void> {
+    private async loadDriver(): Promise<Row | null> {
         const driverId = CONTEXT.c.getSubject("driver");
-        this.driver = await this.service.v.getOne(
-            this.logger, CONTEXT.c, this.driverEntity.v,
-            driverId);
+        if (driverId) {
+            this.driver = await this.service.v.getOne(
+                this.logger, CONTEXT.c, this.driverEntity.v, driverId);
+        } else {
+            this.driver = null;
+        }
+        return this.driver;
     }
 
     private onLogin(): void {
         this.driver = null;
         const persona = CONTEXT.c.persona.name;
         if (persona == "drivers") {
-            this.acceptButton.show();
-            this.assignButton.hide();
-            this.editButton.hide();
-            this.splitButton.hide();
-            this.cloneButton.hide();
-            this.loadDriver();
+            this.loadDriver().then((driver) => {
+                if (driver) {
+                    this.acceptButton.show();
+                    this.assignButton.hide();
+                    this.editButton.hide();
+                    this.splitButton.hide();
+                    this.cloneButton.hide();
+                } else {
+                    this.acceptButton.hide();
+                    this.assignButton.hide();
+                    this.editButton.hide();
+                    this.splitButton.hide();
+                    this.cloneButton.hide();
+                }
+            });
         } else if (persona == "planners" || persona == "admins") {
             this.acceptButton.hide();
             this.assignButton.show();
@@ -214,12 +227,12 @@ export class TripViewPanel extends BasePanel implements IPanel {
             .then(() => {
                 this.entity.v.put(this.service.v, state, CONTEXT.c)
                 .then((row) => {
-                    TOASTER.info(`Saved: ${row.getString("_id")}`);
+                    TOASTER.info(
+                        "Thank you, this trip has been added to your trips");
                     this.row = row;
                     this.rowToUI(this.row);
                 })
                 .catch((err) => {
-                    console.error(err);
                     TOASTER.error(`ERROR: ${err}`);
                 });
             })

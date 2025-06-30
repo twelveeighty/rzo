@@ -217,7 +217,31 @@
                 { "resource": "entity/trip", "action": "get", "effect": "allow" },
                 { "resource": "entity/trip", "action": "post", "effect": "allow" },
                 { "resource": "entity/trip", "action": "put", "effect": "allow" },
-                { "resource": "entity/trip", "action": "delete", "effect": "allow" }
+                { "resource": "entity/trip", "action": "delete", "effect": "allow" },
+                { "resource": "entity/holding", "action": "get", "effect": "allow" },
+                { "resource": "entity/holding", "action": "post", "effect": "allow" },
+                { "resource": "entity/holding", "action": "put", "effect": "allow" },
+                { "resource": "entity/holding", "action": "delete", "effect": "allow" },
+                { "resource": "entity/ledger", "action": "get", "effect": "allow" },
+                { "resource": "entity/ledger", "action": "post", "effect": "allow" },
+                { "resource": "entity/ledger", "action": "put", "effect": "allow" },
+                { "resource": "entity/ledger", "action": "delete", "effect": "allow" },
+                { "resource": "entity/account", "action": "get", "effect": "allow" },
+                { "resource": "entity/account", "action": "post", "effect": "allow" },
+                { "resource": "entity/account", "action": "put", "effect": "allow" },
+                { "resource": "entity/account", "action": "delete", "effect": "allow" },
+                { "resource": "entity/accountbalance", "action": "get", "effect": "allow" },
+                { "resource": "entity/accountbalance", "action": "post", "effect": "allow" },
+                { "resource": "entity/accountbalance", "action": "put", "effect": "allow" },
+                { "resource": "entity/accountbalance", "action": "delete", "effect": "allow" },
+                { "resource": "entity/acctrans", "action": "get", "effect": "allow" },
+                { "resource": "entity/acctrans", "action": "post", "effect": "allow" },
+                { "resource": "entity/acctrans", "action": "put", "effect": "allow" },
+                { "resource": "entity/acctrans", "action": "delete", "effect": "allow" },
+                { "resource": "entity/accsplit", "action": "get", "effect": "allow" },
+                { "resource": "entity/accsplit", "action": "post", "effect": "allow" },
+                { "resource": "entity/accsplit", "action": "put", "effect": "allow" },
+                { "resource": "entity/accsplit", "action": "delete", "effect": "allow" }
             ]
         }
     }

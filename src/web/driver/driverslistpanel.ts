@@ -67,10 +67,9 @@ export class DriversListPanel extends BasePanel implements IPanel {
     private onAnchorClick(evt: Event): void {
         const target = evt.currentTarget as Element;
         if (target && target.id && target.id.length > 4) {
-            // console.log(`clicked: ${target.id}`);
             const _id = target.id.slice(4);
-            this.controller.v.show("driver-view-panel",
-                                  new PanelData("string", _id));
+            this.controller.v.stack(
+                "driver-view-panel", new PanelData("string", _id));
         }
     }
 
@@ -142,7 +141,9 @@ export class DriversListPanel extends BasePanel implements IPanel {
         nav.classList.add("active");
         nav.ariaCurrent = "page";
         this.div.hidden = false;
-        this.queryList();
+        if (!PanelData.isParam("NoRefresh", panelData)) {
+            this.queryList();
+        }
     }
 
     hide(): void {

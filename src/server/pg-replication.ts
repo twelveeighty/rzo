@@ -1,7 +1,7 @@
 /*
     RZO - A Business Application Framework
 
-    Copyright (C) 2024 Frank Vanderham
+    Copyright (C) 2024-2025 Frank Vanderham
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -26,16 +26,21 @@ import {
     _IError, Logger, JsonObject, ReplicationFilter
 } from "../base/core.js";
 
-import { MvccController, MvccResult } from "./mvcc.js";
+import { MvccResult } from "./mvcc.js";
 import { PgBaseClient } from "./pg-client.js";
 
 import {
     STATE_TABLE, ReplicationResponse, ChangesFeedQuery,
     NormalChangeFeed, ChangeRecord, RevsDiffResponse, RevsDiffRequest,
     IReplicationService, RevsQuery, BulkDocsRequest, DocRevisions,
-    BulkGetRequest, BulkGetResponse, BulkGetResponseObj, ReplicationSource
+    BulkGetRequest, BulkGetResponse, BulkGetResponseObj, ReplicationSource,
+    ChangeStatements
 } from "./replication.js";
 
+
+export type PgReplicationSourceSpec = ClassSpec & {
+    pool: string;
+}
 
 class PgReplicationError extends _IError {
     constructor(message: string, code?: number, options?: ErrorOptions) {
@@ -43,32 +48,16 @@ class PgReplicationError extends _IError {
     }
 }
 
-type ChangeStatements = {
-    groupFields: string[];
-    selectFields: string[];
-    from: string;
-    where: string;
-}
-
-type PgReplicationSourceSpec = ClassSpec & {
-    pool: string;
-}
-
 export class PgReplication extends PgBaseClient implements IReplicationService {
-    private mvccLogger: Logger;
-    private mvccController: MvccController;
-    private filters: Map<string, ReplicationFilter>;
+    filters: Map<string, ReplicationFilter>;
 
     constructor(spec: PgReplicationSourceSpec) {
         super(spec.pool);
-        this.mvccLogger = new Logger("server/mvcc/replication");
-        this.mvccController = new MvccController(this.mvccLogger);
         this.filters = new Map();
     }
 
     configure(configuration: IConfiguration) {
         super.configure(configuration);
-        this.mvccLogger.configure(configuration);
         this.filters = configuration.getArtifacts(
             "ReplicationFilter", ReplicationFilter);
     }
@@ -77,7 +66,7 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
         return true;
     }
 
-    private filterArguments(input: string): [string, string] {
+    protected filterArguments(input: string): [string, string] {
         if (input.includes(":")) {
             const split = input.split(":");
             return [split[0], split.slice(1).join(":")];
@@ -86,7 +75,7 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
         }
     }
 
-    private getChangeStatements(logger: Logger, entity: Entity,
+    protected getChangeStatements(logger: Logger, entity: Entity,
                                 query: ChangesFeedQuery): ChangeStatements {
         const result = {
             groupFields: ["count(*)", "max(vc.updateseq)"],
@@ -126,6 +115,10 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
 
     async getChangesNormal(logger: Logger, entity: Entity,
                            query: ChangesFeedQuery): Promise<NormalChangeFeed> {
+        if (!entity.versioned) {
+            throw new PgReplicationError(
+                `Entity ${entity.name} is not versioned`, 400);
+        }
         if (query.style != "all_docs") {
             throw new PgReplicationError(
                 `Change feed query style '${query.style}' is not implemented`,
@@ -473,6 +466,10 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
             throw new PgReplicationError(
                 "new_edits was expected to be 'false' at this point", 400);
         }
+        if (!entity.versioned) {
+            throw new PgReplicationError(
+                `Entity ${entity.name} is not versioned`, 400);
+        }
         const inputRS = new MemResultSet(docsRequest.docs);
         const result: ReplicationResponse[] = [];
         const mandatory = ["_id", "_rev", "_revisions"];
@@ -549,8 +546,13 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
         return result;
     }
 
+    protected getRevsTable(entity: Entity): string {
+        return `${entity.table}_vc`;
+    }
+
     async getRevsDiffRequest(logger: Logger, entity: Entity,
-                     diffRequest: RevsDiffRequest): Promise<RevsDiffResponse> {
+                             diffRequest: RevsDiffRequest):
+                                 Promise<RevsDiffResponse> {
         const ids = Object.keys(diffRequest);
         const versions: string[] = [];
         for (const versionArray of Object.values(diffRequest)) {
@@ -562,8 +564,9 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
         }
         const idInList = "'" + ids.join("', '") + "'";
         const versionInList = "'" + versions.join("', '") + "'";
+        const table = this.getRevsTable(entity);
         const statement =
-            `select _id, _rev from ${entity.table}_vc where ` +
+            `select _id, _rev from ${table} where ` +
             `_id in (${idInList}) and _rev in (${versionInList})`;
         this.log(logger, statement);
         const results = await this.pool.query(statement);
@@ -663,6 +666,10 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
 
     async getSequenceId(logger: Logger, context: IContext,
                         entity: Entity): Promise<string> {
+        if (!entity.versioned) {
+            throw new PgReplicationError(
+                `Entity ${entity.name} is not versioned`, 400);
+        }
         const statement =
             `select coalesce(max(updateseq), 0) "max" from ${entity.table}_vc`;
         this.log(logger, statement);

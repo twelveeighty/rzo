@@ -1,7 +1,7 @@
 /*
     RZO - A Business Application Framework
 
-    Copyright (C) 2024 Frank Vanderham
+    Copyright (C) 2024-2025 Frank Vanderham
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -119,7 +119,7 @@ export class Logger {
     }
 
     log(msg: any, level?: LogThreshold): void {
-        if (level == undefined) {
+        if (level === undefined) {
             console.log(`|${this.name} ${msg}`);
         } else {
             if (level <= this.threshold) {
@@ -451,8 +451,16 @@ export class Row {
         return this.get(column) === null;
     }
 
+    isNullish(column: string): boolean {
+        return StringField.isNullish(this.get(column));
+    }
+
     isNotNull(column: string): boolean {
         return this.get(column) !== null;
+    }
+
+    isNotNullish(column: string): boolean {
+        return !StringField.isNullish(this.get(column));
     }
 
     has(column: string): boolean {
@@ -532,9 +540,16 @@ export class Row {
     }
 
     get core(): CoreColumns {
-        return new CoreColumns(
-            this.get("_id"), this.get("_rev"),
-            this.has("_att") ? this.get("_att") : null);
+        if (this.has("_rev")) {
+            return new CoreColumns(
+                this.get("_id"),
+                this.has("_att") ? this.get("_att") : null,
+                this.get("_rev"));
+        } else {
+            return new CoreColumns(
+                this.get("_id"),
+                this.has("_att") ? this.get("_att") : null);
+        }
     }
 
     deleteNoCheck(column: string): void {
@@ -594,7 +609,7 @@ export interface IResultSet {
     // Optional, could throw Error:
     reset(): void;
     rewind(): void;
-    getAll(): Object[];
+    getAll(): JsonObject[];
     getRow(): Row;
     find(callback: RowFinderCallback): Row | undefined;
     filter(callback: RowFinderCallback): Row[];
@@ -651,7 +666,7 @@ export class EmptyResultSet implements IResultSet {
         // no-op
     }
 
-    getAll(): Object[] {
+    getAll(): JsonObject[] {
         return [];
     }
 
@@ -669,7 +684,7 @@ export class MemResultSet implements IResultSet {
         return new MemResultSet([row.raw()]);
     }
 
-    constructor(store?: Object[]) {
+    constructor(store?: JsonObject[]) {
         this._store = store || [];
         this._storeReadIdx = -1;
         this._row = new Row();
@@ -769,7 +784,7 @@ export class MemResultSet implements IResultSet {
         return this._row.getString(column);
     }
 
-    getAll(): Object[] {
+    getAll(): JsonObject[] {
         return this._store;
     }
 
@@ -837,9 +852,7 @@ export interface IService {
     post(logger: Logger, context: IContext, entity: Entity,
          row: Row): Promise<Row>;
     delete(logger: Logger, context: IContext, entity: Entity, id: string,
-           rev: string): Promise<void>;
-    deleteImmutable(logger: Logger, context: IContext, entity: Entity,
-                    id: string): Promise<void>;
+           rev?: string): Promise<void>;
     queryDeferredToken(logger: Logger, context: IContext, parent: string,
                        contained: string, parentField: string,
                        containedField: string,
@@ -862,6 +875,7 @@ export interface IAuthenticator {
 type Metadata = {
     name: string;
     description?: string;
+    voided?: boolean;
 }
 
 export type ClassSpec = {
@@ -886,10 +900,62 @@ export type FieldCfg = ClassSpec & {
     indexed?: IndexType;
 }
 
+export type IndexedColumn = {
+    name: string;
+    order: IndexType;
+}
+
+export type IndexCfg = {
+    name: string;
+    columns: IndexedColumn[];
+}
+
+export type RetentionStyle = "keep" | "temporary" | "delete";
+
+export type EntityRetention = {
+    style: RetentionStyle;
+    age?: string;
+}
+
+/*
+ * ---------------------------------------------------------------------------
+ *                 |   Versioned   |   Immutable    |  Local
+ * ----------------|---------------|----------------|-------------------------
+ *     Replicated  |      Yes      |       Yes      |   No
+ * Can be deleted  |      Yes      |       No       |   Depends on canDelete
+ * Can be updated  |      Yes      |       No       |   Depends on canUpdate
+ * ----------------|---------------|----------------|-------------------------
+ */
+
+export type EntitySpecies = "versioned" | "immutable" | "local";
+
+export type EpilogueColumnOperator = "=" | "+=" | "-=";
+
+export type EpilogueColumn = {
+    column: string;
+    operator?: EpilogueColumnOperator;
+    value: any;
+}
+
+export type EpilogueKey = {
+    keyColumn: string;
+    keyValue: string;
+}
+
+export type Epilogue = {
+    entity: Entity;
+    action: "put" | "post";
+    key?: EpilogueKey;
+    filter?: Filter;
+    columns: EpilogueColumn[];
+}
+
 export type EntitySpec = ClassSpec & {
     table: string;
+    retention?: EntityRetention;
     keyFields: FieldCfg[];
     coreFields: FieldCfg[];
+    indexes?: IndexCfg[];
 }
 
 type MembershipCfg = {
@@ -1025,21 +1091,26 @@ export type Attachments = { att: Attachment[] };
 
 class CoreColumns {
     _id: string;
-    _rev: string;
+    _rev?: string;
     _att: Attachments | null;
 
     static V_NAMES = ["_id", "_rev", "_att"];
+    static L_NAMES = ["_id", "_att"];
 
-    static addTo(columns: string[]): string[] {
+    static addTo(entity: Entity, columns: string[]): string[] {
+        const includeList = !entity.local ? CoreColumns.V_NAMES
+            : CoreColumns.L_NAMES;
         // Prevent duplicates of already existing core columns
         return columns.filter(
-            (column) => !CoreColumns.V_NAMES.includes(column)
-        ).concat(CoreColumns.V_NAMES);
+            (column) => !includeList.includes(column)
+        ).concat(includeList);
     }
 
-    constructor(id: string, rev: string, att: Attachments | null) {
+    constructor(id: string, att: Attachments | null, rev?: string) {
         this._id = id;
-        this._rev = rev;
+        if (rev !== undefined) {
+            this._rev = rev;
+        }
         this._att = att;
     }
 
@@ -1051,6 +1122,10 @@ class CoreColumns {
 }
 
 export class BigDecimal {
+    /* Classic floating point tests:
+     *  0.1 + 0.2 = 0.30000000000000004
+     *  520.02 - 520.04 = -0.01999999999998181
+     */
     // Configuration: constants
     static DECIMALS = 18; // number of decimals on all instances
     static ROUNDED = true; // numbers are truncated (false) or rounded (true)
@@ -1059,6 +1134,9 @@ export class BigDecimal {
     private _n: bigint;
 
     constructor(value: any) {
+        if (value === undefined || value === null) {
+            throw new CoreError("Cannot create BigDecimal from null/undefined");
+        }
         this._n = BigDecimal._toN(value);
     }
 
@@ -1113,6 +1191,15 @@ export class BigDecimal {
                    .toNumeric(precision, scale);
     }
 
+    static ensure(value: unknown): BigDecimal {
+        if (value instanceof BigDecimal) {
+            return <BigDecimal>value;
+        }
+        throw new CoreError(
+            `Value is not a BigDecimal instance: ${value}, ` +
+            `typeof = ${typeof value}`);
+    }
+
     add(num: any): BigDecimal {
         return new BigDecimal(this._n + BigDecimal._toN(num));
     }
@@ -1139,11 +1226,22 @@ export class BigDecimal {
         return this._n == other._n;
     }
 
+    toPostgres(prepareValue: (value: any) => any): any {
+        return `${this}`;
+    }
+
     toString(): string {
-        const str = this._n.toString().padStart(BigDecimal.DECIMALS + 1, "0");
-        return str.slice(0, -BigDecimal.DECIMALS) +
-               "." +
-               str.slice(-BigDecimal.DECIMALS).replace(/\.?0+$/, "");
+        const sign = this._n < 0n ? "-" : "";
+        const str = this._n.toString().replace("-", "").
+            padStart(BigDecimal.DECIMALS + 1, "0");
+        const frac = str.slice(-BigDecimal.DECIMALS).replace(/\.?0+$/, "");
+        return frac ?
+            sign + str.slice(0, -BigDecimal.DECIMALS) + "." + frac :
+            sign + str.slice(0, -BigDecimal.DECIMALS);
+    }
+
+    toJSON(): string {
+        return `${this}`;
     }
 
     toNumeric(precision: number, scale: number): string {
@@ -1227,7 +1325,7 @@ export class State {
         return this.field(name).value;
     }
 
-    asString(name: string): any {
+    asString(name: string): string {
         return this.field(name).asString;
     }
 }
@@ -1768,6 +1866,64 @@ export class Cfg<T> {
     }
 }
 
+type PathFieldCfg = FieldCfg & {
+    separator: string;
+}
+
+export class PathField extends StringField {
+    separator: string;
+
+    static VALIDCHARS = /^[a-z0-9_]+$/;
+
+    constructor(entity: Entity, config: PathFieldCfg) {
+        super(entity, config);
+        this.separator = config.separator || ".";
+    }
+
+    async validate(phase: Phase, state: State, fieldState: FieldState,
+                   context: IContext): Promise<void> {
+        await super.validate(phase, state, fieldState, context);
+        if (phase == "set" && fieldState.dirtyNotNull) {
+            const testValue = fieldState.asString.toLowerCase().replaceAll(
+                this.separator, "");
+            if (!testValue) {
+                throw new CoreError(
+                    `Invalid value for Field ${this.fqName}: ` +
+                    `'${fieldState.asString}' contains only separators`);
+            }
+            this.testValidCharacters(testValue, PathField.VALIDCHARS);
+        }
+    }
+
+    load(row: Row, state: State): void {
+        if (this.separator == ".") {
+            super.load(row, state);
+        } else {
+            const raw = row.get(this.name);
+            if (raw === null) {
+                super.load(row, state);
+            } else {
+                state.field(this.name).load(
+                    Entity.asString(raw).replaceAll(".", this.separator));
+            }
+        }
+    }
+
+    save(row: Row, state: State): void {
+        const raw = state.asString(this.name);
+        if (raw) {
+            row.updateOrAdd(this.name, raw.replaceAll(this.separator, "."));
+        } else {
+            super.save(row, state);
+        }
+    }
+
+    get ddlCreatorClass(): string {
+        return "base.core-ddl.LTreeFieldDDL";
+    }
+
+}
+
 export class AncestryField extends StringField {
     key: Cfg<Field>;
     collection: Cfg<Collection>;
@@ -1786,8 +1942,7 @@ export class AncestryField extends StringField {
         if (!orig) {
             return orig;
         }
-        const origStr = <string>orig;
-        const strValue = origStr.toLowerCase();
+        const strValue = (<string>orig).toLowerCase();
         this.testValidCharacters(strValue, AncestryField.VALIDCHARS);
         return strValue;
     }
@@ -1872,20 +2027,19 @@ export class AncestryField extends StringField {
                 if (splits.length == 1) {
                     throw new CoreError(
                         `${this.fqName}: if no parent is specified, then ` +
-                                `ancestry field must be equal to key ` +
-                                    `'${this.key.v.fqName}'`);
+                        `ancestry field must be equal to key ` +
+                        `'${this.key.v.fqName}'`);
                 }
                 if (splits.some((part) => !part)) {
                     throw new CoreError(
                         `${this.fqName}: empty component(s) in value ` +
-                            `'${newValue}'`);
+                        `'${newValue}'`);
                 }
                 const matchKey = splits.pop();
                 if (matchKey != keyValue) {
                     throw new CoreError(
-                        `${this.fqName}: the final component of the ` +
-                                `ancestry field must be equal to key ` +
-                                    `'${this.key.v.fqName}'`);
+                        `${this.fqName}: the final component of the ancestry ` +
+                        `field must be equal to key '${this.key.v.fqName}'`);
                 }
                 const parentAncestry = splits.join(".");
                 const parentExists = await this.checkParent(
@@ -1893,14 +2047,14 @@ export class AncestryField extends StringField {
                 if (!parentExists) {
                     throw new CoreError(
                         `${this.fqName}: parent '${parentAncestry}' does not ` +
-                            `exist`);
+                        `exist`);
                 }
             }
         }
     }
 
     get ddlCreatorClass(): string {
-        return "base.core-ddl.AncestryFieldDDL";
+        return "base.core-ddl.LTreeFieldDDL";
     }
 
 }
@@ -2207,7 +2361,8 @@ export class UniqueSiblingSequence extends IntegerField {
         this.key.v = <ForeignKey>field;
         this.source.setIf(
             `${this.fqName}: 'source' `,
-            configuration.getSource(this.source.name).ensure(ServiceSource) as ServiceSource);
+            configuration.getSource(this.source.name)
+            .ensure(ServiceSource) as ServiceSource);
     }
 
     async validate(phase: Phase, state: State, fieldState: FieldState,
@@ -2242,12 +2397,16 @@ export class Entity {
     readonly name: string;
     readonly type: string;
     readonly table: string;
-    protected _immutable: boolean;
+    readonly retention: EntityRetention;
+    protected _species: EntitySpecies;
+    protected _canDelete: boolean;
+    protected _canUpdate: boolean;
     keyFields: Map<string, Field>;
     coreFields: Map<string, Field>;
     contains: ContainedEntity[];
     regionalizedBy?: Field;
     logger: Logger;
+    indexes?: IndexCfg[];
 
     static getFieldClass(kind: string,
                          blueprints: Map<string, any>): FieldClass {
@@ -2279,8 +2438,11 @@ export class Entity {
     constructor(config: TypeCfg<EntitySpec>, blueprints: Map<string, any>) {
         this.name = config.metadata.name;
         this.type = config.spec.type;
-        this._immutable = false;
+        this._species = "versioned";
+        this._canDelete = true;
+        this._canUpdate = true;
         this.table = config.spec.table;
+        this.retention = config.spec.retention || {"style": "keep"};
         this.keyFields = new Map();
         this.coreFields = new Map();
         this.contains = [];
@@ -2297,6 +2459,9 @@ export class Entity {
                 field_name, this.loadField(field, blueprints, "core"));
         }
         this.logger = new Logger(`entity/${this.name}`);
+        if (config.spec.indexes) {
+            this.indexes = config.spec.indexes;
+        }
     }
 
     async query(service: IService, query: Query,
@@ -2411,6 +2576,11 @@ export class Entity {
 
     async put(service: IService, state: State,
               context: IContext): Promise<Row> {
+        if (this.canUpdate) {
+            throw new CoreError(
+                `Entity ${this.name} is ${this.species}, cannot update ` +
+                `it this way`);
+        }
         await this.validate("update", state, context);
         await this.activate("update", state, context);
         const row = this.stateToRow(state);
@@ -2428,6 +2598,11 @@ export class Entity {
 
     async delete(service: IService, state: State,
                  context: IContext): Promise<void> {
+        if (this.canDelete) {
+            throw new CoreError(
+                `Entity ${this.name} is ${this.species}, cannot delete ` +
+                `it this way`);
+        }
         await this.validate("delete", state, context);
         await this.activate("delete", state, context);
         if (state.hasId()) {
@@ -2478,8 +2653,46 @@ export class Entity {
         return this.getField(name).setValue(state, value, context);
     }
 
+    get species(): EntitySpecies {
+        return this._species;
+    }
+
+    get versioned(): boolean {
+        return this.species == "versioned";
+    }
+
     get immutable(): boolean {
-        return this._immutable;
+        return this.species == "immutable";
+    }
+
+    get local(): boolean {
+        return this.species == "local";
+    }
+
+    get canDelete(): boolean {
+        switch (this.species) {
+            case "versioned":
+                return true;
+            case "immutable":
+                return false;
+            case "local":
+                return this._canDelete;
+            default:
+                throw new CoreError(`Unrecognized species: ${this.species}`);
+        }
+    }
+
+    get canUpdate(): boolean {
+        switch (this.species) {
+            case "versioned":
+                return true;
+            case "immutable":
+                return false;
+            case "local":
+                return this._canUpdate;
+            default:
+                throw new CoreError(`Unrecognized species: ${this.species}`);
+        }
     }
 
     get allFields(): Field[] {
@@ -2583,6 +2796,14 @@ export class Entity {
         return [];
     }
 
+    hasEpilogue(row?: Row): boolean {
+        return false;
+    }
+
+    epilogue(row: Row, context?: IContext): Epilogue[] {
+        throw new CoreError(`Entity ${this.name} does not support epilogue`);
+    }
+
     get ddlCreatorClass(): string {
         return "base.core-ddl.EntityDDL";
     }
@@ -2592,15 +2813,23 @@ export class Entity {
 export class ImmutableEntity extends Entity {
     constructor(config: TypeCfg<EntitySpec>, blueprints: Map<string, any>) {
         super(config, blueprints);
-        this._immutable = true;
+        this._species = "immutable";
     }
 
-    async delete(service: IService, state: State,
-                 context: IContext): Promise<void> {
-        await this.validate("delete", state, context);
-        if (state.hasId()) {
-            await service.deleteImmutable(this.logger, context, this, state.id);
-        }
+}
+
+export type LocalEntitySpec = EntitySpec & {
+    canDelete: boolean;
+    canUpdate: boolean;
+}
+
+export class LocalEntity extends Entity {
+    constructor(config: TypeCfg<LocalEntitySpec>,
+                blueprints: Map<string, any>) {
+        super(config, blueprints);
+        this._species = "local";
+        this._canDelete = config.spec.canDelete ?? true;
+        this._canUpdate = config.spec.canUpdate ?? true;
     }
 }
 
@@ -2656,7 +2885,51 @@ export class ImmutableContainedEntity extends ContainedEntity {
     constructor(config: TypeCfg<ContainedEntitySpec>,
                 blueprints: Map<string, any>) {
         super(config, blueprints);
-        this._immutable = true;
+        this._species = "immutable";
+    }
+}
+
+export type LocalContainedEntitySpec = ContainedEntitySpec & LocalEntitySpec;
+
+export class LocalContainedEntity extends ContainedEntity {
+    constructor(config: TypeCfg<LocalContainedEntitySpec>,
+                blueprints: Map<string, any>) {
+        super(config, blueprints);
+        this._species = "local";
+        this._canDelete = config.spec.canDelete ?? true;
+        this._canUpdate = config.spec.canUpdate ?? true;
+    }
+}
+
+type ValueListCfg = FieldCfg & {
+    values: string[];
+}
+
+/* A fixed list of unique values.
+ */
+export class ValueList extends StringField {
+    values: string[];
+
+    constructor(entity: Entity, config: ValueListCfg) {
+        super(entity, config);
+        this.values = config.values;
+        if (this.default && !this.values.includes(this.default)) {
+            throw new CoreError(
+                `Default value ${this.default} is not a valid` +
+                ` entry for ${this.fqName}`)
+        }
+    }
+
+    async validate(phase: Phase, state: State, fieldState: FieldState,
+                   context: IContext): Promise<void> {
+        await super.validate(phase, state, fieldState, context);
+        if (phase != "delete" && fieldState.isNotNull) {
+            if (!this.values.includes(fieldState.asString)) {
+                throw new CoreError(
+                    `${fieldState.asString} is not a valid` +
+                    ` entry for ${this.fqName}`)
+            }
+        }
     }
 }
 
@@ -2770,22 +3043,25 @@ export class GeneratorField extends StringField {
         this.generatorName = `${this.entity.name}_${this.name}_seq`;
     }
 
+    async generate(service: IService, context: IContext): Promise<string> {
+        const nextVal =
+            await service.getGeneratorNext(
+                this.logger, context, this.generatorName);
+        let result = this.generatorSpec.format;
+        if (result.includes("$YY")) {
+            const currentYear = "" + new Date().getFullYear();
+            const currentYearShort = currentYear.slice(-2);
+            result = result.replaceAll("$YYYY", currentYear);
+            result = result.replaceAll("$YY", currentYearShort);
+        }
+        return result.replaceAll("$NEXT", nextVal);
+    }
+
     async create(state: State, context: IContext,
                  service?: IService): Promise<void> {
         if (service) {
-            const nextVal =
-                await service.getGeneratorNext(
-                    this.logger, context, this.generatorName);
-
-            let result = this.generatorSpec.format;
-            if (result.includes("$YY")) {
-                const currentYear = "" + new Date().getFullYear();
-                const currentYearShort = currentYear.slice(-2);
-                result = result.replaceAll("$YYYY", currentYear);
-                result = result.replaceAll("$YY", currentYearShort);
-            }
-            result = result.replaceAll("$NEXT", nextVal);
-            state.field(this.name).value = result;
+            const nextVal = await this.generate(service, context);
+            state.field(this.name).value = nextVal;
         } else {
             throw new CoreError(
                 `${this.fqName}: this field requires a Service to be created`);
@@ -2863,7 +3139,19 @@ export class AmountField extends Field {
         if (value instanceof BigDecimal) {
             return value;
         }
+        if (value === null) {
+            return value;
+        }
         return new BigDecimal(BigDecimal.guard(value, this.fqName));
+    }
+
+    transformDataForRow(data: JsonObject): void {
+        if (this.name in data) {
+            const val = data[this.name];
+            if (val !== undefined) {
+                data[this.name] = this.transform(val);
+            }
+        }
     }
 
     get ddlCreatorClass(): string {
@@ -2876,10 +3164,14 @@ export class AmountField extends Field {
     }
 
     save(row: Row, state: State): void {
-        const fieldState = state.field(this.name);
-        row.updateOrAdd(this.name,
-                BigDecimal.formatNumeric(fieldState.value, this.precision,
-                                         this.scale, this.fqName));
+        const fieldValue = state.field(this.name).value;
+        if (fieldValue !== null) {
+            row.updateOrAdd(this.name,
+                    BigDecimal.formatNumeric(
+                        fieldValue, this.precision, this.scale, this.fqName));
+        } else {
+            row.updateOrAdd(this.name, null);
+        }
     }
 
     hasChanged(oldValue: any, newValue: any): boolean {
@@ -2887,13 +3179,6 @@ export class AmountField extends Field {
             return (<BigDecimal>newValue).equals(<BigDecimal>oldValue);
         }
         return super.hasChanged(oldValue, newValue);
-    }
-
-    async create(state: State, context: IContext,
-                 service?: IService): Promise<void> {
-        if (this.required) {
-            state.field(this.name).value = new BigDecimal("0");
-        }
     }
 }
 
@@ -3113,11 +3398,7 @@ export class Collection {
         this.entity = new Cfg(config.spec.entity);
         this.source = new Cfg(config.spec.source);
         this.via = config.spec.via;
-        if (Query.isSelectStar(config.spec.fields)) {
-            this.fields = config.spec.fields;
-        } else {
-            this.fields = CoreColumns.addTo(config.spec.fields);
-        }
+        this.fields = config.spec.fields;
         this.orderBy = config.spec.orderBy || [];
         this.logger = new Logger(`collection/${this.name}`);
     }
@@ -3133,6 +3414,9 @@ export class Collection {
             configuration.getSource(this.source.name).ensure(
                 ServiceSource) as ServiceSource
         );
+        if (!Query.isSelectStar(this.fields)) {
+            this.fields = CoreColumns.addTo(this.entity.v, this.fields);
+        }
     }
 
     async createFilter(context: IContext, filter?: Filter): Promise<Filter> {

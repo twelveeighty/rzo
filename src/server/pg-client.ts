@@ -1,7 +1,7 @@
 /*
     RZO - A Business Application Framework
 
-    Copyright (C) 2024 Frank Vanderham
+    Copyright (C) 2024-2025 Frank Vanderham
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -27,7 +27,7 @@ import {
     Entity, IResultSet, IConfiguration, Query, AsyncTask, DaemonWorker,
     EmptyResultSet, MemResultSet, Row, TypeCfg, ClassSpec, Collection,
     IContext, Filter, ServiceSource, _IError, Nobody, DeferredToken,
-    SummaryField, Persona, Cfg, IService, SideEffects, State, Logger
+    SummaryField, Persona, Cfg, IService, SideEffects, State, Logger, Epilogue
 } from "../base/core.js";
 
 import { VERSION, NOCONTEXT } from "../base/configuration.js";
@@ -39,6 +39,7 @@ import { ITaskRunner, Scheduler } from "../base/scheduler.js";
 
 import { MvccResult, MvccController } from "./mvcc.js";
 import { IElectorService, LeaderElector } from "./election.js";
+import { IHooverService } from "./hoover.js";
 
 class PgClientError extends _IError {
     constructor(message: string, code?: number, options?: ErrorOptions) {
@@ -118,6 +119,8 @@ export class PgBaseClient {
     sessionEntity: Cfg<Entity>;
     userEntity: Cfg<Entity>;
     conn: Cfg<PgConnection>;
+    protected mvccController: MvccController;
+    protected mvccLogger: Logger;
 
     static VC_COLS = [
         "vc.seq", "vc._id as vc_id", "vc._rev as vc_rev",
@@ -131,6 +134,8 @@ export class PgBaseClient {
         this.sessionEntity = new Cfg("session");
         this.userEntity = new Cfg("useraccount");
         this.conn = new Cfg(pool);
+        this.mvccLogger = new Logger("server/mvcc");
+        this.mvccController = new MvccController(this.mvccLogger);
     }
 
     configure(configuration: IConfiguration) {
@@ -143,6 +148,7 @@ export class PgBaseClient {
             throw new PgClientError(
                 `Worker ${this.conn.name} is not a PgConnection`);
         }
+        this.mvccLogger.configure(configuration);
     }
 
     get pool(): Pool<pg.Client> {
@@ -209,9 +215,8 @@ export class PgBaseClient {
         return "" + result.rows[0].max;
     }
 
-    private async getQueryOneImmutable(logger: Logger, context: IContext,
-                                       entity: Entity,
-                                       filter: Filter): Promise<Row> {
+    private async getQueryOneUnversioned(logger: Logger, entity: Entity,
+                                         filter: Filter): Promise<Row> {
         const statement =
             `select * from ${entity.table} where (${filter.where}) limit 1`;
         this.log(logger, statement);
@@ -222,12 +227,9 @@ export class PgBaseClient {
         return Row.dataToRow(result.rows[0], entity);
     }
 
-    async getQueryOne(logger: Logger, context: IContext, entity: Entity,
-                      filter: Filter): Promise<Row> {
-        if (entity.immutable) {
-            return await this.getQueryOneImmutable(
-                logger, context, entity, filter);
-        }
+    protected async getQueryOneVersioned(logger: Logger, entity: Entity,
+                                         filter: Filter,
+                                         client?: pg.Client): Promise<Row> {
         const statement =
             `select ${PgBaseClient.VC_COL_SELECT}, e.* ` +
             `from ${entity.table} as e ` +
@@ -235,7 +237,8 @@ export class PgBaseClient {
             `vc._rev = e._rev) ` +
             `where (${filter.where}) limit 1`;
         this.log(logger, statement);
-        const result = await this.pool.query(statement);
+        const result = client !== undefined ? await client.query(statement) :
+            await this.pool.query(statement);
         if (result.rows.length === 0) {
             return new Row();
         }
@@ -243,8 +246,16 @@ export class PgBaseClient {
             Row.dataToRow(result.rows[0], entity), true);
     }
 
-    private async getOneImmutable(logger: Logger, context: IContext,
-                                  entity: Entity, id: string): Promise<Row> {
+    async getQueryOne(logger: Logger, context: IContext, entity: Entity,
+                      filter: Filter): Promise<Row> {
+        if (!entity.versioned) {
+            return this.getQueryOneUnversioned(logger, entity, filter);
+        }
+        return this.getQueryOneVersioned(logger, entity, filter);
+    }
+
+    private async getOneUnversioned(logger: Logger, context: IContext,
+                                    entity: Entity, id: string): Promise<Row> {
         const statement = `select * from ${entity.table} where _id = \$1`;
         const parameters = [id];
         this.log(logger, statement, parameters);
@@ -257,17 +268,17 @@ export class PgBaseClient {
 
     async getOne(logger: Logger, context: IContext, entity: Entity, id: string,
                  rev?: string): Promise<Row> {
-        if (entity.immutable) {
-            return await this.getOneImmutable(logger, context, entity, id);
+        if (!entity.versioned) {
+            return await this.getOneUnversioned(logger, context, entity, id);
         }
         let row: Row = new Row();
         if (rev) {
             const statement =
                 `select ${PgBaseClient.VC_COL_SELECT}, v.* ` +
-                `from ${entity.table}_v as v ` +
-                `inner join ${entity.table}_vc as vc on ` +
+                `from ${entity.table}_vc as vc ` +
+                `left join ${entity.table}_v as v on ` +
                 `(vc._id = v._id and vc._rev = v._rev) ` +
-                `where v._id = \$1 and v._rev = \$2`;
+                `where vc._id = \$1 and vc._rev = \$2`;
             const parameters = [id, rev];
             this.log(logger, statement, parameters);
             const result = await this.pool.query(statement, parameters);
@@ -291,6 +302,43 @@ export class PgBaseClient {
             }
         }
         return row;
+    }
+
+    protected async postEntity(logger: Logger, userId: string,
+                               client: pg.Client, entity: Entity, row: Row,
+                               context?: IContext,
+                               preventEpilogue?: boolean): Promise<Row> {
+        if (entity.versioned) {
+            const mvccResult = this.mvccController.postMvcc(row, userId);
+            await this.applyMvccResults(logger, client, entity, mvccResult);
+            return Row.must(mvccResult.leafTable.leafActionPost?.payload);
+        } else {
+            this.mvccController.convertToPayload(row);
+            // We must calculate _rev without the _id column present
+            const rev = entity.immutable ?
+                `1-${this.mvccController.newVersion(row).hash}` :
+                "";
+            row.add("_id", Entity.generateId());
+            if (rev) {
+                row.add("_rev", rev);
+            }
+            row.add("updated", new Date());
+            row.add("updatedby", userId);
+            const epilogue = !preventEpilogue && entity.hasEpilogue(row) ?
+                entity.epilogue(row, context) : null;
+            const statement = `insert into ${entity.table} ` +
+                `(${row.columns.join()}) ` +
+                `values (` +
+                `${row.columnNumbers.join()}` +
+                `)`;
+            const parameters = row.values();
+            this.log(logger, statement, parameters);
+            await client.query(statement, parameters);
+            if (epilogue) {
+                await this.handleEpilogue(logger, client, epilogue, context);
+            }
+            return row;
+        }
     }
 
     async getDBInfo(logger: Logger, context: IContext): Promise<Row> {
@@ -318,6 +366,7 @@ export class PgBaseClient {
     protected async applyMvccResults(logger: Logger, client: pg.Client,
                                      entity: Entity,
                                      result: MvccResult): Promise<void> {
+        const now = new Date();
         const putStatement = `update ${entity.table}_vc set ` +
             `updateseq = nextval('${entity.table}_vc_useq'), ` +
             `isleaf = \$1, isdeleted = \$2, isstub = \$3, isconflict = \$4, ` +
@@ -330,12 +379,33 @@ export class PgBaseClient {
         for (const vc of result.vcTables) {
             const record = vc.record;
             if (vc.action == "put") {
+                const eventualStub = (!record.isleaf && !record.isdeleted)
+                    || record.isstub;
+                const isStub = eventualStub &&
+                    (entity.retention.style == "delete");
                 const parameters = [
-                    record.isleaf, record.isdeleted, record.isstub,
+                    record.isleaf, record.isdeleted, isStub,
                     record.isconflict, record.iswinner, record.seq!
                 ];
                 this.log(logger, putStatement, parameters);
                 await client.query(putStatement, parameters);
+                if (entity.retention.style == "temporary" &&
+                    (eventualStub || record.isdeleted)) {
+                    const statement =
+                        `insert into ${entity.table}_cy (` +
+                        `_id, _rev, updated) values (` +
+                        `\$1, \$2, \$3)`;
+                    const parameters = [record._id, record._rev, now];
+                    this.log(logger, statement, parameters);
+                    await client.query(statement, parameters);
+                } else if (entity.retention.style == "delete" && eventualStub) {
+                    const statement =
+                        `delete from ${entity.table}_v where ` +
+                        `_id = \$1 and _rev = \$2`;
+                    const parameters = [record._id, record._rev];
+                    this.log(logger, statement, parameters);
+                    await client.query(statement, parameters);
+                }
             } else if (vc.action == "post") {
                 const parameters = [
                     record._id!, record._rev!, record.updated!,
@@ -356,7 +426,8 @@ export class PgBaseClient {
             const parameters = row.values();
             this.log(logger, statement, parameters);
             await client.query(statement, parameters);
-        } else if (result.versionTable.type == "delcopy") {
+        } else if (result.versionTable.type == "delcopy" &&
+                   entity.retention.style != "delete") {
             const id = result.versionTable.versionActionDelcopy!._id;
             const fromRev = result.versionTable.versionActionDelcopy!.fromRev;
             const toRev = result.versionTable.versionActionDelcopy!.toRev;
@@ -451,6 +522,137 @@ export class PgBaseClient {
         }
     }
 
+    protected async handlePutVersionedEpilogue(
+                logger: Logger, client: pg.Client,
+                epilogue: Epilogue, userId: string): Promise<void> {
+        /* A versioned epilogue does not support any operators other than '='.
+         * We first pull the target entity, which allows us to apply the
+         * filter at source, if present.
+         * This means that the epilogue must have '_id' as its key present.
+         * If no row is found, and a filter was present, we silently do nothing,
+         * however, if no filter was present, no row returned is treated as
+         * an error.
+         */
+        if (!epilogue.key) {
+            throw new PgClientError(
+                "Epilogue 'put' is missing the 'key' attribute");
+        }
+        if (epilogue.key.keyColumn != "_id") {
+            throw new PgClientError(
+                "Epilogue 'put' on a versioned entity must have its _id " +
+                "specified as a key");
+        }
+        const id = epilogue.key.keyValue;
+        const hasFilter = !!epilogue.filter;
+        const filter = epilogue.filter || new Filter();
+        filter.op("e._id", "=", id);
+        const row = await this.getQueryOneVersioned(
+            logger, epilogue.entity, filter, client);
+        if (!row.empty) {
+            // Apply the update(s) to the row
+            for (const col of epilogue.columns) {
+                const operator = col.operator || "=";
+                if (operator != "=") {
+                    throw new PgClientError(
+                        `Versioned epilogue updates must all have their ` +
+                        `operators as '='`);
+                }
+                row.put(col.column, col.value);
+            }
+            const versions = await this.pullVcTable(
+                logger, epilogue.entity, id, client);
+            const mvccResult = this.mvccController.putMvcc(
+                row, versions, false, userId);
+            await this.applyMvccResults(
+                logger, client, epilogue.entity, mvccResult);
+        } else {
+            if (!hasFilter) {
+                throw new PgClientError(
+                    `Epilogue entity ${epilogue.entity.name} with key ` +
+                    `${id} not found`);
+            }
+        }
+    }
+
+    protected async handlePutLocalEpilogue(logger: Logger, client: pg.Client,
+                                           epilogue: Epilogue): Promise<void> {
+        if (!epilogue.key) {
+            throw new PgClientError(
+                "Epilogue 'put' is missing the 'key' attribute");
+        }
+        const filter = epilogue.filter || new Filter();
+        filter.op(epilogue.key.keyColumn, "=", epilogue.key.keyValue);
+        const where = filter.where;
+        const columnOps: string[] = [];
+        let pos = 1;
+        const parameters: any[] = [];
+        for (const col of epilogue.columns) {
+            parameters.push(col.value);
+            const operator = col.operator || "=";
+            switch (operator) {
+                case "=":
+                    columnOps.push(`${col.column} = \$${pos}`);
+                    break;
+                case "+=":
+                    columnOps.push(
+                        `${col.column} = ${col.column} + \$${pos}`);
+                    break;
+                case "-=":
+                    columnOps.push(
+                        `${col.column} = ${col.column} - \$${pos}`);
+                    break;
+                default:
+                    throw new PgClientError(
+                        `Invalid epilogue operator: ${operator}`);
+            }
+            pos++;
+        }
+        const statement =
+            `update ${epilogue.entity.table} ` +
+            `set ${columnOps.join(", ")} ` +
+            `where ${where}`;
+        this.log(logger, statement, parameters);
+        await client.query(statement, parameters);
+    }
+
+    protected async handleEpilogue(logger: Logger, client: pg.Client,
+                                   epilogues: Epilogue[],
+                                   context?: IContext): Promise<void> {
+        for (const entry of epilogues) {
+            if (entry.action == "post") {
+                const row = new Row();
+                for (const col of entry.columns) {
+                    row.add(col.column, col.value);
+                }
+                const userId = row.has("updatedby") ? row.get("updatedby") :
+                    (context?.userAccountId || Nobody.ID);
+                await this.postEntity(
+                    logger, userId, client, entry.entity, row, context, true);
+            } else if (entry.action == "put") {
+                if (entry.entity.local) {
+                    await this.handlePutLocalEpilogue(logger, client, entry);
+                } else if (entry.entity.versioned) {
+                    /*
+                     * NOTE: if no context is specified, we assume that this is
+                     * not a user-initiated change, but likely due to
+                     * replication, so we silently ignore versioned epilogues.
+                     */
+                    if (context) {
+                        await this.handlePutVersionedEpilogue(
+                            logger, client, entry, context.userAccountId);
+                    }
+                } else {
+                    throw new PgClientError(
+                        `Epilogue 'put' is attempting to modify the ` +
+                        `immutable entity ${entry.entity.name}`);
+                }
+            } else {
+                throw new PgClientError(
+                    `Unknown or invalid epilogue action ${entry.action}`);
+            }
+        }
+    }
+
     protected log(logger: Logger, statement: string, parameters?: any[]): void {
         logger.debug(statement);
         if (parameters && parameters.length) {
@@ -480,26 +682,22 @@ type PgClientSourceSpec = ClassSpec & {
     pool: string;
 }
 
-export class PgClient extends PgBaseClient implements IService, IElectorService,
-                                                      ISessionBackendService,
-                                                      ITaskRunner {
+export class PgClient extends PgBaseClient implements IService,
+                IElectorService, ISessionBackendService, IHooverService,
+                ITaskRunner {
     configuration: Cfg<IConfiguration>;
     leaderElector: Cfg<LeaderElector>;
     private _scheduler: Scheduler;
-    private mvccController: MvccController;
     private electionLogger: Logger;
     private deferredLogger: Logger;
-    private mvccLogger: Logger;
 
     constructor(spec: PgClientSourceSpec) {
         super(spec.pool);
         this.configuration = new Cfg("configuration");
         this.leaderElector = new Cfg(spec.leaderElector);
-        this._scheduler = new Scheduler(30000, this);
         this.electionLogger = new Logger("server/election");
         this.deferredLogger = new Logger("server/deferred");
-        this.mvccLogger = new Logger("server/mvcc");
-        this.mvccController = new MvccController(this.mvccLogger);
+        this._scheduler = new Scheduler(30000, this, this.deferredLogger);
     }
 
     configure(configuration: IConfiguration) {
@@ -516,7 +714,6 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
         });
         this.electionLogger.configure(configuration);
         this.deferredLogger.configure(configuration);
-        this.mvccLogger.configure(configuration);
     }
 
     get isElectorService(): boolean {
@@ -524,6 +721,10 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
     }
 
     get isSessionBackendService(): boolean {
+        return true;
+    }
+
+    get isHooverService(): boolean {
         return true;
     }
 
@@ -574,7 +775,7 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
         }
         if (row.get("expiry") <= Date.now()) {
             // no need to await the deletion
-            this.deleteImmutable(
+            this.deleteLocal(
                 logger, NOCONTEXT, this.sessionEntity.v, id);
             throw new PgClientError("Session expired", 401);
         }
@@ -650,8 +851,7 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
     }
 
     async deleteSession(logger: Logger, id: string): Promise<void> {
-        await this.deleteImmutable(
-            logger, NOCONTEXT, this.sessionEntity.v, id);
+        await this.delete(logger, NOCONTEXT, this.sessionEntity.v, id);
     }
 
     async deleteSessionsUpTo(logger: Logger, expiry: Date): Promise<void> {
@@ -660,6 +860,71 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
         const parameters = [expiry];
         this.log(logger, statement, parameters);
         await this.pool.query(statement, parameters);
+    }
+
+    async hoover(logger: Logger, entity: Entity): Promise<void> {
+        if (entity.immutable || !entity.retention ||
+            entity.retention.style != "temporary" || !entity.retention.age) {
+            throw new PgClientError(
+                `Entity ${entity.name} is not eligible for hoover()`);
+        }
+        const interval = entity.retention.age!;
+        this.log(logger,
+                 `Vacuuming entity ${entity.name} with interval '${interval}'`);
+        const client = await this.pool.connect();
+        try {
+            let statement = "BEGIN";
+            this.log(logger, statement);
+            await client.query(statement);
+
+            statement =
+                `select now() - interval '${interval}' as now`;
+            this.log(logger, statement);
+            let result = await client.query(statement);
+            let parameters = [result.rows[0].now];
+
+            statement =
+                `delete from ${entity.table}_v as v ` +
+                `using ${entity.table}_cy as cy ` +
+                `where (v._id = cy._id and v._rev = cy._rev) ` +
+                `and cy.updated < \$1 `;
+            this.log(logger, statement, parameters);
+            result = await client.query(statement, parameters);
+
+            if (result.rowCount) {
+                this.log(logger, `Vacuumed ${result.rowCount} _v rows`);
+                statement =
+                    `update ${entity.table}_vc as vc ` +
+                    `set isstub = true ` +
+                    `from ${entity.table}_cy as cy ` +
+                    `where (vc._id = cy._id and vc._rev = cy._rev) ` +
+                    `and cy.updated < \$1 `;
+                this.log(logger, statement, parameters);
+                result = await client.query(statement, parameters);
+                this.log(logger, `Stubbed ${result.rowCount} mvcc (vc) rows`);
+
+                statement =
+                    `delete from ${entity.table}_cy where updated < \$1`;
+                this.log(logger, statement, parameters);
+                result = await client.query(statement, parameters);
+                this.log(logger,
+                         `Cleared ${result.rowCount} recycle (cy) rows`);
+            } else {
+                this.log(logger, `No rows to recycle for ${entity.name}`);
+            }
+
+            statement = "COMMIT";
+            this.log(logger, statement);
+            await client.query(statement);
+
+        } catch (err: any) {
+            const statement = "ROLLBACK";
+            this.log(logger, statement);
+            await client.query(statement);
+            throw err;
+        } finally {
+            client.release();
+        }
     }
 
     async castBallot(logger: Logger, serverId: string, rowId: number,
@@ -756,11 +1021,11 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
 
     async put(logger: Logger, context: IContext, entity: Entity, id: string,
               row: Row): Promise<Row> {
-        if (entity.immutable) {
+        if (!entity.canUpdate) {
             throw new PgClientError(
-                `Entity '${entity.name}' is immutable`, 400);
+                `Entity ${entity.name} is ${entity.species}, cannot update ` +
+                `it this way`, 400);
         }
-
         // Check dups by key
         if (entity.keyFields.size) {
             let param = 1;
@@ -781,36 +1046,57 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
                     409);
             }
         }
+        if (entity.versioned) {
+            const versions = await this.pullVcTable(logger, entity, id);
+            const mvccResult = this.mvccController.putMvcc(
+                row, versions, false, context.userAccountId);
+            const client = await this.pool.connect();
+            try {
+                let statement = "BEGIN";
+                this.log(logger, statement);
+                await client.query(statement);
 
-        const versions = await this.pullVcTable(logger, entity, id);
-        const mvccResult = this.mvccController.putMvcc(
-            row, versions, false, context);
-        const client = await this.pool.connect();
-        try {
-            let statement = "BEGIN";
-            this.log(logger, statement);
-            await client.query(statement);
+                await this.applyMvccResults(logger, client, entity, mvccResult);
 
-            await this.applyMvccResults(logger, client, entity, mvccResult);
+                statement = "COMMIT";
+                this.log(logger, statement);
+                await client.query(statement);
 
-            statement = "COMMIT";
-            this.log(logger, statement);
-            await client.query(statement);
-
-            return Row.must(mvccResult.leafTable.leafActionPut?.payload);
-        } catch (err: any) {
-            const statement = "ROLLBACK";
-            this.log(logger, statement);
-            await client.query(statement);
-            throw err;
-        } finally {
-            client.release();
+                return Row.must(mvccResult.leafTable.leafActionPut?.payload);
+            } catch (err: any) {
+                const statement = "ROLLBACK";
+                this.log(logger, statement);
+                await client.query(statement);
+                throw err;
+            } finally {
+                client.release();
+            }
+        } else if (entity.local) {
+            row.updateOrAdd("updated", new Date());
+            row.updateOrAdd("updatedby", context.userAccountId);
+            const setRow = row.copyWithout(["_id"]);
+            const setList = setRow.getUpdateSet();
+            const statement =
+                `update ${entity.table} set ${setList.join(", ")} ` +
+                `where _id = \$${setList.length + 1}`;
+            const parameters = setRow.values().concat(id);
+            this.log(logger, statement, parameters);
+            const pgResult = await this.pool.query(statement, parameters);
+            if (pgResult.rowCount != 1) {
+                throw new PgClientError(
+                    `local put: update ${entity.name}, id = ${id} ; rowCount ` +
+                    `was not 1: ${pgResult.rowCount}`);
+            }
+            return row;
+        } else {
+            throw new PgClientError(
+                `Entity ${entity.name} is ${entity.species}, yet canUpdate ` +
+                `is true, however cannot be updated this way`, 400);
         }
     }
 
     async post(logger: Logger, context: IContext, entity: Entity,
                row: Row): Promise<Row> {
-
         // Check dups by key
         if (entity.keyFields.size) {
             let param = 1;
@@ -830,53 +1116,29 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
                     409);
             }
         }
-        if (entity.immutable) {
-            this.mvccController.convertToPayload(row);
-            row.add("_id", Entity.generateId());
-            row.add("updated", new Date());
-            row.add("updatedby", context.userAccountId);
-            const statement = `insert into ${entity.table} ` +
-                `(${row.columns.join()}) ` +
-                `values (` +
-                `${row.columnNumbers.join()}` +
-                `)`;
-            const parameters = row.values();
-            this.log(logger, statement, parameters);
-            await this.pool.query(statement, parameters);
-            return row;
-        } else {
-            let statement: string;
-            const mvccResult = this.mvccController.postMvcc(row, context);
-            const client = await this.pool.connect();
-            try {
-                statement = "BEGIN";
-                this.log(logger, statement);
-                await client.query(statement);
-
-                await this.applyMvccResults(logger, client, entity, mvccResult);
-
-                statement = "COMMIT";
-                this.log(logger, statement);
-                await client.query(statement);
-
-                return Row.must(mvccResult.leafTable.leafActionPost?.payload);
-            } catch (err: any) {
-                statement = "ROLLBACK";
-                this.log(logger, statement);
-                await client.query(statement);
-                throw err;
-            } finally {
-                client.release();
-            }
+        const client = await this.pool.connect();
+        try {
+            let statement = "BEGIN";
+            this.log(logger, statement);
+            await client.query(statement);
+            const result = await this.postEntity(
+                logger, context.userAccountId, client, entity, row, context);
+            statement = "COMMIT";
+            this.log(logger, statement);
+            await client.query(statement);
+            return result;
+        } catch (err: any) {
+            const statement = "ROLLBACK";
+            this.log(logger, statement);
+            await client.query(statement);
+            throw err;
+        } finally {
+            client.release();
         }
     }
 
-    async deleteImmutable(logger: Logger, context: IContext, entity: Entity,
-                          id: string): Promise<void> {
-        if (!entity.immutable) {
-            throw new PgClientError(
-                `Entity ${entity.name} is not immutable`, 500);
-        }
+    private async deleteLocal(logger: Logger, context: IContext, entity: Entity,
+                              id: string): Promise<void> {
         const statement =
             `delete from ${entity.table} where _id = \$1`;
         const parameters = [id];
@@ -885,14 +1147,23 @@ export class PgClient extends PgBaseClient implements IService, IElectorService,
     }
 
     async delete(logger: Logger, context: IContext, entity: Entity, id: string,
-                 rev: string): Promise<void> {
+                 rev?: string): Promise<void> {
 
-        if (entity.immutable) {
-            await this.deleteImmutable(logger, context, entity, id);
+        if (!entity.canDelete) {
+            throw new PgClientError(
+                `Entity ${entity.name} is ${entity.species}, cannot delete ` +
+                `it this way`);
+        }
+        if (entity.versioned && !rev) {
+            throw new PgClientError(
+                `Must specify 'rev' to delete ${entity.name}`);
+        }
+        if (entity.local) {
+            return this.deleteLocal(logger, context, entity, id);
         }
         const versions = await this.pullVcTable(logger, entity, id);
         const mvccResult = this.mvccController.deleteMvcc(
-            id, rev, versions, context);
+            id, rev!, versions, context.userAccountId);
         const client = await this.pool.connect();
         try {
             let statement = "BEGIN";

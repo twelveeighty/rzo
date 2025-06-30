@@ -17,7 +17,7 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { Row, _IError, IContext } from "./core.js";
+import { Row, _IError, IContext, Logger } from "./core.js";
 
 class SchedulerError extends _IError {
     constructor(message: string, code?: number, options?: ErrorOptions) {
@@ -43,10 +43,12 @@ export class Scheduler {
     private _running: boolean;
     private _stopped: boolean;
     private _timerId?: any;
+    private logger: Logger;
 
-    constructor(timeout: number, runner: ITaskRunner) {
+    constructor(timeout: number, runner: ITaskRunner, logger: Logger) {
         this.timeout = timeout;
         this.runner = runner;
+        this.logger = logger;
         this._tasks = [];
         this._started = false;
         this._running = false;
@@ -81,7 +83,7 @@ export class Scheduler {
             this.checkTasks();
         }, 1000);
         this._running = true;
-        console.log(
+        this.logger.log(
             `Scheduler started with timeout: ${this.timeout} on runner ` +
             `'${this.runner.constructor.name}'`);
     }
@@ -93,7 +95,7 @@ export class Scheduler {
             clearInterval(this._timerId);
         }
         this._running = false;
-        console.log(
+        this.logger.log(
             `Scheduler stopped on runner '${this.runner.constructor.name}'`);
     }
 

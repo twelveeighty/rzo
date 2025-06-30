@@ -109,8 +109,8 @@ export class APICacheWorker extends DaemonWorker implements ICache {
             this.updateCache();
         }, this.cacheCheckFrequency);
         this.logger.log(
-            `Cache ${this.name} started with cacheCheckFrequency: ` +
-            `${this.cacheCheckFrequency}; ttl = ${this.ttl}`);
+            `Started with cacheCheckFrequency: ${this.cacheCheckFrequency}; ` +
+            `ttl = ${this.ttl}`);
     }
 
     async stop(): Promise<any> {
@@ -175,7 +175,6 @@ export class CacheWorker extends APICacheWorker implements ICache {
     }
 
     configure(configuration: IConfiguration): void {
-        super.configure(configuration);
         this.leaderElector.setIfCast(
             `Invalid Cache: leaderElector `,
             configuration.workers.get(this.leaderElector.name),
@@ -193,7 +192,7 @@ export class CacheWorker extends APICacheWorker implements ICache {
                 `ISessionBackendService`);
         }
         this.sessionBackend.v = <ISessionBackendService>sessionBackendService;
-        configuration.registerAsyncTask(this);
+        super.configure(configuration);
     }
 
     protected updateBackend(): void {
@@ -207,9 +206,8 @@ export class CacheWorker extends APICacheWorker implements ICache {
         this._backendCheckId = setInterval(() => {
             this.updateBackend();
         }, this.backendCheckFrequency);
-        console.log(
-            `Cache ${this.name} backendCheckFrequency: ` +
-            `${this.backendCheckFrequency}`);
+        this.logger.log(
+            `backendCheckFrequency: ${this.backendCheckFrequency}`);
     }
 
     async stop(): Promise<any> {

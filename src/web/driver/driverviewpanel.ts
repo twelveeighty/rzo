@@ -18,7 +18,7 @@
 */
 
 import {
-    Entity, Field, State, MemResultSet, Filter, Query, Collection, Cfg,
+    Entity, State, Filter, Query, Collection, Cfg,
     ServiceSource
 } from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
@@ -26,49 +26,23 @@ import { RZO, CONTEXT } from "../../base/configuration.js";
 import * as X from "../common.js";
 import { TOASTER } from "../toaster.js";
 
-import { IPanel, BasePanel, PanelData } from "../panel.js";
+import { IPanel, ViewPanel, PanelData } from "../panel.js";
 import { TripList } from "../trip/triplist.js";
 
 
-export class DriverViewPanel extends BasePanel implements IPanel {
+export class DriverViewPanel extends ViewPanel implements IPanel {
     tripEntity: Cfg<Entity>;
-    tripDrivernumField: Cfg<Field>;
     tripsCollection: Cfg<Collection>;
-    appointmentTsField: Cfg<Field>;
-
-    div: HTMLElement;
-    nameElement: HTMLElement;
-    statusElement: HTMLElement;
-    addressPre: HTMLPreElement;
-    editBtn: HTMLButtonElement;
     tripList: TripList;
 
-    state: State | null;
-    dateTimeFormat: Intl.DateTimeFormat;
-
-
     constructor() {
-        super();
+        super("driver-view-div", "driver-view-tsec", "driver-view-status-sm",
+              "driver-view-back-btn", "driver-view-edit-btn",
+              "driver-edit-panel");
 
-        this.div = X.div("driver-view-div");
-        this.nameElement = X.heading("driver-view-name-heading");
-        this.statusElement = X.p("driver-view-status-p");
-        this.addressPre = X.pre("driver-view-address-pre");
         this.tripList = new TripList(X.div("driver-view-trips-div"), "dtl");
-
-        this.editBtn = X.btn("driver-view-edit-btn");
-
         this.tripEntity = new Cfg("tripEntity");
-        this.tripDrivernumField = new Cfg("tripDrivernumField");
         this.tripsCollection = new Cfg("tripsCollection");
-        this.appointmentTsField = new Cfg("appointmentTsField");
-
-        this.state = null;
-
-        this.dateTimeFormat = new Intl.DateTimeFormat(
-            "en",
-            { dateStyle: "full", timeStyle: "short" }
-        );
     }
 
     get id(): string {
@@ -76,30 +50,17 @@ export class DriverViewPanel extends BasePanel implements IPanel {
     }
 
     initialize(): void {
+        super.initialize();
         this.entity.v = RZO.getEntity("driver");
         this.service.v =
             (<ServiceSource>RZO.getSource("db").ensure(ServiceSource)).service;
         this.tripEntity.v = RZO.getEntity("trip");
-        this.tripDrivernumField.v = this.tripEntity.v.getField("drivernum");
         this.tripsCollection.v = RZO.getCollection("trips");
-        this.appointmentTsField.v = RZO.getField("trip.appointmentts");
-
-        this.editBtn.addEventListener("click", (evt) => {
-            this.onEdit(evt);
-        });
 
         this.tripList.initialize((evt) => {
             evt.preventDefault();
             this.onAnchorClick(evt);
         });
-    }
-
-    private onEdit(evt: Event): void {
-        // Stack on the 'DriverEdit' panel
-        if (this.state) {
-            this.controller.v.stack(
-                "driver-edit-panel", new PanelData("State", this.state));
-        }
     }
 
     private onAnchorClick(evt: Event): void {
@@ -134,64 +95,31 @@ export class DriverViewPanel extends BasePanel implements IPanel {
         }
     }
 
-    private addIfPresent(target: string[], prefix: string, value?: string) {
-        if (value) {
-            const header = prefix ? `${prefix}: ` : "";
-            target.push(`${header}${value}`);
-        }
-    }
+    protected stateToUI(state: State): void {
+        this.tableTBody.innerHTML = "";
 
-    private stateToUI(state: State): void {
-        this.nameElement.innerText = state.asString("name");
-        this.statusElement.innerText =
-            `${state.asString("drivernum")} (${state.asString("status")})`;
+        X.addRowText(this.tableTBody, "Driver", state.asString("name"));
+        X.addRowText(this.tableTBody, "Driver Num",
+                     state.asString("drivernum"));
+        X.addRowText(this.tableTBody, "Status", state.asString("status"));
+        X.addRowElement(this.tableTBody, "Address",
+                    X.addressMapAnchor(state.asString("address1"),
+                                      state.asString("maplink")));
+        X.addRowText(this.tableTBody, "Address2", state.asString("address2"));
+        X.addRowText(this.tableTBody, "City", state.asString("city"));
+        X.addRowText(this.tableTBody, "Prov/State", state.asString("stateprov"));
+        X.addRowText(this.tableTBody, "Zip", state.asString("postalcode"));
 
-        const values: string[] = [];
-        this.addIfPresent(values, "Address", state.asString("address1"));
-        this.addIfPresent(values, "Address2", state.asString("address2"));
-        this.addIfPresent(values, "City", state.asString("city"));
-        this.addIfPresent(values, "Prov/State", state.asString("stateprov"));
-        this.addIfPresent(values, "Zip", state.asString("postalcode"));
-        this.addIfPresent(values, "Map", state.asString("maplink"));
-        this.addIfPresent(values, state.asString("phone1label"),
-                          state.asString("phone1"));
-        this.addIfPresent(values, state.asString("phone2label"),
-                          state.asString("phone2"));
-        this.addIfPresent(values, state.asString("phone3label"),
-                          state.asString("phone3"));
-        this.addressPre.innerText = values.join(`\n`);
+        X.addRowText(this.tableTBody, state.asString("phone1label"),
+                     state.asString("phone1"));
+        X.addRowText(this.tableTBody, state.asString("phone2label"),
+                     state.asString("phone2"));
+        X.addRowText(this.tableTBody, state.asString("phone3label"),
+                     state.asString("phone3"));
+
+        this.statusElement.innerText = `${state.id} / ${state.rev}`;
 
         this.queryTrips();
-    }
-
-    async show(panelData?: PanelData): Promise<void> {
-        if (PanelData.typeOf(panelData) == "Row") {
-            const rs = MemResultSet.fromRow(PanelData.rowOf(panelData));
-            rs.next();
-            this.state = this.entity.v.from(rs);
-            this.stateToUI(this.state);
-            this.div.hidden = false;
-        } else if (PanelData.typeOf(panelData) == "string") {
-            this.entity.v.load(
-                this.service.v, CONTEXT.c, PanelData.stringOf(panelData))
-            .then((state) => {
-                this.state = state;
-                this.stateToUI(this.state);
-                this.div.hidden = false;
-            })
-            .catch((err) => {
-                TOASTER.error(`ERROR: ${err}`);
-            });
-        } else if (!PanelData.isParam("NoRefresh", panelData) && this.state) {
-            this.stateToUI(this.state);
-            this.div.hidden = false;
-        } else {
-            this.div.hidden = false;
-        }
-    }
-
-    hide(): void {
-        this.div.hidden = true;
     }
 }
 

@@ -19,7 +19,7 @@
 
 import {
     State, Row, Entity, IService, Cfg, IContext, SideEffects, StringField,
-    Logger
+    Logger, MemResultSet
 } from "../base/core.js";
 import { RZO, CONTEXT } from "../base/configuration.js";
 
@@ -354,6 +354,101 @@ export class LocalDateControl extends Control {
         }
     }
 }
+
+export class ViewPanel extends BasePanel {
+    div: HTMLElement;
+    backBtn: HTMLButtonElement;
+    editBtn: HTMLButtonElement;
+
+    editPanelId: string;
+
+    tableTBody: HTMLTableSectionElement;
+    statusElement: HTMLElement;
+
+    state: State | null;
+    dirty: boolean;
+
+    constructor(divId: string, tableId: string, statusId: string,
+                backBtnId: string, editBtnId: string, editPanelId: string) {
+        super();
+
+        this.editPanelId = editPanelId;
+
+        this.div = X.div(divId);
+        this.tableTBody = X.tsec(tableId);
+        this.statusElement = X.htmlElement(statusId);
+
+        this.backBtn = X.btn(backBtnId);
+        this.editBtn = X.btn(editBtnId);
+
+        this.dirty = false;
+        this.state = null;
+    }
+
+    initialize(): void {
+        this.backBtn.addEventListener("click", (evt) => {
+            this.onBack(evt);
+        });
+        this.editBtn.addEventListener("click", (evt) => {
+            this.onEdit(evt);
+        });
+    }
+
+    private onBack(evt: Event): void {
+        if (!this.dirty) {
+            this.controller.v.pop(new PanelData("Parameter", "NoRefresh"));
+        } else {
+            this.dirty = false;
+            this.controller.v.pop();
+        }
+    }
+
+    private onEdit(evt: Event): void {
+        // Stack on the 'DriverEdit' panel
+        if (this.state) {
+            this.controller.v.stack(
+                this.editPanelId, new PanelData("State", this.state));
+        }
+    }
+
+    protected stateToUI(state: State): void {
+    }
+
+    async show(panelData?: PanelData): Promise<void> {
+        if (PanelData.typeOf(panelData) == "Row") {
+            this.dirty = true;
+            const rs = MemResultSet.fromRow(PanelData.rowOf(panelData));
+            rs.next();
+            this.state = this.entity.v.from(rs);
+            this.stateToUI(this.state);
+            this.div.hidden = false;
+        } else if (PanelData.typeOf(panelData) == "string") {
+            this.entity.v.load(
+                this.service.v, CONTEXT.c, PanelData.stringOf(panelData))
+            .then((state) => {
+                this.dirty = false;
+                this.state = state;
+                this.stateToUI(this.state);
+                this.div.hidden = false;
+            })
+            .catch((err) => {
+                TOASTER.error(`ERROR: ${err}`);
+            });
+        } else if (!PanelData.isParam("NoRefresh", panelData) && this.state) {
+            this.dirty = false;
+            this.stateToUI(this.state);
+            this.div.hidden = false;
+        } else {
+            this.div.hidden = false;
+        }
+    }
+
+    hide(): void {
+        this.div.hidden = true;
+    }
+}
+
+
 
 export class FormPanel extends BasePanel {
     state: State | null;

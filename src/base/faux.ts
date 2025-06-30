@@ -70,11 +70,7 @@ export class FauxService implements IService {
     }
 
     async delete(logger: Logger, context: IContext, entity: Entity, id: string,
-           rev: string): Promise<void> {
-    }
-
-    async deleteImmutable(logger: Logger, context: IContext, entity: Entity,
-                    id: string): Promise<void> {
+           rev?: string): Promise<void> {
     }
 
     async queryDeferredToken(logger: Logger, context: IContext, parent: string,

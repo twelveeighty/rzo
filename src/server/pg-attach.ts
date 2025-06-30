@@ -22,7 +22,6 @@ import {
     Attachment, Attachments
 } from "../base/core.js";
 
-import { MvccController } from "./mvcc.js";
 import { PgBaseClient } from "./pg-client.js";
 
 import { ATTACH_TABLE, IAttachService, AttachSource } from "./attach.js";
@@ -33,13 +32,9 @@ type PgAttachSourceSpec = ClassSpec & {
 }
 
 export class PgAttach extends PgBaseClient implements IAttachService {
-    private mvccLogger: Logger;
-    private mvccController: MvccController;
 
     constructor(spec: PgAttachSourceSpec) {
         super(spec.pool);
-        this.mvccLogger = new Logger("server/mvcc");
-        this.mvccController = new MvccController(this.mvccLogger);
     }
 
     configure(configuration: IConfiguration) {
@@ -87,7 +82,7 @@ export class PgAttach extends PgBaseClient implements IAttachService {
         const addAttachment = result.rows.length == 0;
         const versions = await this.pullVcTable(logger, entity, id);
         const mvccResult = this.mvccController.putMvcc(
-            row, versions, false, context);
+            row, versions, false, context.userAccountId);
         const client = await this.pool.connect();
         try {
             statement = "BEGIN";

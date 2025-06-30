@@ -6,8 +6,9 @@
             "name": "login"
         },
         "spec": {
-            "type": "ImmutableContainedEntity",
+            "type": "ContainedEntity",
             "table": "login",
+            "retention": { "style": "delete" },
             "parents": ["useraccount"],
             "keyFields": [
                 { "name": "useraccountnum", "type": "ForeignKey",
@@ -35,9 +36,11 @@
             "name": "onetimelogin"
         },
         "spec": {
-            "type": "ImmutableContainedEntity",
+            "type": "LocalContainedEntity",
             "table": "onetimelogin",
             "parents": ["useraccount"],
+            "canDelete": true,
+            "canUpdate": false,
             "keyFields": [
                 { "name": "useraccountnum", "type": "ForeignKey",
                       "target": "useraccount",

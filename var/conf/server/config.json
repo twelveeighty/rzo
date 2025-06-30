@@ -43,12 +43,37 @@
     },
     {
         "apiVersion": "v1",
+        "kind": "Worker",
+        "metadata": {
+            "name": "hoover",
+            "voided": true
+        },
+        "spec": {
+            "type": "server.hoover.HooverWorker",
+            "source": "db",
+            "leaderElector": "leaderelector",
+            "checkFrequency": 86400000
+        }
+    },
+    {
+        "apiVersion": "v1",
         "kind": "Source",
         "metadata": {
             "name": "replicationdb"
         },
         "spec": {
             "type": "server.pg-replication.PgReplicationSource",
+            "pool": "pgconnection"
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Source",
+        "metadata": {
+            "name": "imreplicationdb"
+        },
+        "spec": {
+            "type": "server.pg-imreplication.PgImReplicationSource",
             "pool": "pgconnection"
         }
     },
@@ -65,6 +90,18 @@
     },
     {
         "apiVersion": "v1",
+        "kind": "Source",
+        "metadata": {
+            "name": "pgacctdb"
+        },
+        "spec": {
+            "type": "server.pg-accting.PgAcctingSource",
+            "pool": "pgconnection",
+            "source": "db"
+        }
+    },
+    {
+        "apiVersion": "v1",
         "kind": "Worker",
         "metadata": {
             "name": "restserver"
@@ -76,9 +113,11 @@
                 { "context": "a", "adapter": "attachadapter" },
                 { "context": "e", "adapter": "entityadapter" },
                 { "context": "c", "adapter": "collectionadapter" },
+                { "context": "f", "adapter": "acctadapter" },
                 { "context": "g", "adapter": "generatoradapter" },
                 { "context": "o", "adapter": "queryoneadapter" },
                 { "context": "r", "adapter": "replicationadapter" },
+                { "context": "ri", "adapter": "imreplicationadapter" },
                 { "context": "s", "adapter": "authadapter" },
                 { "context": "otl", "adapter": "onetimeloginadapter" },
                 { "context": "t", "adapter": "tokenadapter" }
@@ -129,6 +168,20 @@
         "apiVersion": "v1",
         "kind": "Worker",
         "metadata": {
+            "name": "acctadapter"
+        },
+        "spec": {
+            "type": "server.rest-accting.AcctingAdapter",
+            "source": "db",
+            "cache": "sessioncache",
+            "sessionBackendSource": "db",
+            "acctingSource": "pgacctdb"
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Worker",
+        "metadata": {
             "name": "generatoradapter"
         },
         "spec": {
@@ -163,6 +216,20 @@
             "sessionBackendSource": "db",
             "source": "db",
             "replicationSource": "replicationdb"
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Worker",
+        "metadata": {
+            "name": "imreplicationadapter"
+        },
+        "spec": {
+            "type": "server.replication.ReplicationAdapter",
+            "cache": "apisessioncache",
+            "sessionBackendSource": "db",
+            "source": "db",
+            "replicationSource": "imreplicationdb"
         }
     },
     {
@@ -213,10 +280,10 @@
         },
         "spec": {
             "type": "server.cache.CacheWorker",
-            "leaderElector": "leaderelector",
             "ttl": 60000,
-            "sessionBackendSource": "db",
             "cacheCheckFrequency": 10000,
+            "leaderElector": "leaderelector",
+            "sessionBackendSource": "db",
             "backendCheckFrequency": 60000
         }
     },
@@ -255,8 +322,11 @@
                 { "name": "server/restserver", "level": "Info" },
                 { "name": "adapter", "level": "Info" },
                 { "name": "adapter/replicationadapter", "level": "Info" },
+                { "name": "adapter/imreplicationadapter", "level": "Info" },
                 { "name": "adapter/entityadapter", "level": "Info" },
-                { "name": "adapter/attachadapter", "level": "Info" }
+                { "name": "adapter/attachadapter", "level": "Info" },
+                { "name": "adapter/acctadapter", "level": "Debug" },
+                { "name": "hoover", "level": "Debug" }
             ]
         }
     }

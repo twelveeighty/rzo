@@ -1,7 +1,7 @@
 /*
     RZO - A Business Application Framework
 
-    Copyright (C) 2024 Frank Vanderham
+    Copyright (C) 2024-2025 Frank Vanderham
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -157,6 +157,13 @@ type CouchServerInfo = {
     uuid: string;
     vendor: CouchServerVendor;
     version: string;
+}
+
+export type ChangeStatements = {
+    groupFields: string[];
+    selectFields: string[];
+    from: string;
+    where: string;
 }
 
 export const STATE_TABLE = "local_replication";
@@ -444,6 +451,19 @@ export class ReplicationAdapter extends SessionAwareAdapter {
         }
     }
 
+    private getEntity(name: string): Entity {
+        const entity = this.entities.v.get(name);
+        if (entity) {
+            if (entity.local) {
+                throw new ReplicationError(
+                    `Entity: ${name} is a local entity`, 404);
+            }
+            return entity;
+        } else {
+            throw new ReplicationError(`Invalid entity: ${name}`, 404);
+        }
+    }
+
     async handleGetReplicate(entityName: string, request: IncomingMessage,
                              response: ServerResponse,
                              uriElements: string[]): Promise<void> {
@@ -465,11 +485,7 @@ export class ReplicationAdapter extends SessionAwareAdapter {
          */
         try {
             const context = await this.authenticate(request);
-            const entity = this.entities.v.get(entityName);
-            if (!entity) {
-                throw new ReplicationError(
-                    `Invalid entity: ${entityName}`, 404);
-            }
+            const entity = this.getEntity(entityName);
             const resource = `entity/${entity.name}`;
             this.policyConfig.v.guardResource(context, resource, "get");
             if (uriElements.length == 2) {
@@ -600,10 +616,7 @@ export class ReplicationAdapter extends SessionAwareAdapter {
             throw new ReplicationError(
                 "Missing resource and/or id for ReplicationAdapter");
         }
-        const entity = this.entities.v.get(resource!);
-        if (!entity) {
-            throw new ReplicationError(`Invalid entity: ${resource}`, 404);
-        }
+        const entity = this.getEntity(resource!);
         if (request.method == "POST") {
             if (id == "_ensure_full_commit") {
                 response.end(JSON.stringify(
@@ -721,11 +734,7 @@ export class ReplicationAdapter extends SessionAwareAdapter {
             }
             const entityName = uriElements[1];
             if (request.method == "HEAD") {
-                const entity = this.entities.v.get(entityName);
-                if (!entity) {
-                    throw new ReplicationError(
-                        `Invalid entity: ${entityName}`, 404);
-                }
+                this.getEntity(entityName);
                 this.logger.log(`Verify Peer '${entityName}'`);
                 response.end();
             } else {

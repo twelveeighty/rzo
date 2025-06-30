@@ -73,9 +73,11 @@ try {
     }
     const contents = await Promise.all([
         readFile(getUrl("entities"), { encoding: 'utf8' }),
+        readFile(getUrl("accting"), { encoding: 'utf8' }),
         readFile(getUrl("entities-server", "server"), { encoding: 'utf8' }),
         readFile(getUrl("personas"), { encoding: 'utf8' }),
         readFile(getUrl("collections", "server"), { encoding: 'utf8' }),
+        readFile(getUrl("accting-collections", "server"), { encoding: 'utf8' }),
         readFile(getUrl(config, "server"), { encoding: 'utf8' })
     ]);
     const policies = await Promise.all([

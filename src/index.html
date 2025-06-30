@@ -1,4 +1,22 @@
 <!doctype html>
+<!--
+    RZO - A Business Application Framework
+
+    Copyright (C) 2024 Frank Vanderham
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+-->
 <html lang="en" data-bs-theme="auto">
   <head>
     <meta charset="utf-8">
@@ -222,6 +240,8 @@
             </small>
         </p>
         <div class="d-flex gap-2 justify-content-center py-5">
+            <button id="rider-view-back-btn" type="button"
+                class="btn btn-primary">Go back</button>
             <button id="rider-view-create-btn" type="button"
                 class="btn btn-primary">New Trip...</button>
             <button id="rider-view-edit-btn" type="button"
@@ -335,12 +355,17 @@
 
 
     <div id="driver-view-div" class="container" hidden>
-        <h1 id="driver-view-name-heading">Name</h1>
-        <p id="driver-view-status-p">
+        <table class="table">
+            <tbody id="driver-view-tsec">
+            </tbody>
+        </table>
+        <p>
+            <small id="driver-view-status-sm">
+            </small>
         </p>
-        <pre id="driver-view-address-pre">
-        </pre>
         <div class="d-flex gap-2 justify-content-center py-5">
+            <button id="driver-view-back-btn" type="button"
+                class="btn btn-primary">Go back</button>
             <button id="driver-view-edit-btn" type="button"
                 class="btn btn-primary">Edit Rider...</button>
         </div>

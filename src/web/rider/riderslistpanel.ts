@@ -69,7 +69,7 @@ export class RidersListPanel extends BasePanel implements IPanel {
         if (target && target.id && target.id.length > 4) {
             // console.log(`clicked: ${target.id}`);
             const _id = target.id.slice(4);
-            this.controller.v.show(
+            this.controller.v.stack(
                 "rider-view-panel", new PanelData("string", _id));
         }
     }
@@ -142,7 +142,9 @@ export class RidersListPanel extends BasePanel implements IPanel {
         nav.classList.add("active");
         nav.ariaCurrent = "page";
         this.div.hidden = false;
-        this.queryList();
+        if (!PanelData.isParam("NoRefresh", panelData)) {
+            this.queryList();
+        }
     }
 
     hide(): void {

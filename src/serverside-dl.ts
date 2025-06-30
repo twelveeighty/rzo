@@ -86,10 +86,12 @@ try {
 
     const configuration = await Promise.all([
         readFile(getUrl("entities"), { encoding: 'utf8' }),
+        readFile(getUrl("accting"), { encoding: 'utf8' }),
         readFile(getUrl("entities-server", "serverside-client"),
                  { encoding: 'utf8' }),
         readFile(getUrl("personas"), { encoding: 'utf8' }),
         readFile(getUrl("collections", "client"), { encoding: 'utf8' }),
+        readFile(getUrl("accting-collections", "server"), { encoding: 'utf8' }),
         readFile(getUrl("config", "serverside-client"), { encoding: 'utf8' })
     ]);
 

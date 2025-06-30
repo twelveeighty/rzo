@@ -1,7 +1,7 @@
 /*
     RZO - A Business Application Framework
 
-    Copyright (C) 2024 Frank Vanderham
+    Copyright (C) 2024-2025 Frank Vanderham
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@
 import md5 from "md5";
 
 import {
-    _IError, IResultSet, Row, IContext, Entity, Logger, Nobody
+    _IError, IResultSet, Row, Entity, Logger, Nobody
 } from "../base/core.js";
 
 type VcRecord = {
@@ -179,8 +179,8 @@ export class MvccResult {
 export class MvccController {
     logger: Logger;
 
-    constructor(logger: Logger) {
-        this.logger = logger;
+    constructor(logger?: Logger) {
+        this.logger = logger || new Logger("server/mvcc");
     }
 
     private couchRevsToAncestry(revs: string[]): string {
@@ -314,7 +314,7 @@ export class MvccController {
         }
     }
 
-    private versionHash(rev: string): string {
+    versionHash(rev: string): string {
         const dashPos = rev.indexOf("-");
         if (dashPos == -1 || dashPos == 0 || dashPos >= (rev.length - 1)) {
             throw new MvccError(`Cannot establish hash from rev: '${rev}'`);
@@ -339,14 +339,14 @@ export class MvccController {
     }
 
     private putForceDelete(row: Row, versions: IResultSet,
-                           context?: IContext): MvccResult {
+                           passedUserId?: string): MvccResult {
         const result = new MvccResult(this.logger);
         const id = row.get("_id");
         const rev = row.get("_rev");
         const updated = row.has("updated") ? row.get("updated") : new Date();
         const updatedBy =
             row.has("updatedby") ? row.get("updatedby") :
-            (context ? context.userAccountId : Nobody.ID);
+            (passedUserId || Nobody.ID);
         const revDepth = this.versionDepth(rev);
         const revHash = this.versionHash(rev);
         const rowRevisions = row.has("_revisions") ?
@@ -397,6 +397,8 @@ export class MvccController {
                      * the remaining (if any) conflicts.
                      */
                     result.addVcTableAction("put", {
+                        _id: toDeleteRev.get("_id"),
+                        _rev: toDeleteRev.get("_rev"),
                         seq: toDeleteRev.get("seq"),
                         isleaf: false,
                         isdeleted: false,
@@ -434,6 +436,8 @@ export class MvccController {
                             this.logger.debug("C 012");
                             // This clears the conflict, only one leaf remaining
                             result.addVcTableAction("put", {
+                                _id: leafs[0].get("_id"),
+                                _rev: leafs[0].get("_rev"),
                                 seq: leafs[0].get("seq"),
                                 isleaf: true,
                                 isdeleted: false,
@@ -464,6 +468,8 @@ export class MvccController {
                                     this.logger.debug("C 016");
                                     // there is a new winner, mark its vc record
                                     result.addVcTableAction("put", {
+                                        _id: newWinner.get("_id"),
+                                        _rev: newWinner.get("_rev"),
                                         seq: newWinner.get("seq"),
                                         isleaf: true,
                                         isdeleted: false,
@@ -511,7 +517,7 @@ export class MvccController {
     }
 
     private putForce(row: Row, versions: IResultSet,
-                     context?: IContext): MvccResult {
+                     passedUserId?: string): MvccResult {
         /* Force the creation of the row's version, possibly creating a conflict
          * We've already established that there is no existing matching version
          * and that 'forced' is true.
@@ -524,7 +530,7 @@ export class MvccController {
         }
         if (row.has("_deleted")) {
             this.logger.debug("C 018");
-            return this.putForceDelete(row, versions, context);
+            return this.putForceDelete(row, versions, passedUserId);
         }
         this.logger.debug("C 019");
         const result = new MvccResult(this.logger);
@@ -533,7 +539,7 @@ export class MvccController {
         const updated = row.has("updated") ? row.get("updated") : new Date();
         const updatedBy =
             row.has("updatedby") ? row.get("updatedby") :
-            (context ? context.userAccountId : Nobody.ID);
+            (passedUserId || Nobody.ID);
         const revDepth = this.versionDepth(rev);
         const revHash = this.versionHash(rev);
         const rowRevisions = row.has("_revisions") ?
@@ -569,6 +575,8 @@ export class MvccController {
                  */
                 this.logger.debug("C 021");
                 result.addVcTableAction("put", {
+                    _id: parentRow.get("_id"),
+                    _rev: parentRow.get("_rev"),
                     seq: parentRow.get("seq"),
                     isleaf: false,
                     isdeleted: false,
@@ -618,6 +626,8 @@ export class MvccController {
                         } else if (newWinnerRev != oldWinnerRev) {
                             this.logger.debug("C 028");
                             result.addVcTableAction("put", {
+                                _id: newWinner.get("_id"),
+                                _rev: newWinner.get("_rev"),
                                 seq: newWinner.get("seq"),
                                 isleaf: true,
                                 isdeleted: false,
@@ -635,6 +645,8 @@ export class MvccController {
                             newWinnerRev != oldWinnerRev) {
                             this.logger.debug("C 030");
                             result.addVcTableAction("put", {
+                                _id: oldWinner.get("_id"),
+                                _rev: oldWinner.get("_rev"),
                                 seq: oldWinner.get("seq"),
                                 isleaf: true,
                                 isdeleted: false,
@@ -712,6 +724,8 @@ export class MvccController {
                     }
                     // Update the original leaf record
                     result.addVcTableAction("put", {
+                        _id: originalLeaf.get("_id"),
+                        _rev: originalLeaf.get("_rev"),
                         seq: originalLeaf.get("seq"),
                         isleaf: true,
                         isdeleted: false,
@@ -756,6 +770,8 @@ export class MvccController {
                         if (oldWinner.get("_rev") != winnerRev) {
                             this.logger.debug("C 039");
                             result.addVcTableAction("put", {
+                                _id: oldWinner.get("_id"),
+                                _rev: oldWinner.get("_rev"),
                                 seq: oldWinner.get("seq"),
                                 isleaf: true,
                                 isdeleted: false,
@@ -829,6 +845,8 @@ export class MvccController {
                         this.logger.debug("C 046");
                         // Unmark the old winner
                         result.addVcTableAction("put", {
+                            _id: oldWinner.get("_id"),
+                            _rev: oldWinner.get("_rev"),
                             seq: oldWinner.get("seq"),
                             isleaf: true,
                             isdeleted: false,
@@ -880,7 +898,7 @@ export class MvccController {
     }
 
     private putNoForce(row: Row, versions: IResultSet, vcRow: Row,
-                       context?: IContext): MvccResult {
+                       passedUserId?: string): MvccResult {
         this.logger.debug("C 048");
         const result = new MvccResult(this.logger);
         const id = row.get("_id");
@@ -906,7 +924,7 @@ export class MvccController {
                 `Version conflict: id = ${id}, rev = ${rev}`, 409);
         }
         const updated = new Date();
-        const updatedBy = context ? context.userAccountId : Nobody.ID;
+        const updatedBy = passedUserId || Nobody.ID;
         this.convertToPayload(row);
         const newRev = this.newVersion(row, rev);
         const newRevString = `${newRev.depth}-${newRev.hash}`;
@@ -930,6 +948,8 @@ export class MvccController {
         });
         // Unmark the old winner
         result.addVcTableAction("put", {
+            _id: vcRow.get("_id"),
+            _rev: vcRow.get("_rev"),
             seq: vcRow.get("seq"),
             isleaf: false,
             isdeleted: false,
@@ -943,7 +963,7 @@ export class MvccController {
     }
 
     putMvcc(row: Row, versions: IResultSet, force: boolean,
-            context?: IContext): MvccResult {
+            passedUserId?: string): MvccResult {
         if (!row.has("_id") || row.isNull("_id") || !row.has("_rev") ||
             row.isNull("_rev")) {
             this.logger.error("C 051 - EXC");
@@ -969,14 +989,14 @@ export class MvccController {
                     "Deletion must be done via the deleteMvcc() API call");
             }
             this.logger.debug("C 056");
-            return this.putNoForce(row, versions, vcRow, context);
+            return this.putNoForce(row, versions, vcRow, passedUserId);
         }
         this.logger.debug("C 057");
-        return this.putForce(row, versions, context);
+        return this.putForce(row, versions, passedUserId);
     }
 
     deleteMvcc(id: string, rev: string, versions: IResultSet,
-               context: IContext): MvccResult {
+               passedUserId?: string): MvccResult {
         this.logger.debug("C 058");
         const result = new MvccResult(this.logger);
         const toDeleteVC = versions.find((rec) => rec.get("_rev") == rev);
@@ -990,7 +1010,7 @@ export class MvccController {
                  * which excludes all those fields.
                  */
                 const updated = new Date();
-                const updatedBy = context.userAccountId;
+                const updatedBy = passedUserId;
                 const tombstoneRow = new Row({
                     _id: id,
                     updated: updated,
@@ -1019,6 +1039,8 @@ export class MvccController {
                 result.setVersionActionDelcopy(id, rev, newRevString);
                 // Mark the vc record as non-leaf
                 result.addVcTableAction("put", {
+                    _id: toDeleteVC.get("_id"),
+                    _rev: toDeleteVC.get("_rev"),
                     seq: toDeleteVC.get("seq"),
                     isleaf: false,
                     isdeleted: false,
@@ -1039,6 +1061,8 @@ export class MvccController {
                          */
                         const newWinner = remainingConflicts[0];
                         result.addVcTableAction("put", {
+                            _id: newWinner.get("_id"),
+                            _rev: newWinner.get("_rev"),
                             seq: newWinner.get("seq"),
                             isleaf: true,
                             isdeleted: false,
@@ -1075,6 +1099,8 @@ export class MvccController {
                                  * unmark it.
                                  */
                                 result.addVcTableAction("put", {
+                                    _id: newWinner.get("_id"),
+                                    _rev: newWinner.get("_rev"),
                                     seq: newWinner.get("seq"),
                                     isleaf: true,
                                     isdeleted: false,
@@ -1088,6 +1114,8 @@ export class MvccController {
                                 if (oldWinner.get("_rev") != rev) {
                                     this.logger.debug("C 072");
                                     result.addVcTableAction("put", {
+                                        _id: oldWinner.get("_id"),
+                                        _rev: oldWinner.get("_rev"),
                                         seq: oldWinner.get("seq"),
                                         isleaf: true,
                                         isdeleted: false,
@@ -1132,13 +1160,13 @@ export class MvccController {
         return result;
     }
 
-    postMvcc(row: Row, context: IContext): MvccResult {
+    postMvcc(row: Row, userId: string): MvccResult {
         this.logger.debug("C 074");
         const result = new MvccResult(this.logger);
         this.convertToPayload(row);
         const id = Entity.generateId();
         const updated = new Date();
-        const updatedBy = context.userAccountId;
+        const updatedBy = userId;
         const rev = this.newVersion(row);
         const revString = `${rev.depth}-${rev.hash}`;
         row.add("_id", id);

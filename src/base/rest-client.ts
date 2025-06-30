@@ -1,7 +1,7 @@
 /*
     RZO - A Business Application Framework
 
-    Copyright (C) 2024 Frank Vanderham
+    Copyright (C) 2024-2025 Frank Vanderham
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -43,11 +43,9 @@ class RestClientError extends Error {
 export class RestClient implements IService, IAuthenticator {
 
     readonly url: string;
-    sessionEntity: Cfg<Entity>;
     personas: Cfg<Map<string, Persona>>;
 
     constructor(url: string) {
-        this.sessionEntity = new Cfg("session");
         this.personas = new Cfg("personas");
         let finalUrl = url.trim();
         while (finalUrl.endsWith("/")) {
@@ -57,7 +55,6 @@ export class RestClient implements IService, IAuthenticator {
     }
 
     configure(configuration: IConfiguration) {
-        this.sessionEntity.v = configuration.getEntity(this.sessionEntity.name);
         this.personas.v = configuration.personas;
     }
 
@@ -397,15 +394,19 @@ export class RestClient implements IService, IAuthenticator {
         return result;
     }
 
-    async deleteImmutable(logger: Logger, context: IContext, entity: Entity,
-                          id: string): Promise<void> {
-        throw new RestClientError("deleteImmutable() is forbidden");
-    }
-
     async delete(logger: Logger, context: IContext, entity: Entity, id: string,
-                 rev: string): Promise<void> {
+                 rev?: string): Promise<void> {
         if (!context.sessionId) {
             throw new RestClientError("Session ID missing");
+        }
+        if (!entity.canDelete) {
+            throw new RestClientError(
+                `Entity ${entity.name} is ${entity.species}, cannot delete ` +
+                `it this way`);
+        }
+        if (entity.versioned && !rev) {
+            throw new RestClientError(
+                `Must specify 'rev' to delete ${entity.name}`);
         }
         const headers = new Headers();
         headers.set("rzo-sessionid", context.sessionId);

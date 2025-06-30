@@ -25,42 +25,29 @@ import { RZO, CONTEXT } from "../../base/configuration.js";
 import * as X from "../common.js";
 import { TOASTER } from "../toaster.js";
 
-import { IPanel, BasePanel, PanelData } from "../panel.js";
+import { IPanel, ViewPanel, PanelData } from "../panel.js";
 import { TripList } from "../trip/triplist.js";
 
 
-export class RiderViewPanel extends BasePanel implements IPanel {
+export class RiderViewPanel extends ViewPanel implements IPanel {
     tripEntity: Cfg<Entity>;
     tripRidernumField: Cfg<Field>;
     tripsCollection: Cfg<Collection>;
-
-    div: HTMLElement;
-    createBtn: HTMLButtonElement;
-    editBtn: HTMLButtonElement;
     tripList: TripList;
 
-    tableTBody: HTMLTableSectionElement;
-    statusElement: HTMLElement;
-
-    state: State | null;
+    createBtn: HTMLButtonElement;
 
     constructor() {
-        super();
-
-        this.div = X.div("rider-view-div");
-        this.tableTBody = X.tsec("rider-view-tsec");
-        this.statusElement = X.htmlElement("rider-view-status-sm");
+        super("rider-view-div", "rider-view-tsec", "rider-view-status-sm",
+             "rider-view-back-btn", "rider-view-edit-btn", "rider-edit-panel");
 
         this.tripList = new TripList(X.div("rider-view-trips-div"), "vtl");
-
-        this.createBtn = X.btn("rider-view-create-btn");
-        this.editBtn = X.btn("rider-view-edit-btn");
 
         this.tripEntity = new Cfg("tripEntity");
         this.tripRidernumField = new Cfg("tripRidernumField");
         this.tripsCollection = new Cfg("tripsCollection");
 
-        this.state = null;
+        this.createBtn = X.btn("rider-view-create-btn");
     }
 
     get id(): string {
@@ -79,10 +66,6 @@ export class RiderViewPanel extends BasePanel implements IPanel {
         this.createBtn.addEventListener("click", (evt) => {
             this.onCreateTrip(evt);
         });
-        this.editBtn.addEventListener("click", (evt) => {
-            this.onEdit(evt);
-        });
-
         this.tripList.initialize((evt) => {
             evt.preventDefault();
             this.onAnchorClick(evt);
@@ -107,14 +90,6 @@ export class RiderViewPanel extends BasePanel implements IPanel {
             .catch((err) => {
                 TOASTER.error(`ERROR: ${err}`);
             });
-        }
-    }
-
-    private onEdit(evt: Event): void {
-        // Stack on the 'RiderEdit' panel
-        if (this.state) {
-            this.controller.v.stack(
-                "rider-edit-panel", new PanelData("State", this.state));
         }
     }
 
@@ -152,7 +127,7 @@ export class RiderViewPanel extends BasePanel implements IPanel {
         }
     }
 
-    private stateToUI(state: State): void {
+    protected stateToUI(state: State): void {
         this.tableTBody.innerHTML = "";
         X.addRowText(this.tableTBody, "Rider", state.asString("name"));
         X.addRowText(this.tableTBody, "Rider Num", state.asString("ridernum"));
@@ -180,34 +155,6 @@ export class RiderViewPanel extends BasePanel implements IPanel {
         this.statusElement.innerText = `${state.id} / ${state.rev}`;
 
         this.queryTrips();
-    }
-
-    async show(panelData?: PanelData): Promise<void> {
-        if (PanelData.typeOf(panelData) == "Row") {
-            this.state = this.entity.v.rowToState(PanelData.rowOf(panelData));
-            this.stateToUI(this.state);
-            this.div.hidden = false;
-        } else if (PanelData.typeOf(panelData) == "string") {
-            this.entity.v.load(
-                this.service.v, CONTEXT.c, PanelData.stringOf(panelData))
-            .then((state) => {
-                this.state = state;
-                this.stateToUI(this.state);
-                this.div.hidden = false;
-            })
-            .catch((err) => {
-                TOASTER.error(`ERROR: ${err}`);
-            });
-        } else if (!PanelData.isParam("NoRefresh", panelData) && this.state) {
-            this.stateToUI(this.state);
-            this.div.hidden = false;
-        } else {
-            this.div.hidden = false;
-        }
-    }
-
-    hide(): void {
-        this.div.hidden = true;
     }
 }
 

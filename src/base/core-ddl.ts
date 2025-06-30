@@ -19,7 +19,7 @@
 
 import {
     Entity, Field, ForeignKey, GeneratorField, AmountField, AncestryField,
-    StringField, IConfiguration
+    StringField, IConfiguration, PathField
 } from "./core.js";
 
 import { ClassInfo, Reflection } from "./reflect.js";
@@ -44,6 +44,8 @@ export interface FieldCreator {
     updateDDL(factory: CreatorFactory, from: Field, into: Field,
               doVersion: boolean, dropFirst?: boolean): string[];
     dropDDL(factory: CreatorFactory, from: Field, doVersion: boolean): string[];
+    foreignKeyTargetDDL(factory: CreatorFactory, field: Field, name: string,
+                        doVersion: boolean, dropFirst?: boolean): DataDef;
 }
 
 type EntityCreatorClass = { new(): EntityCreator; };
@@ -157,6 +159,15 @@ export class FieldDDL implements FieldCreator {
         return `   ` +
             `${name}  ${this.columnDDLType(field, doVersion)}` +
             `${notNull ? " not null" : ""}`;
+    }
+
+    foreignKeyTargetDDL(factory: CreatorFactory, field: Field, name: string,
+                        doVersion: boolean, dropFirst?: boolean): DataDef {
+        const result: DataDef = {
+            ddl: [this.columnDDL(field, name, doVersion, field.required)],
+            post: []
+        };
+        return result;
     }
 
     creationDDL(factory: CreatorFactory, field: Field, doVersion: boolean,
@@ -284,8 +295,8 @@ export class AmountFieldDDL extends FieldDDL {
             throw new CoreDDLError(
                 `field ${field.fqName} is not an AmountField`);
         }
-        const aField = <AmountField>field;
-        return `numeric(${aField.precision}, ${aField.scale})`;
+        return `numeric(${(<AmountField>field).precision}, ` +
+               `${(<AmountField>field).scale})`;
     }
 }
 
@@ -297,10 +308,14 @@ export class HistoryFieldDDL extends FieldDDL {
 
 export class ForeignKeyDDL implements FieldCreator {
 
+    foreignKeyTargetDDL(factory: CreatorFactory, field: Field, name: string,
+                        doVersion: boolean, dropFirst?: boolean): DataDef {
+        throw new CoreDDLError(
+            `Field ${field.fqName} is a ForeignKey itself`);
+    }
+
     creationDDL(factory: CreatorFactory, field: Field, doVersion: boolean,
                 dropFirst?: boolean): DataDef {
-        const req = !doVersion && field.required ? " not null" : "";
-
         if (!(field instanceof ForeignKey)) {
             throw new CoreDDLError(`field ${field.fqName} is not a ForeignKey`);
         }
@@ -308,31 +323,22 @@ export class ForeignKeyDDL implements FieldCreator {
         const intoDDLCreator = factory.fieldCreator(
             targetField.ddlCreatorClass);
 
-        if (!(intoDDLCreator instanceof FieldDDL)) {
-            throw new CoreDDLError(
-                `Foreign key ${field.fqName}'s into ` +
-                `${targetField.fqName} does not have ` +
-                `its ddlCreatorClass property resolve to a FieldDDL instance`);
-        }
-        const intoDDL = (<FieldDDL>intoDDLCreator).columnDDL(
-            targetField, field.name, doVersion, field.required);
-        const idDDL = `   ${field.idName} uuid${req}`;
-        const postDDL = [];
+        const ddlDef = intoDDLCreator.foreignKeyTargetDDL(
+            factory, field, field.name, doVersion);
+
+        const req = !doVersion && field.required ? " not null" : "";
+        ddlDef.ddl.push(`   ${field.idName} uuid${req}`);
         if (!doVersion) {
             if (field.significance != "key") {
-                postDDL.push(
+                ddlDef.post.push(
                     `create index ${field.entity.name}_${field.name} ` +
                     `on ${field.entity.table} (${field.name})`);
             }
-            postDDL.push(
+            ddlDef.post.push(
                 `create index ${field.entity.name}_${field.name}_id ` +
                 `on ${field.entity.table} (${field.idName})`);
         }
-        const result: DataDef = {
-            ddl: [intoDDL, idDDL],
-            post: postDDL
-        };
-        return result;
+        return ddlDef;
     }
 
     updateDDL(factory: CreatorFactory, from: Field, into: Field,
@@ -445,10 +451,10 @@ export class GeneratorFieldDDL extends StringFieldDDL {
     }
 }
 
-export class AncestryFieldDDL implements FieldCreator {
+export class LTreeFieldDDL implements FieldCreator {
 
-    creationDDL(factory: CreatorFactory, field: Field, doVersion: boolean,
-                dropFirst?: boolean): DataDef {
+    private createLTreeDDL(field: Field, name: string,
+                           doVersion: boolean): DataDef {
         const req = !doVersion && field.required ? " not null" : "";
         const colDDL = !doVersion ?
             `   ${field.name} ltree${req}` :
@@ -456,8 +462,8 @@ export class AncestryFieldDDL implements FieldCreator {
         const postDDL: string[] = [];
         if (!doVersion) {
             const indexDDL =
-                `create index ${field.entity.name}_${field.name} ` +
-                `on ${field.entity.table} using GIST (${field.name})`;
+                `create index ${field.entity.name}_${name}_g ` +
+                `on ${field.entity.table} using GIST (${name})`;
             postDDL.push(indexDDL);
         }
         const result: DataDef = {
@@ -467,27 +473,43 @@ export class AncestryFieldDDL implements FieldCreator {
         return result;
     }
 
+    foreignKeyTargetDDL(factory: CreatorFactory, field: Field, name: string,
+                        doVersion: boolean, dropFirst?: boolean): DataDef {
+        return this.createLTreeDDL(field, name, doVersion);
+    }
+
+    creationDDL(factory: CreatorFactory, field: Field, doVersion: boolean,
+                dropFirst?: boolean): DataDef {
+        return this.createLTreeDDL(field, field.name, doVersion);
+    }
+
     updateDDL(factory: CreatorFactory, from: Field, into: Field,
               doVersion: boolean, dropFirst?: boolean): string[] {
-        // We can only convert a 'text' field into a ltree and vice-versa,
-        // otherwise bail.
-        if (!(from instanceof StringField) &&
-            !(from instanceof AncestryField)) {
+        if ((from instanceof AncestryField || from instanceof PathField) &&
+            (into instanceof AncestryField || into instanceof PathField)) {
+            return [];
+        }
+        /* We can only convert a 'text' field into a ltree and vice-versa,
+         * otherwise bail.
+         */
+        if (from instanceof StringField && (into instanceof AncestryField ||
+                                            into instanceof PathField)) {
+            const result: string[] = [];
+            if (!doVersion && from.type != into.type) {
+                result.push(
+                    `drop index if exists ${into.entity.name}_${into.name}`
+                );
+                result.push(
+                    `create index ${into.entity.name}_${into.name} ` +
+                    `on ${into.entity.table} using GIST (${into.name})`
+                );
+            }
+            return result;
+        } else {
             throw new CoreDDLError(
                 `Cannot change ${from.fqName} from type ${from.type} to ` +
                 `${into.type}`);
         }
-        const result: string[] = [];
-        if (!doVersion && from.type != into.type) {
-            result.push(
-                `drop index if exists ${into.entity.name}_${into.name}`
-            );
-            result.push(
-                `create index ${into.entity.name}_${into.name} ` +
-                `on ${into.entity.table} using GIST (${into.name})`
-            );
-        }
-        return result;
     }
 
     dropDDL(factory: CreatorFactory, from: Field,
@@ -583,7 +605,7 @@ export class EntityDDL implements EntityCreator {
 
     creationDDL(factory: CreatorFactory, entity: Entity, doVersion: boolean,
                 dropFirst?: boolean): string {
-        if (entity.immutable && doVersion) {
+        if ((entity.immutable || entity.local) && doVersion) {
             return "";
         }
         const table = !doVersion ? entity.table : `${entity.table}_v`;
@@ -594,11 +616,15 @@ export class EntityDDL implements EntityCreator {
         if (!doVersion) {
             columns.push("   _id uuid primary key");
             if (entity.immutable) {
-                columns.push("   updated timestamptz not null");
-                columns.push("   updatedby uuid not null");
-            } else {
+                columns.push("   seq bigserial");
+            }
+            if (!entity.local) {
                 columns.push("   _rev varchar(43) not null");
                 columns.push("   _att jsonb");
+            }
+            if (entity.immutable || entity.local) {
+                columns.push("   updated timestamptz not null");
+                columns.push("   updatedby uuid not null");
             }
         } else {
             columns.push("   _id uuid not null");
@@ -626,6 +652,19 @@ export class EntityDDL implements EntityCreator {
                     `create index ${entity.table}_key on ${entity.table} ` +
                     `(${entityKeys.join(", ")})`
                 );
+            }
+            if (entity.indexes) {
+                for (const index of entity.indexes) {
+                    const cols: string[] = [];
+                    for (const col of index.columns) {
+                        cols.push(`${col.name} ${col.order || "asc"}`);
+                    }
+                    postTable.push(
+                        `create index ${entity.table}_${index.name} ` +
+                        `on ${entity.table} ` +
+                        `(${cols.join(", ")})`
+                    );
+                }
             }
         }
 
@@ -666,6 +705,23 @@ create sequence ${entity.table}_vc_useq owned by ${entity.table}_vc.updateseq;
 
 `           ;
             tableDDL += vcTable;
+        }
+
+        // the _cy table
+        if (doVersion) {
+            const cyTable = `
+drop table if exists ${entity.table}_cy;
+create table ${entity.table}_cy (
+   seq bigserial primary key,
+   _id uuid not null,
+   _rev varchar(43) not null,
+   updated timestamptz not null
+);
+
+create index ${entity.table}_cy_upd on ${entity.table}_cy (updated);
+
+`           ;
+            tableDDL += cyTable;
         }
 
         return tableDDL;

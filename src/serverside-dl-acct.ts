@@ -149,8 +149,6 @@ try {
                     }
                 }
                 await transEntity.setValue(transState, "created", now, context);
-                await transEntity.validate("create", transState, context);
-                await transEntity.activate("create", transState, context);
                 const posted = transState.field("posted").value;
                 const acctrans = transState.field("transnum").value;
                 const memo = transState.field("memo").value;
@@ -185,8 +183,6 @@ try {
                         splitState, "posted", posted, context);
                     await splitEntity.setValue(
                         splitState, "created", now, context);
-                    await splitEntity.validate("create", splitState, context);
-                    await splitEntity.activate("create", splitState, context);
                     splits.addRow(splitEntity.stateToRow(splitState));
                 }
                 await txnservice.postTxn(logger, context, txn);

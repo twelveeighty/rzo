@@ -36,6 +36,7 @@ export class NavigationPanel implements IPanel {
     tripsMenu: NavMenuItem;
     ridersMenu: NavMenuItem;
     driversMenu: NavMenuItem;
+    accountsMenu: NavMenuItem;
 
     welcomeHeading: HTMLElement;
     controller: Cfg<PanelController>;
@@ -51,48 +52,56 @@ export class NavigationPanel implements IPanel {
             navList, "nav-my-trips-a", "My Trips");
         this.tripsMenu = new NavMenuItem(navList, "nav-trips-a", "Open Trips");
         this.ridersMenu = new NavMenuItem(navList, "nav-riders-a", "Riders");
-        this.driversMenu = new NavMenuItem(
-            navList, "nav-drivers-a", "Drivers");
+        this.driversMenu = new NavMenuItem(navList, "nav-drivers-a", "Drivers");
+        this.accountsMenu = new NavMenuItem(navList, "nav-accounts-a",
+                                            "Accounts");
         this.navLogout = X.a("nav-logout-a");
         this.welcomeHeading = X.heading("welcome-heading");
         this.authenticator = new Cfg("auth");
         this.loggedIn = false;
     }
 
-    private onMyTrips(evt: Event): void {
+    private checkLogin(): boolean {
         if (this.loggedIn) {
-            this.controller.v.show("my-trips-panel");
+            return true;
         } else {
             TOASTER.error("You must log in first.");
+        }
+        return false;
+    }
+
+    private onMyTrips(evt: Event): void {
+        if (this.checkLogin()) {
+            this.controller.v.show("my-trips-panel");
         }
     }
 
     private onTrips(evt: Event): void {
-        if (this.loggedIn) {
+        if (this.checkLogin()) {
             this.controller.v.show("trips-panel");
-        } else {
-            TOASTER.error("You must log in first.");
         }
     }
 
     private onRiders(evt: Event): void {
-        if (this.loggedIn) {
+        if (this.checkLogin()) {
             this.controller.v.show("riders-panel");
-        } else {
-            TOASTER.error("You must log in first.");
         }
     }
 
     private onDrivers(evt: Event): void {
-        if (this.loggedIn) {
+        if (this.checkLogin()) {
             this.controller.v.show("drivers-panel");
-        } else {
-            TOASTER.error("You must log in first.");
+        }
+    }
+
+    private onAccounts(evt: Event): void {
+        if (this.checkLogin()) {
+            this.controller.v.show("accounts-panel");
         }
     }
 
     private onLogout(evt: Event): void {
-        if (this.loggedIn) {
+        if (this.checkLogin()) {
             this.authenticator.v.logout(this.logger, CONTEXT.c)
             .then(() => {
                 CONTEXT.reset();
@@ -103,14 +112,13 @@ export class NavigationPanel implements IPanel {
                     this.tripsMenu.hide();
                     this.ridersMenu.hide();
                     this.driversMenu.hide();
+                    this.accountsMenu.hide();
                 });
             })
             .catch((err) => {
                 console.error(err);
                 TOASTER.error(`ERROR: ${err}`);
             });
-        } else {
-            TOASTER.error("You must log in first.");
         }
     }
 
@@ -125,6 +133,7 @@ export class NavigationPanel implements IPanel {
             this.tripsMenu.show();
             this.ridersMenu.show();
             this.driversMenu.show();
+            this.accountsMenu.show();
         }
     }
 
@@ -151,6 +160,10 @@ export class NavigationPanel implements IPanel {
         this.driversMenu.initialize((evt) => {
             evt.preventDefault();
             this.onDrivers(evt);
+        });
+        this.accountsMenu.initialize((evt) => {
+            evt.preventDefault();
+            this.onAccounts(evt);
         });
         this.navLogout.addEventListener("click", (evt) => {
             evt.preventDefault();

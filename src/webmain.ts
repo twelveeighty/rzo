@@ -41,6 +41,8 @@ import { DriversListPanel } from "./web/driver/driverslistpanel.js";
 import { DriverEditPanel } from "./web/driver/drivereditpanel.js";
 import { DriverViewPanel } from "./web/driver/driverviewpanel.js";
 
+import { AccountsListPanel } from "./web/accting/accountslistpanel.js";
+
 const metadataName = "./metadata.js";
 
 TOASTER.initialize();
@@ -70,6 +72,8 @@ panelController.add(new TripsMyListPanel());
 panelController.add(new DriversListPanel());
 panelController.add(new DriverEditPanel());
 panelController.add(new DriverViewPanel());
+
+panelController.add(new AccountsListPanel());
 
 function locationHashToMap(hash: string): Map<string, string> {
     const result = new Map();

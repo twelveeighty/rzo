@@ -19,11 +19,11 @@
 
 import {
     Logger, IContext, TypeCfg, ClassSpec, IConfiguration, Cfg, Entity,
-    _IError, IService, ServiceSource
+    _IError, IService, ServiceSource, SideEffects, MemResultSet
 } from "../base/core.js";
 
 import {
-    AcctingServiceSource, IAcctingService, AccTrans, Txn
+    AcctingServiceSource, IAcctingService, AccTrans, Txn, TxnState
 } from "../accting/acc-core.js";
 
 import { PgBaseClient } from "./pg-client.js";
@@ -75,14 +75,57 @@ export class PgAccting extends PgBaseClient implements IAcctingService {
         }
     }
 
+    private async validateTxn(context: IContext, txnState: TxnState,
+                              accsplitEntity: Entity): Promise<void> {
+        const validations: Promise<void>[] = [];
+        validations.push(this.acctransEntity.v.validate(
+            "create", txnState.transaction, context));
+        for (const split of txnState.splits) {
+            validations.push(accsplitEntity.validate(
+                "create", split, context));
+        }
+        await Promise.all(validations);
+    }
+
+    private async activateTxn(context: IContext, txnState: TxnState,
+                              accsplitEntity: Entity): Promise<void> {
+        const activations: Promise<SideEffects[]>[] = [];
+        activations.push(this.acctransEntity.v.activate(
+            "create", txnState.transaction, context));
+        for (const split of txnState.splits) {
+            activations.push(accsplitEntity.activate(
+                "create", split, context));
+        }
+        await Promise.all(activations);
+    }
+
     async postTxn(logger: Logger, context: IContext, txn: Txn): Promise<Txn> {
-        this.acctransEntity.v.checkBalancedSplits(txn.splits);
+        this.acctransEntity.v.balanceSplits(txn);
         this.acctransEntity.v.checkOrSetIds(txn);
         if (!this.acctransEntity.v.checkNums(txn)) {
             await this.acctransEntity.v.createNums(txn, context, this.source.v);
         }
         this.acctransEntity.v.processPostedDT(txn);
         this.setCreated(txn, new Date());
+        const splitEntity = this.acctransEntity.v.accsplitEntity.v;
+        /* Since this is the latest all fields have been set, it's only
+         * now that we can finally validate and activate the entities.
+         */
+        const txnState = this.acctransEntity.v.txnToTxnState(txn);
+        await this.validateTxn(context, txnState, splitEntity);
+        await this.activateTxn(context, txnState, splitEntity);
+        /* Unfortunately, even though the activation doesn't modify or
+         * add any fields, to be able to support this for customizations
+         * or future behavior, we must pull fresh Rows from the States
+         */
+        const activatedSplits = new MemResultSet();
+        const activatedTxn: Txn = {
+            transaction: this.acctransEntity.v.stateToRow(txnState.transaction),
+            splits: activatedSplits
+        };
+        for (const splitState of txnState.splits) {
+            activatedSplits.addRow(splitEntity.stateToRow(splitState));
+        }
         const client = await this.pool.connect();
         try {
             let statement = "BEGIN";
@@ -90,13 +133,12 @@ export class PgAccting extends PgBaseClient implements IAcctingService {
             await client.query(statement);
             await this.postEntity(
                 logger, context.userAccountId, client, this.acctransEntity.v,
-                txn.transaction, context);
-            const splitEntity = this.acctransEntity.v.accsplitEntity.v;
-            txn.splits.rewind();
-            while (txn.splits.next()) {
+                activatedTxn.transaction, context);
+            activatedTxn.splits.rewind();
+            while (activatedTxn.splits.next()) {
                 await this.postEntity(
                     logger, context.userAccountId, client, splitEntity,
-                    txn.splits.getRow(), context);
+                    activatedTxn.splits.getRow(), context);
             }
             statement = "COMMIT";
             this.log(logger, statement);

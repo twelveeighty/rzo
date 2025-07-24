@@ -207,6 +207,9 @@
                       "value": "name",
                       "collection": "accounts"
                 },
+                { "name": "amount", "type": "AmountField", "required": true,
+                    "precision": 15, "scale": 2
+                },
                 { "name": "memo", "type": "StringField", "required": true },
                 { "name": "created", "type": "DateTimeField", "required": true },
                 { "name": "posted", "type": "DateField", "required": true }

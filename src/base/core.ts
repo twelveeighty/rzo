@@ -821,13 +821,19 @@ export class MemResultSet implements IResultSet {
         this._store.push(jsonObject);
     }
 
-    load(source: IResultSet): void {
-        this.reset();
-        if (source.next()) {
-            const columns = source.getColumns();
-            this.copyRow(source, columns);
-            while (source.next()) {
+    load(source: IResultSet, deepCopy?: boolean): void {
+        if (source instanceof MemResultSet && !deepCopy) {
+            this._store = (<MemResultSet>source).getAll();
+            this._storeReadIdx = -1;
+            this._row = new Row();
+        } else {
+            this.reset();
+            if (source.next()) {
+                const columns = source.getColumns();
                 this.copyRow(source, columns);
+                while (source.next()) {
+                    this.copyRow(source, columns);
+                }
             }
         }
     }

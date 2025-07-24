@@ -364,7 +364,7 @@ export class TripViewPanel extends BasePanel implements IPanel {
         X.addRowText(this.pickupTBody, "Zip", row.getString("opostalcode"));
         X.addRowText(this.pickupTBody, "Phone", row.getString("ophone"));
         X.addRowText(this.pickupTBody, "Notes", row.getString("comments"),
-                           true);
+                           X.asHTML);
 
         X.addRowText(this.destTBody, "To", row.getString("ddescription"));
         X.addRowElement(this.destTBody, "Address",

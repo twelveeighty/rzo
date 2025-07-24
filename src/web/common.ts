@@ -237,15 +237,19 @@ export function addRowElement(tbody: HTMLTableSectionElement, header: string,
     }
 }
 
+export type RenderAs = "asHTML" | "asText";
+export const asHTML: RenderAs = "asHTML";
+export const asText: RenderAs = "asText";
+
 export function addRowText(tbody: HTMLTableSectionElement, header: string,
-                   value: string, asHTML?: boolean): void {
+                   value: string, renderAs?: RenderAs): void {
     if (value) {
         const tr = document.createElement("tr");
         const th = document.createElement("th");
         th.setAttribute("scope", "row");
         th.innerText = header;
         const td = document.createElement("td");
-        if (asHTML) {
+        if (renderAs == "asHTML") {
             td.innerHTML = value;
         } else {
             td.innerText = value;

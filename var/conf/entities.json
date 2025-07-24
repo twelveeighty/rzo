@@ -336,11 +336,15 @@
                       "aliases": []
                 },
                 { "name": "returnts", "type": "scheduler.trip.ReturnTSField" },
+                { "name": "price", "type": "AmountField", "required": true,
+                    "precision": 15, "scale": 2,
+                    "default": "1.00"
+                },
                 { "name": "status", "type": "AliasValueList",
                       "required": true,
                       "maxlength": 32,
                       "default": "SCHED",
-                      "internal": [ "SCHED", "ACCEPT" ],
+                      "internal": [ "SCHED", "ACCEPT", "COMP", "CANCEL" ],
                       "aliases": []
                 },
                 { "name": "statusmemo", "type": "StringField" },

@@ -235,6 +235,14 @@
             <tbody id="rider-view-tsec">
             </tbody>
         </table>
+        <h3>Tickets</h3>
+        <table class="table">
+            <tbody id="rider-view-acct-tsec">
+            </tbody>
+        </table>
+        <div id="rider-acct-buttons-div"
+                 class="d-flex gap-2 justify-content-center py-5">
+        </div>
         <p>
             <small id="rider-view-status-sm">
             </small>
@@ -250,6 +258,94 @@
         <h2>Trips</h2>
         <div class="b-divider"></div>
         <div id="rider-view-trips-div" class="list-group">
+        </div>
+    </div>
+
+    <div id="rider-payment-div"
+         class="modal fade" data-bs-backdrop="static" data-bs-keyboard="false"
+         tabindex="-1" aria-labelledby="staticBackdropLabel" aria-hidden="true">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content rounded-3 shadow">
+                <div class="modal-body p-4">
+                    <h5 class="mb-0">Process Payment for Rider</h5>
+                    <form>
+                        <div class="mb-3">
+                            <label for="rider-payment-posted-txt"
+                                   class="form-label">Post Date</label>
+                            <input id="rider-payment-posted-txt" type="date"
+                                   class="form-control"></input>
+                        </div>
+                        <div class="mb-3">
+                            <label for="rider-payment-owing-txt"
+                                   class="form-label">Balance Owing</label>
+                            <input id="rider-payment-owing-txt" type="text"
+                                   class="form-control" readonly></input>
+                        </div>
+                        <div class="mb-3">
+                            <label for="rider-payment-recvd-txt"
+                                   class="form-label">Payment Received</label>
+                            <input id="rider-payment-recvd-txt" type="text"
+                                   class="form-control"></input>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer flex-nowrap p-0">
+                    <button id="rider-payment-confirm-btn" type="button"
+     class="btn btn-lg btn-link fs-6 text-decoration-none col-6 py-3 m-0 rounded-0 border-end">
+                        <strong>OK</strong>
+                    </button>
+                    <button type="button"
+              class="btn btn-lg btn-link fs-6 text-decoration-none col-6 py-3 m-0 rounded-0"
+                        data-bs-dismiss="modal">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="rider-order-div"
+         class="modal fade" data-bs-backdrop="static" data-bs-keyboard="false"
+         tabindex="-1" aria-labelledby="staticBackdropLabel" aria-hidden="true">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content rounded-3 shadow">
+                <div class="modal-body p-4">
+                    <h5 class="mb-0">Order Tickets for Rider</h5>
+                    <form>
+                        <div class="mb-3">
+                            <label for="rider-order-qty-txt"
+                                   class="form-label">Quantity</label>
+                            <input id="rider-order-qty-txt" type="text"
+                                   class="form-control"></input>
+                        </div>
+                        <div class="mb-3">
+                            <label for="rider-order-price-txt"
+                                   class="form-label">Price</label>
+                            <input id="rider-order-price-txt" type="text"
+                                   placeholder="10.00"
+                                   class="form-control" readonly></input>
+                        </div>
+                        <div class="mb-3 form-check">
+                            <input id="rider-order-paid-cbox" type="checkbox"
+                                   class="form-check-input">
+                            <label for="rider-order-paid-cbox"
+                                   class="form-check-label">
+                                Payment already received</label>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer flex-nowrap p-0">
+                    <button id="rider-order-confirm-btn" type="button"
+     class="btn btn-lg btn-link fs-6 text-decoration-none col-6 py-3 m-0 rounded-0 border-end">
+                        <strong>OK</strong>
+                    </button>
+                    <button type="button"
+              class="btn btn-lg btn-link fs-6 text-decoration-none col-6 py-3 m-0 rounded-0"
+                        data-bs-dismiss="modal">
+                        Cancel
+                    </button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -569,10 +665,14 @@
                     <input id="trip-ridernum-txt" type="text"
                            class="form-control-plaintext"></input>
                 </div>
-                <div class="col-8">
+                <div class="col-4">
                     <label for="trip-ridername-txt" class="form-label">Name</label>
                     <input id="trip-ridername-txt" type="text"
                            class="form-control-plaintext"></input>
+                </div>
+                <div class="col-4">
+                    <label for="trip-price-txt" class="form-label">Price *</label>
+                    <input id="trip-price-txt" type="text" class="form-control"></input>
                 </div>
 
                 <div class="col-4">
@@ -774,6 +874,11 @@
         </div>
         <div class="b-divider"></div>
         <div id="trip-my-list-trips-div" class="list-group">
+        </div>
+    </div>
+
+    <div id="accounts-div" class="container" hidden>
+        <div id="accounts-list-div" class="list-group">
         </div>
     </div>
 

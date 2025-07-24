@@ -31,8 +31,10 @@ if [[ $(basename "$(pwd)") = "build" ]]; then
 
     node "config-merge.js" \
         "$CFG/entities.json" \
+        "$CFG/accting.json" \
         "$CFG/personas.json" \
         "$CLT/collections.json" \
+        "$CLT/accting-collections.json" \
         "$CLT/config.json" \
         > "./metadata.js"
 

@@ -42,6 +42,11 @@ export type TxnRaw = {
     splits: JsonObject[];
 }
 
+export type TxnState = {
+    transaction: State;
+    splits: State[];
+}
+
 export interface IAcctingService {
     postTxn(logger: Logger, context: IContext, txn: Txn): Promise<Txn>;
 }
@@ -116,6 +121,19 @@ export class AccTrans extends ImmutableEntity {
                 txn.splits.getRow().raw());
         }
         return txn;
+    }
+
+    txnToTxnState(txn: Txn): TxnState {
+        const splits: State[] = [];
+        txn.splits.rewind();
+        while (txn.splits.next()) {
+            splits.push(this.accsplitEntity.v.rowToState(txn.splits.getRow()));
+        }
+        const result: TxnState = {
+            transaction: this.rowToState(txn.transaction),
+            splits: splits
+        };
+        return result;
     }
 
     total(splits: IResultSet, change: ChangeType): BigDecimal {
@@ -210,16 +228,16 @@ export class AccTrans extends ImmutableEntity {
         }
     }
 
-    checkBalancedSplits(splits: IResultSet): void {
-        const drTotal = this.total(splits, "Dr");
-        const crTotal = this.total(splits, "Cr");
+    balanceSplits(txn: Txn): void {
+        const drTotal = this.total(txn.splits, "Dr");
+        const crTotal = this.total(txn.splits, "Cr");
         if (!drTotal.equals(crTotal)) {
             throw new AcctingError(
                 `Splits total debits ${drTotal.toString()} does not equal ` +
                 `credits ${crTotal.toString()}`);
         }
+        txn.transaction.updateOrAdd("amount", drTotal);
     }
-
 }
 
 export class AccSplit extends ImmutableEntity {

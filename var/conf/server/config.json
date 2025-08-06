@@ -22,7 +22,6 @@
         },
         "spec": {
             "type": "server.pg-client.PgClientSource",
-            "leaderElector": "leaderelector",
             "pool": "pgconnection"
         }
     },
@@ -111,6 +110,7 @@
             "ports": [5001],
             "adapters": [
                 { "context": "a", "adapter": "attachadapter" },
+                { "context": "b", "adapter": "bizadapter" },
                 { "context": "e", "adapter": "entityadapter" },
                 { "context": "c", "adapter": "collectionadapter" },
                 { "context": "f", "adapter": "acctadapter" },
@@ -136,6 +136,19 @@
             "cache": "sessioncache",
             "sessionBackendSource": "db",
             "attachSource": "pgattachdb"
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Worker",
+        "metadata": {
+            "name": "bizadapter"
+        },
+        "spec": {
+            "type": "server.adapter.BizAdapter",
+            "source": "db",
+            "cache": "sessioncache",
+            "sessionBackendSource": "db"
         }
     },
     {
@@ -257,19 +270,6 @@
             "cache": "sessioncache",
             "sessionBackendSource": "db",
             "persona": "onetimelogins"
-        }
-    },
-    {
-        "apiVersion": "v1",
-        "kind": "Worker",
-        "metadata": {
-            "name": "tokenadapter"
-        },
-        "spec": {
-            "type": "server.adapter.TokenAdapter",
-            "source": "db",
-            "cache": "sessioncache",
-            "sessionBackendSource": "db"
         }
     },
     {

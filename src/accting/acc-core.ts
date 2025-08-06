@@ -18,10 +18,10 @@
 */
 
 import {
-    Logger, IContext, Row, _IError, Source, TypeCfg, ClassSpec, IConfiguration,
+    Logger, IContext, Row, _IError, TypeCfg, IConfiguration,
     BigDecimal, JsonObject, Entity, ImmutableEntity, Cfg, EntitySpec,
     IResultSet, MemResultSet, Nobody, Epilogue, EpilogueColumn,
-    EpilogueColumnOperator, GeneratorField, IService, Phase, State, Filter
+    EpilogueColumnOperator, GeneratorField, IService, Phase, State, Filter, BizTrans
 } from "../base/core.js";
 
 class AcctingError extends _IError {
@@ -32,9 +32,42 @@ class AcctingError extends _IError {
 
 export type ChangeType = "Dr" | "Cr";
 
-export type Txn = {
+export class Txn {
     transaction: Row;
     splits: IResultSet;
+
+    static rawToTxnUnparsed(raw: any): Txn {
+        const asRow = Row.dataToRow(raw);
+        if (asRow.hasAll(["transaction", "splits"])) {
+            const transaction = Row.dataToRow(asRow.get("transaction"));
+            const splits = asRow.get("splits");
+            if (!transaction.empty && Array.isArray(splits)) {
+                return new Txn(transaction, new MemResultSet(splits));
+            } else {
+                throw new AcctingError(
+                    "Txn alike object cannot be parsed to a Txn");
+            }
+        } else {
+            throw new AcctingError(
+                `Object cannot be parsed to a Txn: ${JSON.stringify(raw)}`);
+        }
+    }
+
+    constructor(transaction: Row, splits: IResultSet) {
+        this.transaction = transaction;
+        this.splits = splits;
+    }
+
+    toBizTrans(logger: Logger, context: IContext, transEntity: Entity,
+               splitEntity: Entity): BizTrans {
+        const result = new BizTrans();
+        result.post(logger, context, transEntity, this.transaction);
+        this.splits.rewind();
+        while (this.splits.next()) {
+            result.post(logger, context, splitEntity, this.splits.getRow());
+        }
+        return result;
+    }
 }
 
 export type TxnRaw = {
@@ -45,46 +78,6 @@ export type TxnRaw = {
 export type TxnState = {
     transaction: State;
     splits: State[];
-}
-
-export interface IAcctingService {
-    postTxn(logger: Logger, context: IContext, txn: Txn): Promise<Txn>;
-}
-
-export function rawToTxnUnparsed(raw: any): Txn {
-    const asRow = Row.dataToRow(raw);
-    if (asRow.hasAll(["transaction", "splits"])) {
-        const transaction = Row.dataToRow(asRow.get("transaction"));
-        const splits = asRow.get("splits");
-        if (!transaction.empty && Array.isArray(splits)) {
-            const result: Txn = {
-                "transaction": transaction,
-                "splits": new MemResultSet(splits)
-            };
-            return result;
-        } else {
-            throw new AcctingError(
-                "Txn alike object cannot be parsed to a Txn");
-        }
-    } else {
-        throw new AcctingError(
-            `Object cannot be parsed to a Txn: ${JSON.stringify(raw)}`);
-    }
-}
-
-export class AcctingServiceSource extends Source {
-
-    constructor(config: TypeCfg<ClassSpec>, blueprints: Map<string, any>) {
-        super(config, blueprints);
-    }
-
-    configure(configuration: IConfiguration): void {
-    }
-
-    get service(): IAcctingService {
-        throw new AcctingError(
-            `AcctingServiceSource ${this.name} has an undefined service`);
-    }
 }
 
 export class AccTrans extends ImmutableEntity {
@@ -114,7 +107,7 @@ export class AccTrans extends ImmutableEntity {
     }
 
     rawToTxn(raw: any): Txn {
-        const txn = rawToTxnUnparsed(raw);
+        const txn = Txn.rawToTxnUnparsed(raw);
         txn.splits.rewind();
         while (txn.splits.next()) {
             this.accsplitEntity.v.transformDataForRow(

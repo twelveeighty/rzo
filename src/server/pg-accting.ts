@@ -119,10 +119,9 @@ export class PgAccting extends PgBaseClient implements IAcctingService {
          * or future behavior, we must pull fresh Rows from the States
          */
         const activatedSplits = new MemResultSet();
-        const activatedTxn: Txn = {
-            transaction: this.acctransEntity.v.stateToRow(txnState.transaction),
-            splits: activatedSplits
-        };
+        const activatedTxn = new Txn(
+            this.acctransEntity.v.stateToRow(txnState.transaction),
+            activatedSplits);
         for (const splitState of txnState.splits) {
             activatedSplits.addRow(splitEntity.stateToRow(splitState));
         }

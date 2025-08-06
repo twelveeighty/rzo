@@ -129,6 +129,7 @@
                 { "name": "iscontra", "type": "BooleanField", "required": true,
                   "default": "false"
                 },
+                { "name": "entityid", "type": "UuidField" },
                 { "name": "description", "type": "StringField" },
                 { "name": "status", "type": "AliasValueList",
                       "required": true,
@@ -147,6 +148,11 @@
                       "aliases": []
                 },
                 { "name": "effective", "type": "DateTimeField" }
+            ],
+            "indexes": [
+                { "name": "entityid",
+                  "columns": [ { "name": "entityid", "order": "asc" } ]
+                }
             ]
         }
     },
@@ -163,14 +169,18 @@
             "canUpdate": true,
             "canDelete": false,
             "keyFields": [
-                { "name": "account", "type": "ForeignKey",
+                { "name": "account", "type": "CrossoverForeignKey",
                       "required": true,
                       "target": "account",
                       "value": "name",
-                      "collection": "accounts"
+                      "collection": "accounts",
+                      "copies": [
+                          { "from": "entityid", "to": "entityid" }
+                      ]
                 }
             ],
             "coreFields": [
+                { "name": "entityid", "type": "UuidField" },
                 { "name": "balance", "type": "AmountField", "required": true,
                     "precision": 15, "scale": 2,
                     "default": "0.00"
@@ -178,6 +188,11 @@
                 { "name": "presentvalue", "type": "AmountField", "required": true,
                     "precision": 15, "scale": 2,
                     "default": "0.00"
+                }
+            ],
+            "indexes": [
+                { "name": "entityid",
+                  "columns": [ { "name": "entityid", "order": "asc" } ]
                 }
             ]
         }
@@ -207,12 +222,18 @@
                       "value": "name",
                       "collection": "accounts"
                 },
+                { "name": "entityid", "type": "UuidField" },
                 { "name": "amount", "type": "AmountField", "required": true,
                     "precision": 15, "scale": 2
                 },
                 { "name": "memo", "type": "StringField", "required": true },
                 { "name": "created", "type": "DateTimeField", "required": true },
                 { "name": "posted", "type": "DateField", "required": true }
+            ],
+            "indexes": [
+                { "name": "entityid",
+                  "columns": [ { "name": "entityid", "order": "asc" } ]
+                }
             ]
         }
     },

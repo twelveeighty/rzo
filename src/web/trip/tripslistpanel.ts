@@ -272,11 +272,9 @@ export class TripsListPanel extends BasePanel implements IPanel {
                 this.tripList.render(resultSet);
             })
             .catch((err) => {
-                console.error(err);
                 TOASTER.error(`ERROR: ${err}`);
             });
         } catch (err) {
-            console.error(err);
             TOASTER.error(`ERROR: ${err}`);
         }
     }
@@ -297,6 +295,5 @@ export class TripsListPanel extends BasePanel implements IPanel {
         nav.ariaCurrent = "false";
         this.div.hidden = true;
     }
-
 }
 

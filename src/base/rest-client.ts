@@ -19,9 +19,9 @@
 
 import {
     Entity, IService, IResultSet, Query, MemResultSet, EmptyResultSet,
-    Filter, Collection, IContext, Row, TypeCfg, DeferredToken, ServiceSource,
-    ClassSpec, IConfiguration, Cfg, Authenticator, IAuthenticator, Persona,
-    Logger, State
+    Filter, Collection, IContext, Row, TypeCfg, ServiceSource,
+    ClassSpec, IConfiguration, Cfg, Authenticator, IAuthenticator, Logger,
+    BizTrans, JsonObject
 } from "./core.js";
 
 import { SessionContext } from "./session.js";
@@ -43,10 +43,10 @@ class RestClientError extends Error {
 export class RestClient implements IService, IAuthenticator {
 
     readonly url: string;
-    personas: Cfg<Map<string, Persona>>;
+    configuration: Cfg<IConfiguration>;
 
     constructor(url: string) {
-        this.personas = new Cfg("personas");
+        this.configuration = new Cfg("configuration");
         let finalUrl = url.trim();
         while (finalUrl.endsWith("/")) {
             finalUrl = finalUrl.slice(0, -1);
@@ -55,75 +55,7 @@ export class RestClient implements IService, IAuthenticator {
     }
 
     configure(configuration: IConfiguration) {
-        this.personas.v = configuration.personas;
-    }
-
-    createInMemorySession(logger: Logger, userId: string, expiryOverride?: Date,
-                          personaOverride?: Persona): Promise<State> {
-        throw new RestClientError("This service does not support sessions");
-    }
-
-    async getDeferredToken(logger: Logger, context: IContext,
-                           tokenUuid: string): Promise<DeferredToken | null> {
-        const targetUrl = `${this.url}/t/${tokenUuid}`;
-        logger.info(`fetch GET - ${targetUrl}`);
-        const response = await fetch(targetUrl);
-        if (!response.ok) {
-            if (response.status == 404) {
-                return null;
-            }
-            throw new RestClientError(
-                `fetch returned status code ${response.status}`);
-        }
-        const token = await response.json() as DeferredToken;
-        return token;
-    }
-
-    async queryDeferredToken(logger: Logger, context: IContext, parent: string,
-                             contained: string, parentField: string,
-                             containedField: string,
-                             id: string): Promise<DeferredToken | null> {
-        const targetUrl =
-            `${this.url}/t?${parent}&${contained}&${parentField}&` +
-            `${containedField}&${id}`;
-        logger.info(`fetch GET - ${targetUrl}`);
-        const response = await fetch(targetUrl);
-        if (!response.ok) {
-            if (response.status == 404) {
-                return null;
-            }
-            throw new RestClientError(
-                `fetch returned status code ${response.status}`);
-        }
-        const token = await response.json() as DeferredToken;
-        return token;
-    }
-
-    async putDeferredToken(logger: Logger, context: IContext,
-                     token: DeferredToken): Promise<number> {
-        if (!context.sessionId) {
-            throw new RestClientError("Session ID missing");
-        }
-        const targetUrl = `${this.url}/t/${token.token}`;
-        const payload = JSON.stringify(token);
-        const headers = new Headers();
-        headers.set("Content-Type", "application/json");
-        const fetchRequest = {
-            method: "put",
-            body: payload,
-            headers: headers
-        };
-        fetchRequest.headers.set("rzo-sessionid", context.sessionId);
-
-        logger.info(`fetch PUT - ${targetUrl}`);
-        const response = await fetch(targetUrl, fetchRequest);
-        if (!response.ok) {
-            const body = await response.text();
-            throw RestClientError.fromResponse(response, body);
-        }
-        const data = await response.json();
-        const row = Row.dataToRow(data);
-        return row.has("wait") ? row.get("wait") : 0;
+        this.configuration.v = configuration;
     }
 
     async getDBInfo(logger: Logger, context: IContext): Promise<Row> {
@@ -361,6 +293,41 @@ export class RestClient implements IService, IAuthenticator {
         return result;
     }
 
+    private serializeBizTrans(bizTrans: BizTrans): string {
+        const entries: JsonObject[] = [];
+        for (const entry of bizTrans.entries) {
+            entries.push(entry.serialize().raw());
+        }
+        return JSON.stringify( { entries: entries } );
+    }
+
+    async processBizTrans(logger: Logger,
+                          bizTrans: BizTrans): Promise<BizTrans> {
+        const sessionId = bizTrans.context.sessionId;
+        if (!sessionId) {
+            throw new RestClientError("Session ID missing");
+        }
+        const jsonData = this.serializeBizTrans(bizTrans);
+        const payload = JSON.stringify(jsonData);
+        const headers = new Headers();
+        headers.set("rzo-sessionid", sessionId);
+        headers.set("Content-Type", "application/json");
+        const fetchRequest = {
+            method: "post",
+            body: payload,
+            headers: headers
+        };
+        const targetUrl = this.url + "/b/";
+        logger.info(`fetch POST - ${targetUrl}`);
+        const response = await fetch(targetUrl, fetchRequest);
+        if (!response.ok) {
+            const body = await response.text();
+            throw RestClientError.fromResponse(response, body);
+        }
+        const data = await response.json();
+        return BizTrans.deserialize(data, this.configuration.v);
+    }
+
     async post(logger: Logger, context: IContext, entity: Entity,
                row: Row): Promise<Row> {
         if (!context.sessionId) {
@@ -486,7 +453,8 @@ export class RestClient implements IService, IAuthenticator {
             throw new RestClientError(
                 `One time login does not return anything`);
         }
-        const persona = this.personas.v.get(result.get("persona"));
+        const persona = this.configuration.v.personas.get(
+            result.get("persona"));
         if (!persona) {
             throw new RestClientError(
                 `OneTimeLogin returns unknown persona: ` +
@@ -552,7 +520,8 @@ export class RestClient implements IService, IAuthenticator {
         if (result.empty) {
             throw new RestClientError(`Login does not return anything`);
         }
-        const persona = this.personas.v.get(result.get("persona"));
+        const persona = this.configuration.v.personas.get(
+            result.get("persona"));
         if (!persona) {
             throw new RestClientError(
                 `Login returns unknown persona: ${result.get("persona")}`);

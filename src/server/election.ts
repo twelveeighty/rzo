@@ -19,7 +19,7 @@
 
 import {
     Row, _IError, TypeCfg, ClassSpec, DaemonWorker, Cfg, IConfiguration,
-    IService, Entity, Logger, ServiceSource
+    Entity, Logger, ServiceSource
 } from "../base/core.js";
 
 class ElectionError extends _IError {
@@ -28,7 +28,7 @@ class ElectionError extends _IError {
     }
 }
 
-export interface IElectorService extends IService {
+export interface IElectorService {
     get isElectorService(): boolean;
     castBallot(logger: Logger, serverId: string, rowId: number,
                interval: string): Promise<Row>;
@@ -89,7 +89,7 @@ export class LeaderElector extends DaemonWorker {
                 `LeaderElector '${this.name}' requires a Source that defines ` +
                 `an ElectorService`);
         }
-        this.service.v = dbSource.service as IElectorService;
+        this.service.v = dbSource.service as any as IElectorService;
         configuration.registerAsyncTask(this);
     }
 

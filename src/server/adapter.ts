@@ -22,8 +22,8 @@ import { IncomingMessage, IncomingHttpHeaders, ServerResponse } from "http";
 import {
     _IError, Entity, Cfg, DaemonWorker, IService, IPolicyConfiguration,
     TypeCfg, ClassSpec, IConfiguration, Persona, Row, Query, Filter,
-    OrderBy, Collection, IResultSet, DeferredToken, JsonObject, Logger,
-    IContext, ServiceSource
+    OrderBy, Collection, IResultSet, JsonObject, Logger, IContext,
+    ServiceSource, BizTrans
 } from "../base/core.js";
 
 import { ICache } from "./cache.js";
@@ -556,6 +556,87 @@ export class EntityAdapter extends SessionAwareAdapter {
     }
 }
 
+export class BizAdapter extends SessionAwareAdapter {
+    configuration: Cfg<IConfiguration>;
+
+    constructor(config: TypeCfg<SessionAwareAdapterSpec>,
+                blueprints: Map<string, any>) {
+        super(config, blueprints);
+        this.configuration = new Cfg("configuration");
+    }
+
+    configure(configuration: IConfiguration): void {
+        super.configure(configuration);
+        this.configuration.v = configuration;
+    }
+
+
+    protected async payloadHandler(payload: JsonObject,
+                                   request: IncomingMessage,
+                                   response: ServerResponse,
+                                   uriElements: string[],
+                                   resource?: string,
+                                   id?: string): Promise<void> {
+        const bizTrans = BizTrans.deserialize(payload, this.configuration.v);
+        const context = await this.pullContext(request);
+        bizTrans.context = context;
+        bizTrans.logger = this.logger;
+        // Do all policy checks
+        for (const entry of bizTrans.entries) {
+            this.policyConfig.v.guardResource(
+                context, `entity/${entry.entity.name}`, entry.action);
+            switch (entry.action) {
+                case "post":
+                case "put":
+                    this.policyConfig.v.guardRow(
+                        context, `entity/${entry.entity.name}`, entry.action,
+                        entry.row);
+                    break;
+                case "delete":
+                    const row = await this.source.v.getOne(
+                        this.logger, context, entry.entity, entry.id,
+                        entry.rev);
+                    if (row && !row.empty) {
+                        this.policyConfig.v.guardRow(
+                            context, `entity/${entry.entity.name}`,
+                            "delete", row);
+                    } else {
+                        respondWithRestError(
+                            response, 404, "NotFound",
+                            `${entry.entity.name} : ${entry.id}`);
+                    }
+                    break;
+                default:
+                    throw new AdapterError(
+                        `BizTrans action invalid: ${entry.action}`);
+            }
+        }
+        // Pass all to our source
+        const resultBizTrans = await this.source.v.processBizTrans(
+            this.logger, bizTrans);
+        // Serialize the result
+        const entries: JsonObject[] = [];
+        for (const entry of resultBizTrans.entries) {
+            entries.push(entry.serialize().raw());
+        }
+        response.end(JSON.stringify( { entries: entries } ));
+    }
+
+    handle(request: IncomingMessage, response: ServerResponse,
+           uriElements: string[]): void {
+        try {
+            if (request.method == "POST") {
+                this.handlePayload(request, response, uriElements);
+            } else {
+                throw new AdapterError(
+                    `Invalid Entity request: ${request.method}`, 400);
+            }
+        } catch (error) {
+            AdapterError.toResponse(this.logger, error, response);
+        }
+    }
+}
+
 export class CollectionAdapter extends SessionAwareAdapter {
     collections: Cfg<Map<string, Collection>>;
 
@@ -703,103 +784,6 @@ export class QueryOneAdapter extends SessionAwareAdapter {
             throw new AdapterError(`Invalid entity: ${uriElements[1]}`);
         }
         this.handleQueryOne(entity, request, response, uriElements);
-    }
-}
-
-export class TokenAdapter extends SessionAwareAdapter {
-
-    async handleQueryToken(request: IncomingMessage, response: ServerResponse,
-                           uriElements: string[]): Promise<void> {
-        try {
-            const context = await this.pullContext(request);
-            const query = uriElements[2];
-            const queryElements = query.split("&");
-            if (queryElements.length != 5) {
-                throw new AdapterError("Invalid Token GET query request", 400);
-            }
-            const token = await this.source.v.queryDeferredToken(
-                this.logger, context,
-                queryElements[0], queryElements[1], queryElements[2],
-                queryElements[3], queryElements[4]);
-            if (token) {
-                response.end(JSON.stringify(token));
-            } else {
-                respondWithRestError(
-                    response, 404, "NotFound",
-                    `${queryElements[1]}.${queryElements[2]}: ` +
-                    `${queryElements[5]}`);
-            }
-        } catch (error) {
-            AdapterError.toResponse(this.logger, error, response);
-        }
-    }
-
-    async handleGetToken(request: IncomingMessage, response: ServerResponse,
-                         tokenUuid: string): Promise<void> {
-        try {
-            const context = await this.pullContext(request);
-            const token = await this.source.v.getDeferredToken(
-                this.logger, context, tokenUuid);
-            if (token) {
-                response.end(JSON.stringify(token));
-            } else {
-                respondWithRestError(response, 404, "NotFound", tokenUuid);
-            }
-        } catch (error) {
-            AdapterError.toResponse(this.logger, error, response);
-        }
-    }
-
-    protected async payloadHandler(payload: JsonObject,
-                                   request: IncomingMessage,
-                                   response: ServerResponse,
-                                   uriElements: string[],
-                                   resource?: string,
-                                   id?: string): Promise<void> {
-        const context = await this.pullContext(request);
-        const token = payload as DeferredToken;
-        token.token = id!;
-        if (!token.updatedby || !token.updated) {
-            throw new AdapterError("Invalid Token", 400);
-        }
-        const result = await this.source.v.putDeferredToken(
-            this.logger, context, token);
-        response.end(JSON.stringify({ wait: result }));
-    }
-
-    handle(request: IncomingMessage, response: ServerResponse,
-           uriElements: string[]): void {
-        /* https:/host/
-         *             0   1                          2
-         *
-         * GET         t   ?     parent&contained&parentField&containedField&id
-         *
-         * GET         t  token
-         *
-         * PUT         t  token
-         */
-        switch (request.method) {
-            case "GET":
-                if (uriElements.length == 2) {
-                    this.handleGetToken(request, response, uriElements[1]);
-                    return;
-                } else if (uriElements.length == 3 && uriElements[1] == "?") {
-                    this.handleQueryToken(request, response, uriElements);
-                    return;
-                } else {
-                    throw new AdapterError("Invalid Token GET request", 400);
-                }
-            case "PUT":
-                if (uriElements.length == 2) {
-                    this.handlePayload(
-                        request, response, uriElements, "", uriElements[1]);
-                } else {
-                    throw new AdapterError("Invalid Token PUT request", 400);
-                }
-            default:
-                throw new AdapterError(
-                    `Invalid Token request: ${request.method}`);
-        }
     }
 }
 

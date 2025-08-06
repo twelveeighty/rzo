@@ -59,23 +59,6 @@ create or replace function db_uuid() returns varchar(32) as $$
     select info from dbinfo where id = 'uuid';
 $$ language sql;
 
-drop table if exists deferredtoken;
-create table deferredtoken (
-    parent varchar(64) not null,
-    contained varchar(64) not null,
-    parentfield varchar(64) not null,
-    containedfield varchar(64) not null,
-    id uuid not null,
-    token uuid not null,
-    updatedbynum text not null,
-    updatedby uuid not null,
-    updated timestamptz not null,
-    constraint deferredtoken_token unique (token),
-    primary key (parent, contained, parentfield, containedfield, id)
-);
-
-create index deferredtoken_updated on deferredtoken (updated);
-
 drop table if exists leaderelect;
 create table leaderelect (
     id integer primary key,

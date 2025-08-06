@@ -18,29 +18,49 @@
 */
 
 import {
-    Collection, Cfg, ServiceSource, Filter, Query, IResultSet
+    Collection, Cfg, ServiceSource, Filter, Query, IResultSet, MemResultSet, Row
 } from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
 
 import * as X from "../common.js";
 import { TOASTER } from "../toaster.js";
 
-import { IPanel, BasePanel, PanelData } from "../panel.js";
+import { IPanel, BasePanel, PanelData, PanelButton } from "../panel.js";
+
+import { EntityList } from "../list.js";
 
 export class AccountsListPanel extends BasePanel implements IPanel {
     collection: Cfg<Collection>;
     div: HTMLElement;
-    listDiv: HTMLElement;
-    abortController: AbortController | null;
+    title: HTMLElement;
+    list: EntityList;
     defaultQuery: Query;
     lastResult: IResultSet | null;
+    lastSelected: Row | null;
+    createBtn: HTMLButtonElement;
+    editBtn: HTMLButtonElement;
+    splitsBtn: PanelButton;
+    transBtn: PanelButton;
 
     constructor() {
         super();
         this.div = X.div("accounts-div");
-        this.listDiv = X.div("accounts-list-div");
+        const btnDiv = X.div("accounts-buttons-div");
+        this.createBtn = X.btn("accounts-div-create-btn");
+        this.editBtn = X.btn("accounts-div-edit-btn");
+        this.splitsBtn = new PanelButton(
+            btnDiv, "accounts-splits-btn", "View Splits...");
+        this.transBtn = new PanelButton(
+            btnDiv, "accounts-trans-btn", "View Transactions...");
+        this.list = new EntityList(
+            X.div("accounts-list-div"),
+            "arl",
+            "name",
+            "elementtype",
+            "description",
+            "holding");
+        this.title = X.heading("accounts-heading");
         this.collection = new Cfg("accounts");
-        this.abortController = null;
         const filter = new Filter("or")
         .op("name", "=", "C100")
         .op("name", "=", "C200")
@@ -50,6 +70,7 @@ export class AccountsListPanel extends BasePanel implements IPanel {
         this.defaultQuery = new Query(
             [], filter, [{field: "name", order: "asc"}]);
         this.lastResult = null;
+        this.lastSelected = null;
     }
 
     get id(): string {
@@ -58,24 +79,82 @@ export class AccountsListPanel extends BasePanel implements IPanel {
 
     initialize(): void {
         this.collection.v = RZO.getCollection(this.collection.name);
+        this.entity.v = RZO.getEntity("account");
         this.service.v =
             (<ServiceSource>RZO.getSource("db").ensure(ServiceSource)).service;
+        this.list.initialize((evt) => {
+            evt.preventDefault();
+            this.onAnchorClick(evt);
+        });
+        this.createBtn.addEventListener("click", (evt) => {
+            this.onCreate(evt);
+        });
+        this.editBtn.addEventListener("click", (evt) => {
+            this.onEdit(evt);
+        });
+        this.splitsBtn.initialize((evt) => {
+            this.onSplits(evt);
+        });
+        this.transBtn.initialize((evt) => {
+            this.onTransactions(evt);
+        });
+    }
+
+    private onCreate(evt: Event): void {
+        this.controller.v.stack("account-edit-panel");
+    }
+
+    private onEdit(evt: Event): void {
+        if (this.lastSelected) {
+            this.controller.v.stack(
+                "account-edit-panel",
+                new PanelData("State",
+                              this.entity.v.rowToState(this.lastSelected)));
+        }
+    }
+
+    private onSplits(evt: Event): void {
+        if (this.lastSelected) {
+            this.navToAccountSplits(this.lastSelected);
+        }
+    }
+
+    private onTransactions(evt: Event): void {
+    }
+
+    private navToAccountSplits(row: Row): void {
+        this.controller.v.stack(
+            "splits-panel", new PanelData("Row", row));
+    }
+
+    private setButtonsVisible(visible: boolean): void {
+        if (visible) {
+            this.splitsBtn.show();
+            this.transBtn.show();
+        } else {
+            this.splitsBtn.hide();
+            this.transBtn.hide();
+        }
     }
 
     private async drillDownOrIn(id: string): Promise<void> {
         if (this.lastResult) {
-            const accountRow = this.lastResult.find(
-                (row) => row.getString("_id") == id);
-            if (accountRow) {
+            const selectedRow = this.lastResult.find(
+                (row) => row.get("_id") == id);
+            if (selectedRow) {
+                this.lastSelected = selectedRow;
+                this.title.innerText = selectedRow.getString("name");
+                this.setButtonsVisible(true);
                 const query = new Query(
                     [],
-                    new Filter().op("name", "<@", accountRow.getString("name")),
-                    [{field: "name", order: "asc"}]);
+                    new Filter().op(
+                        "name", "<@", selectedRow.getString("name")),
+                        [{field: "name", order: "asc"}]);
                 const resultSet = await this.collection.v.query(
                     CONTEXT.c, query);
                 if (resultSet.rowCount > 0) {
                     this.lastResult = resultSet;
-                    this.renderList(resultSet);
+                    this.list.render(resultSet);
                 }
             }
         }
@@ -88,66 +167,21 @@ export class AccountsListPanel extends BasePanel implements IPanel {
             .catch((err) => {
                 TOASTER.error(`ERROR: ${err}`);
             });
-            /*
-            this.controller.v.stack(
-                "account-view-panel", new PanelData("string", _id));
-            */
-        }
-    }
-
-    private renderList(resultSet: IResultSet): void {
-        if (this.abortController !== null) {
-            this.abortController.abort();
-        }
-        this.listDiv.innerHTML = "";
-        this.abortController = new AbortController();
-        while (resultSet.next()) {
-            const anchor = document.createElement("a");
-            anchor.href = "#";
-            anchor.className =
-                "list-group-item list-group-item-action";
-            anchor.id = `arl-${resultSet.getString("_id")}`;
-            anchor.addEventListener("click", (evt) => {
-                evt.preventDefault();
-                this.onAnchorClick(evt);
-            },
-            { signal: this.abortController.signal }
-            );
-            this.listDiv.appendChild(anchor);
-            const headingDiv = document.createElement("div");
-            headingDiv.className =
-                "d-flex w-100 justify-content-between";
-            anchor.appendChild(headingDiv);
-            const heading5 = document.createElement("h5");
-            heading5.className = "mb-1";
-            heading5.innerText = resultSet.getString("name");
-            const eleTypeSmall = document.createElement("small");
-            eleTypeSmall.innerText = resultSet.getString("elementtype");
-            headingDiv.appendChild(heading5);
-            headingDiv.appendChild(eleTypeSmall);
-            const para = document.createElement("p");
-            para.className = "mb-1";
-            para.innerText = resultSet.getString("description");
-            anchor.appendChild(para);
-            const holding = document.createElement("small");
-            holding.innerText = resultSet.getString("holding");
-            anchor.appendChild(holding);
         }
     }
 
     private queryList(): void {
-        try {
-            this.collection.v.query(CONTEXT.c, this.defaultQuery)
-            .then((resultSet) => {
-                this.lastResult = resultSet;
-                this.renderList(resultSet);
-            })
-            .catch((err) => {
-                TOASTER.error(`ERROR: ${err}`);
-            });
-        } catch (err) {
+        this.setButtonsVisible(false);
+        this.title.innerText = "Top-level Accounts";
+        this.lastSelected = null;
+        this.collection.v.query(CONTEXT.c, this.defaultQuery)
+        .then((resultSet) => {
+            this.lastResult = resultSet;
+            this.list.render(resultSet);
+        })
+        .catch((err) => {
             TOASTER.error(`ERROR: ${err}`);
-        }
+        });
     }
 
     async show(panelData?: PanelData): Promise<void> {
@@ -156,7 +190,13 @@ export class AccountsListPanel extends BasePanel implements IPanel {
         nav.ariaCurrent = "page";
         this.div.hidden = false;
         if (!PanelData.isParam("NoRefresh", panelData)) {
-            this.queryList();
+            if (PanelData.typeOf(panelData) == "Row") {
+                const row = PanelData.rowOf(panelData);
+                this.lastResult = MemResultSet.fromRow(row);
+                this.drillDownOrIn(row.get("_id"));
+            } else {
+                this.queryList();
+            }
         }
     }
 
@@ -166,6 +206,5 @@ export class AccountsListPanel extends BasePanel implements IPanel {
         nav.ariaCurrent = "false";
         this.div.hidden = true;
     }
-
 }
 

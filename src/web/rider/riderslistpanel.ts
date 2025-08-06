@@ -25,25 +25,26 @@ import { TOASTER } from "../toaster.js";
 
 import { IPanel, BasePanel, PanelData } from "../panel.js";
 
+import { EntityList } from "../list.js";
+
 export class RidersListPanel extends BasePanel implements IPanel {
     collection: Cfg<Collection>;
-
     div: HTMLElement;
-    listDiv: HTMLElement;
     createBtn: HTMLButtonElement;
-
-    abortController: AbortController | null;
+    list: EntityList;
 
     constructor() {
         super();
-
         this.div = X.div("riders-div");
-        this.listDiv = X.div("riders-list-div");
+        this.list = new EntityList(
+            X.div("riders-list-div"),
+            "ril",
+            "name",
+            "status",
+            "ridernum",
+            "zone");
         this.createBtn = X.btn("rider-create-btn");
-
         this.collection = new Cfg("collection");
-
-        this.abortController = null;
     }
 
     get id(): string {
@@ -54,9 +55,12 @@ export class RidersListPanel extends BasePanel implements IPanel {
         this.collection.v = RZO.getCollection("riders");
         this.service.v =
             (<ServiceSource>RZO.getSource("db").ensure(ServiceSource)).service;
-
         this.createBtn.addEventListener("click", (evt) => {
             this.createRider(evt);
+        });
+        this.list.initialize((evt) => {
+            evt.preventDefault();
+            this.onAnchorClick(evt);
         });
     }
 
@@ -75,66 +79,13 @@ export class RidersListPanel extends BasePanel implements IPanel {
     }
 
     private queryList(): void {
-        try {
-            if (this.abortController !== null) {
-                this.abortController.abort();
-                this.abortController = null;
-            }
-            this.collection.v.query(CONTEXT.c)
-            .then((resultSet) => {
-                this.abortController = new AbortController();
-                this.listDiv.innerHTML = "";
-                while (resultSet.next()) {
-                    const anchor = document.createElement("a");
-                    anchor.href = "#";
-                    anchor.className =
-                        "list-group-item list-group-item-action";
-                    anchor.id = `ril-${resultSet.getString("_id")}`;
-
-                    anchor.addEventListener("click", (evt) => {
-                        evt.preventDefault();
-                        this.onAnchorClick(evt);
-                    },
-                    { signal: this.abortController.signal }
-                    );
-
-                    this.listDiv.appendChild(anchor);
-
-                    const headingDiv = document.createElement("div");
-                    headingDiv.className =
-                        "d-flex w-100 justify-content-between";
-
-                    anchor.appendChild(headingDiv);
-
-                    const heading5 = document.createElement("h5");
-                    heading5.className = "mb-1";
-                    heading5.innerText = resultSet.getString("name");
-
-                    const statusSmall = document.createElement("small");
-                    statusSmall.innerText = resultSet.getString("status");
-
-                    headingDiv.appendChild(heading5);
-                    headingDiv.appendChild(statusSmall);
-
-                    const para = document.createElement("p");
-                    para.className = "mb-1";
-                    para.innerText = resultSet.getString("ridernum");
-
-                    anchor.appendChild(para);
-
-                    const regionSmall = document.createElement("small");
-                    regionSmall.innerText = resultSet.getString("zone");
-
-                    anchor.appendChild(regionSmall);
-                }
-            })
-            .catch((err) => {
-                console.error(err);
-                TOASTER.error(`ERROR: ${err}`);
-            });
-        } catch (err) {
-            console.error(err);
-        }
+        this.collection.v.query(CONTEXT.c)
+        .then((resultSet) => {
+            this.list.render(resultSet);
+        })
+        .catch((err) => {
+            TOASTER.error(`ERROR: ${err}`);
+        });
     }
 
     async show(panelData?: PanelData): Promise<void> {

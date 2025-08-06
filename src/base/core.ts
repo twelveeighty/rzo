@@ -839,12 +839,190 @@ export class MemResultSet implements IResultSet {
     }
 }
 
+export type BizTransType = "post" | "put" | "delete";
+
+export class BizTransEntry {
+    action: BizTransType;
+    entity: Entity;
+    private _row?: Row;
+    private _id?: string;
+    rev?: string;
+
+    static deserialize(raw: Row, config: IConfiguration): BizTransEntry {
+        const entity = config.getEntity(raw.getString("entity"));
+        const action = raw.getString("action");
+        if (!(["post", "put", "delete"].includes(action))) {
+            throw new CoreError(`Invalid action: ${action}`);
+        }
+        const bizEntry = new BizTransEntry(<BizTransType>action, entity);
+        switch (action) {
+            case "post":
+                bizEntry.row = Row.dataToRow(raw.get("row"), entity);
+                break;
+            case "put":
+                bizEntry.row = Row.dataToRow(raw.get("row"), entity);
+                bizEntry.id = raw.getString("id");
+                break;
+            case "delete":
+                bizEntry.id = raw.getString("id");
+                if (raw.has("rev")) {
+                    bizEntry.rev = raw.getString("rev");
+                }
+                break;
+        }
+        return bizEntry;
+    }
+
+    constructor(action: BizTransType, entity: Entity) {
+        this.action = action;
+        this.entity = entity;
+    }
+
+    set row(row: Row) {
+        this._row = row;
+    }
+
+    get row(): Row {
+        if (!this._row) {
+            throw new CoreError("Row not set");
+        }
+        return this._row;
+    }
+
+    set id(id: string) {
+        this._id = id;
+    }
+
+    get id(): string {
+        if (!this._id) {
+            throw new CoreError("id not set");
+        }
+        return this._id;
+    }
+
+    hasRev(): boolean {
+        return !!this.rev;
+    }
+
+    serialize(): Row {
+        const result = new Row({
+            action: this.action,
+            entity: this.entity.name
+        });
+        switch (this.action) {
+            case "post":
+                result.add("row", this.row.raw());
+                break;
+            case "put":
+                result.add("row", this.row.raw());
+                result.add("id", this.id);
+                break;
+            case "delete":
+                result.add("id", this.id);
+                if (this.hasRev()) {
+                    result.add("rev", this.rev);
+                }
+                break;
+            default:
+                throw new CoreError(`Unknown action: ${this.action}`);
+        }
+        return result;
+    }
+}
+
+export class BizTrans {
+    private _context?: IContext;
+    private _logger?: Logger;
+    entries: BizTransEntry[];
+
+    static deserialize(data: any, config: IConfiguration): BizTrans {
+        const rawEntries = Row.dataToRow(data).get("entries");
+        if (Array.isArray(rawEntries)) {
+            const result = new BizTrans();
+            const entriesRS = new MemResultSet(rawEntries);
+            while (entriesRS.next()) {
+                result.entries.push(BizTransEntry.deserialize(
+                    entriesRS.getRow(), config));
+            }
+            return result;
+        } else {
+            throw new CoreError("Cannot parse 'entries' into array");
+        }
+    }
+
+    constructor() {
+        this.entries = [];
+    }
+
+    set context(context: IContext) {
+        this._context = context;
+    }
+
+    get context(): IContext {
+        if (!this._context) {
+            throw new CoreError("Context not set");
+        }
+        return this._context;
+    }
+
+    set logger(logger: Logger) {
+        this._logger = logger;
+    }
+
+    get logger(): Logger {
+        if (!this._logger) {
+            throw new CoreError("logger not set");
+        }
+        return this._logger;
+    }
+
+    put(logger: Logger, context: IContext, entity: Entity, id: string,
+          row: Row): void {
+        if (!this._context) {
+            this._context = context;
+        }
+        if (!logger) {
+            this._logger = logger;
+        }
+        const entry = new BizTransEntry("put", entity);
+        entry.row = row;
+        entry.id = id;
+        this.entries.push(entry);
+    }
+
+    post(logger: Logger, context: IContext, entity: Entity, row: Row): void {
+        if (!this._context) {
+            this._context = context;
+        }
+        if (!logger) {
+            this._logger = logger;
+        }
+        const entry = new BizTransEntry("post", entity);
+        entry.row = row;
+        this.entries.push(entry);
+    }
+
+    delete(logger: Logger, context: IContext, entity: Entity, id: string,
+           rev?: string): void {
+        if (!this._context) {
+            this._context = context;
+        }
+        if (!logger) {
+            this._logger = logger;
+        }
+        const entry = new BizTransEntry("delete", entity);
+        entry.id = id;
+        if (rev) {
+            entry.rev = rev;
+        }
+        this.entries.push(entry);
+    }
+}
+
 export interface IService {
     getDBInfo(logger: Logger, context: IContext): Promise<Row>;
     getQueryOne(logger: Logger, context: IContext, entity: Entity,
                 filter: Filter): Promise<Row>;
-    createInMemorySession(logger: Logger, userId: string, expiryOverride?: Date,
-                          personaOverride?: Persona): Promise<State>;
     getGeneratorNext(logger: Logger, context: IContext,
                      generatorName: string): Promise<string>;
     getOne(logger: Logger, context: IContext, entity: Entity, id: string,
@@ -859,14 +1037,7 @@ export interface IService {
          row: Row): Promise<Row>;
     delete(logger: Logger, context: IContext, entity: Entity, id: string,
            rev?: string): Promise<void>;
-    queryDeferredToken(logger: Logger, context: IContext, parent: string,
-                       contained: string, parentField: string,
-                       containedField: string,
-                       id: string): Promise<DeferredToken | null>;
-    getDeferredToken(logger: Logger, context: IContext,
-                     tokenUuid: string): Promise<DeferredToken | null>;
-    putDeferredToken(logger: Logger, context: IContext,
-                     token: DeferredToken): Promise<number>;
+    processBizTrans(logger: Logger, bizTrans: BizTrans): Promise<BizTrans>;
 }
 
 export interface IAuthenticator {
@@ -935,6 +1106,36 @@ export type EntityRetention = {
 
 export type EntitySpecies = "versioned" | "immutable" | "local";
 
+/*
+ * Epilogues are inserts (post) or updates (put) actions that are taken after
+ * unversioned entities are inserted (post), either through business actions,
+ * or through replication.
+ * Epilogues are therefore only applicable to be triggered from Immutable or
+ * Local objects and only on insert (post).
+ *
+ * Epilogues support operators such as '+=', which are used to update
+ * downstream objects' fields without having to know their current value. This
+ * is used, for example, to update an account balance after a financial
+ * transaction has taken place: if 'amount' was $100.00, increment the
+ * balance by $100.00, without knowing what the current balance is.
+ * The following table shows which actions and operators are supported for the
+ * entity species that is *targeted* by the epilogue (remember that only
+ * Immutable and Local objects can trigger an Epilogue).
+ *
+ * ----------------------------------------------------------------------------
+ *  Target        |  Put      |  Post    |   Operators   |  When triggered by
+ *                |           |          |               |  inbound Replication
+ * ---------------|-----------|----------|---------------|---------------------
+ *  Versioned     |  Yes      |  Yes     |     = only    |  Post only, Put is
+ *                |           |          |               |  silently ignored
+ * ---------------|-----------|----------|---------------|---------------------
+ *  Immutable     |  No       |  Yes     |     = only    |  Post only, Put
+ *                |           |          |               |  throws error
+ * ---------------|-----------|----------|---------------|---------------------
+ *  Local         |  Yes      |  Yes     |   =  +=  -=   |  Post and Put
+ * ---------------|-----------|----------|---------------|---------------------
+ *
+ */
 export type EpilogueColumnOperator = "=" | "+=" | "-=";
 
 export type EpilogueColumn = {
@@ -1278,10 +1479,16 @@ export class BigDecimal {
 }
 
 export class State {
-
     private fields: Map<string, FieldState>;
     entity: Entity;
     core?: CoreColumns;
+
+    static must(state?: State | null, error?: string): State {
+        if (state) {
+            return state;
+        }
+        throw new CoreError(error || "State is unexpectedly null or undefined");
+    }
 
     constructor(entity: Entity, core?: CoreColumns) {
         this.core = core;
@@ -1874,6 +2081,28 @@ export class Cfg<T> {
 
 type PathFieldCfg = FieldCfg & {
     separator: string;
+}
+
+export class UuidField extends StringField {
+    static VALIDPATTERN =
+        /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+
+    constructor(entity: Entity, config: PathFieldCfg) {
+        super(entity, config);
+    }
+
+    async validate(phase: Phase, state: State, fieldState: FieldState,
+                   context: IContext): Promise<void> {
+        await super.validate(phase, state, fieldState, context);
+        if (phase == "set" && fieldState.dirtyNotNull) {
+            this.testValidCharacters(
+                fieldState.asString, UuidField.VALIDPATTERN);
+        }
+    }
+
+    get ddlCreatorClass(): string {
+        return "base.core-ddl.UuidFieldDDL";
+    }
 }
 
 export class PathField extends StringField {
@@ -2580,8 +2809,7 @@ export class Entity {
         return row;
     }
 
-    async put(service: IService, state: State,
-              context: IContext): Promise<Row> {
+    protected async activatePut(state: State, context: IContext): Promise<Row> {
         if (this.canUpdate) {
             throw new CoreError(
                 `Entity ${this.name} is ${this.species}, cannot update ` +
@@ -2589,21 +2817,45 @@ export class Entity {
         }
         await this.validate("update", state, context);
         await this.activate("update", state, context);
-        const row = this.stateToRow(state);
+        return this.stateToRow(state);
+    }
+
+    async put2000(bizTrans: BizTrans, service: IService, state: State,
+              context: IContext): Promise<BizTrans> {
+        const row = await this.activatePut(state, context);
+        bizTrans.put(this.logger, context, this, state.id, row);
+        return bizTrans;
+    }
+
+    async put(service: IService, state: State,
+              context: IContext): Promise<Row> {
+        const row = await this.activatePut(state, context);
         return await service.put(
             this.logger, context, this, state.id, row);
     }
 
-    async post(service: IService, state: State,
-               context: IContext): Promise<Row> {
+    protected async activatePost(state: State,
+                                 context: IContext): Promise<Row> {
         await this.validate("create", state, context);
         await this.activate("create", state, context);
-        const row = this.stateToRow(state);
+        return this.stateToRow(state);
+    }
+
+    async post2000(bizTrans: BizTrans, service: IService, state: State,
+                   context: IContext): Promise<BizTrans> {
+        const row = await this.activatePost(state, context);
+        bizTrans.post(this.logger, context, this, row);
+        return bizTrans;
+    }
+
+    async post(service: IService, state: State,
+               context: IContext): Promise<Row> {
+        const row = await this.activatePost(state, context);
         return await service.post(this.logger, context, this, row);
     }
 
-    async delete(service: IService, state: State,
-                 context: IContext): Promise<void> {
+    protected async activateDelete(state: State,
+                                   context: IContext): Promise<void> {
         if (this.canDelete) {
             throw new CoreError(
                 `Entity ${this.name} is ${this.species}, cannot delete ` +
@@ -2611,6 +2863,20 @@ export class Entity {
         }
         await this.validate("delete", state, context);
         await this.activate("delete", state, context);
+    }
+
+    async delete2000(bizTrans: BizTrans, service: IService, state: State,
+                     context: IContext): Promise<BizTrans> {
+        await this.activateDelete(state, context);
+        if (state.hasId()) {
+            bizTrans.delete(this.logger, context, this, state.id, state.rev);
+        }
+        return bizTrans;
+    }
+
+    async delete(service: IService, state: State,
+                 context: IContext): Promise<void> {
+        await this.activateDelete(state, context);
         if (state.hasId()) {
             await service.delete(
                 this.logger, context, this, state.id, state.rev);
@@ -3185,126 +3451,6 @@ export class AmountField extends Field {
             return (<BigDecimal>newValue).equals(<BigDecimal>oldValue);
         }
         return super.hasChanged(oldValue, newValue);
-    }
-}
-
-type SummaryFieldCfg = AmountFieldCfg & {
-    entity: string;
-    field: string;
-    operation: string;
-}
-
-export class SummaryField extends AmountField {
-    fieldName: string;
-    parentIdName: Cfg<string>;
-    containedEntity: Cfg<ContainedEntity>;
-    private deferredLogger: Logger;
-
-    constructor(entity: Entity, config: SummaryFieldCfg) {
-        super(entity, config);
-        this.parentIdName = new Cfg("parentIdName");
-        this.containedEntity = new Cfg(config.entity);
-        this.fieldName = config.field;
-        this.deferredLogger = new Logger("server/deferred");
-    }
-
-    configure(configuration: IConfiguration) {
-        super.configure(configuration);
-        this.containedEntity.setIfCast(
-            `${this.fqName}: configuration error: 'entity' `,
-            configuration.entities.get(this.containedEntity.name),
-            ContainedEntity);
-        this.parentIdName.v = this.containedEntity.v.parentKeyFor(
-            this.entity.name).idName;
-        this.deferredLogger.configure(configuration);
-    }
-
-    async performTokenUpdate(service: IService, token: DeferredToken,
-                             context: IContext): Promise<void> {
-        // Calculate the new total
-        const query = new Query(
-            [this.fieldName],
-            new Filter().op(this.parentIdName.v, "=", token.id)
-        );
-        const resultSet = await service.getQuery(
-            this.logger, context, this.containedEntity.v, query);
-        let totalN = BigDecimal.toN("0");
-        while (resultSet.next()) {
-            const amountN = BigDecimal.toN(resultSet.get(this.fieldName));
-            totalN += amountN;
-        }
-        const total = new BigDecimal(totalN);
-        // Query the parent entity
-        const state = await this.entity!.load(service, context, token.id);
-        // Update the total
-        await this.setValue(state, total, context);
-        // Save the changed entity
-        await this.entity.put(service, state, context);
-    }
-
-    deferUpdate(service: IService, contained: ContainedEntity,
-                containedState: State, context: IContext): void {
-        const id = containedState.asString(this.parentIdName.v);
-        const token: DeferredToken = {
-            parent: this.entity.name,
-            contained: this.containedEntity.v.name,
-            parentfield: this.name,
-            containedfield: this.fieldName,
-            id: id,
-            token: Entity.generateId(),
-            updatedbynum: context.userAccount,
-            updatedby: context.userAccountId,
-            updated: new Date()
-        };
-        service.putDeferredToken(this.logger, context, token)
-        .then((waitMillis) => {
-            if (!waitMillis) {
-                this.deferredLogger.debug(
-                    `Deferred ${this.fqName} update token: ${token.token} ` +
-                    `is managed by the service.`);
-                return;
-            }
-            this.deferredLogger.debug(
-                `Deferred ${this.fqName} update with token: ${token.token}`);
-            setTimeout(() => {
-                service.queryDeferredToken(
-                    this.logger, context, token.parent, token.contained,
-                    token.parentfield, token.containedfield, token.id)
-                .then((currToken) => {
-                    if (currToken) {
-                        // Only if the current token is the same as 'our' token
-                        // do we take action. Otherwise, a further update has
-                        // occurred and we simply exit without doing anything.
-                        this.deferredLogger.debug(
-                            `Deferred ${this.fqName} comparing target token: ` +
-                            `${token.token} to latest token: ` +
-                            `${currToken.token}`);
-
-                        if (currToken.token == token.token) {
-                            this.performTokenUpdate(service, token, context);
-                        } else {
-                            this.deferredLogger.debug(
-                               `Deferred ${this.fqName} token ${token.token} ` +
-                               `superseded by token ${currToken.token}`);
-                        }
-                    } else {
-                        this.deferredLogger.debug(
-                            `Deferred ${this.fqName} token ${token.token} no ` +
-                            `longer exists`);
-                    }
-                })
-                .catch((error) => {
-                    this.deferredLogger.error(
-                        `${this.fqName}: cannot execute deferred update`);
-                    this.deferredLogger.exc(error);
-                });
-            }, waitMillis);
-        })
-        .catch((error) => {
-            this.deferredLogger.error(
-                `${this.fqName}: cannot schedule deferred update due ` +
-                `to: ${error}`);
-        });
     }
 }
 

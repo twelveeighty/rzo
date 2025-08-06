@@ -671,8 +671,15 @@
                            class="form-control-plaintext"></input>
                 </div>
                 <div class="col-4">
-                    <label for="trip-price-txt" class="form-label">Price *</label>
-                    <input id="trip-price-txt" type="text" class="form-control"></input>
+                    <label for="trip-price-sel" class="form-label">Number of Tickets *</label>
+                    <select id="trip-price-sel" class="form-select">
+                        <option selected value="">Choose...</option>
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                        <option value="5">5</option>
+                    </select>
                 </div>
 
                 <div class="col-4">
@@ -878,8 +885,114 @@
     </div>
 
     <div id="accounts-div" class="container" hidden>
+        <h4 id="accounts-heading">Top-level Accounts</h4>
+        <div id="accounts-buttons-div"
+                 class="d-flex gap-2 justify-content-center py-5">
+            <button id="accounts-div-edit-btn"
+                class="btn btn-primary" type="button">Edit...</button>
+            <button id="accounts-div-create-btn"
+                class="btn btn-primary" type="button">Create...</button>
+        </div>
         <div id="accounts-list-div" class="list-group">
         </div>
+    </div>
+
+    <div id="splits-list-div" class="container" hidden>
+        <h4 id="splits-list-account-heading">Account</h4>
+        <table class="table table-bordered">
+            <thead>
+                <tr>
+                  <th scope="col">#</th>
+                  <th scope="col">Posted</th>
+                  <th scope="col">Transaction</th>
+                  <th scope="col">Memo</th>
+                  <th scope="col">Qty</th>
+                  <th scope="col">Price</th>
+                  <th scope="col">Dr</th>
+                  <th scope="col">Cr</th>
+                </tr>
+            </thead>
+            <tbody id="splits-list-table-tsec">
+            </tbody>
+        </table>
+        <div class="d-flex gap-2 justify-content-center py-5">
+            <button id="splits-list-back-btn" type="button"
+                class="btn btn-primary">Go back</button>
+        </div>
+    </div>
+
+    <div id="account-edit-div" class="container" hidden>
+        <form id="account-edit-form">
+            <div class="row">
+                <div class="col-4">
+                    <label for="account-name-txt" class="form-label">Name *</label>
+                    <input id="account-name-txt" type="text" class="form-control"></input>
+                </div>
+                <div class="col-4">
+                    <label for="account-ledger-sel" class="form-label">Ledger *</label>
+                    <select id="account-ledger-sel" class="form-select">
+                        <option selected value="">Choose...</option>
+                    </select>
+                </div>
+                <div class="col-4">
+                    <label for="account-holding-sel" class="form-label">Holding *</label>
+                    <select id="account-holding-sel" class="form-select">
+                        <option selected value="">Choose...</option>
+                    </select>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-4">
+                    <label for="account-lholding-txt" class="form-label">Ledger Holding</label>
+                    <input id="account-lholding-txt" type="text"
+                           class="form-control" readonly></input>
+                </div>
+                <div class="col-4">
+                    <label for="account-lcurrency-txt"
+                           class="form-label">Ledger Currency</label>
+                    <input id="account-lcurrency-txt" type="text"
+                           class="form-control" readonly></input>
+                </div>
+                <div class="col-4">
+                    <label for="account-currency-txt"
+                           class="form-label">Currency</label>
+                    <input id="account-currency-txt" type="text"
+                           class="form-control" readonly></input>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-4">
+                    <label for="account-description-txt" class="form-label">Description</label>
+                    <input id="account-description-txt" type="text"
+                           class="form-control"></input>
+                </div>
+                <div class="col-4">
+                    <label for="account-element-sel" class="form-label">Element Type *</label>
+                    <select id="account-element-sel" class="form-select">
+                        <option selected value="">Choose...</option>
+                        <option value="ASSET">ASSET</option>
+                        <option value="LIABILITY">LIABILITY</option>
+                        <option value="EQUITY">EQUITY</option>
+                        <option value="INCOME">INCOME</option>
+                        <option value="EXPENSE">EXPENSE</option>
+                    </select>
+                </div>
+                <div class="col-4">
+                    <label for="account-status-sel" class="form-label">Status *</label>
+                    <select id="account-status-sel" class="form-select">
+                        <option selected value="">Choose...</option>
+                        <option value="ACTIVE">ACTIVE</option>
+                        <option value="INACTIVE">INACTIVE</option>
+                        <option value="CLOSED">CLOSED</option>
+                    </select>
+                </div>
+            </div>
+            <div class="b-divider"></div>
+            <button id="account-edit-btn" type="submit"
+                    class="btn btn-primary">Save</button>
+            <button id="account-edit-cancel-btn" type="button"
+                    class="btn btn-primary">Cancel</button>
+        </form>
     </div>
 
 </main>

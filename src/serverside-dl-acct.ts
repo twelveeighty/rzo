@@ -135,7 +135,6 @@ try {
                 if (!txnRaw) {
                     break;
                 }
-                // const txn = rawToTxnUnparsed(txnRaw);
                 const transState = await transEntity.create(context, service);
                 const transRow = Row.dataToRow(txnRaw.transaction);
                 for (const column of transRow.columns) {
@@ -154,10 +153,7 @@ try {
                 const memo = transState.field("memo").value;
                 const acctrans_id = Nobody.ID;
                 const splits = new MemResultSet();
-                const txn: Txn = {
-                    transaction: transEntity.stateToRow(transState),
-                    splits: splits
-                };
+                const txn = new Txn(transEntity.stateToRow(transState), splits);
                 for (const splitObj of txnRaw.splits) {
                     const splitRow = Row.dataToRow(splitObj);
                     const splitState = await splitEntity.create(

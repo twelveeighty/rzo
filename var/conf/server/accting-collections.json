@@ -72,6 +72,21 @@
             "fields": [ "*" ],
             "orderBy": [ { "field": "transnum", "order": "asc" } ]
         }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Collection",
+        "metadata": {
+            "name": "accsplits"
+        },
+        "spec": {
+            "type": "Collection",
+            "entity": "accsplit",
+            "source": "db",
+            "via": "query",
+            "fields": [ "*" ],
+            "orderBy": [ { "field": "splitnum", "order": "asc" } ]
+        }
     }
 ]
 

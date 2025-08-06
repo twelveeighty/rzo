@@ -22,7 +22,6 @@
         },
         "spec": {
             "type": "server.pg-client.PgClientSource",
-            "leaderElector": "leaderelector",
             "pool": "pgconnection"
         }
     },
@@ -108,19 +107,6 @@
         },
         "spec": {
             "type": "server.authentication.BootstrapSessionAdapter",
-            "source": "db",
-            "cache": "sessioncache",
-            "sessionBackendSource": "db"
-        }
-    },
-    {
-        "apiVersion": "v1",
-        "kind": "Worker",
-        "metadata": {
-            "name": "tokenadapter"
-        },
-        "spec": {
-            "type": "server.adapter.TokenAdapter",
             "source": "db",
             "cache": "sessioncache",
             "sessionBackendSource": "db"

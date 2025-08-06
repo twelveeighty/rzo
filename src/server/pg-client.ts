@@ -24,10 +24,10 @@ import Cursor from "pg-cursor";
 import { env } from "node:process";
 
 import {
-    Entity, IResultSet, IConfiguration, Query, AsyncTask, DaemonWorker,
-    EmptyResultSet, MemResultSet, Row, TypeCfg, ClassSpec, Collection,
-    IContext, Filter, ServiceSource, _IError, Nobody, DeferredToken,
-    SummaryField, Persona, Cfg, IService, SideEffects, State, Logger, Epilogue
+    Entity, IResultSet, IConfiguration, Query, DaemonWorker, EmptyResultSet,
+    MemResultSet, Row, TypeCfg, ClassSpec, Collection, IContext, Filter,
+    ServiceSource, _IError, Nobody, Persona, Cfg, IService, SideEffects,
+    State, Logger, Epilogue, BizTrans
 } from "../base/core.js";
 
 import { VERSION, NOCONTEXT } from "../base/configuration.js";
@@ -35,32 +35,14 @@ import { VERSION, NOCONTEXT } from "../base/configuration.js";
 import {
     ISessionBackendService, SessionContext, serializeSubjectMap
 } from "../base/session.js";
-import { ITaskRunner, Scheduler } from "../base/scheduler.js";
 
 import { MvccResult, MvccController } from "./mvcc.js";
-import { IElectorService, LeaderElector } from "./election.js";
+import { IElectorService } from "./election.js";
 import { IHooverService } from "./hoover.js";
 
 class PgClientError extends _IError {
     constructor(message: string, code?: number, options?: ErrorOptions) {
         super(code || 500, message, options);
-    }
-}
-
-class DeferredContext implements IContext {
-    sessionId?: string;
-    persona: Persona;
-    userAccount: string;
-    userAccountId: string;
-
-    constructor(userAccount: string, userAccountId: string) {
-        this.userAccount = userAccount;
-        this.userAccountId = userAccountId;
-        this.persona = Nobody.INSTANCE;
-    }
-
-    getSubject(key: string): string {
-        return "";
     }
 }
 
@@ -635,7 +617,8 @@ export class PgBaseClient {
                     /*
                      * NOTE: if no context is specified, we assume that this is
                      * not a user-initiated change, but likely due to
-                     * replication, so we silently ignore versioned epilogues.
+                     * replication, so we silently ignore 'put'
+                     * versioned epilogues.
                      */
                     if (context) {
                         await this.handlePutVersionedEpilogue(
@@ -678,42 +661,24 @@ export class PgBaseClient {
 }
 
 type PgClientSourceSpec = ClassSpec & {
-    leaderElector: string;
     pool: string;
 }
 
 export class PgClient extends PgBaseClient implements IService,
-                IElectorService, ISessionBackendService, IHooverService,
-                ITaskRunner {
+                IElectorService, ISessionBackendService, IHooverService {
     configuration: Cfg<IConfiguration>;
-    leaderElector: Cfg<LeaderElector>;
-    private _scheduler: Scheduler;
     private electionLogger: Logger;
-    private deferredLogger: Logger;
 
     constructor(spec: PgClientSourceSpec) {
         super(spec.pool);
         this.configuration = new Cfg("configuration");
-        this.leaderElector = new Cfg(spec.leaderElector);
         this.electionLogger = new Logger("server/election");
-        this.deferredLogger = new Logger("server/deferred");
-        this._scheduler = new Scheduler(30000, this, this.deferredLogger);
     }
 
     configure(configuration: IConfiguration) {
         super.configure(configuration);
-        this.leaderElector.setIfCast(
-            `Invalid PgClientSource: leaderElector `,
-            configuration.workers.get(this.leaderElector.name),
-            LeaderElector);
         this.configuration.v = configuration;
-        this.leaderElector.v.onChange((leader) => {
-            if (leader) {
-                this.catchupInitialization();
-            }
-        });
         this.electionLogger.configure(configuration);
-        this.deferredLogger.configure(configuration);
     }
 
     get isElectorService(): boolean {
@@ -728,45 +693,6 @@ export class PgClient extends PgBaseClient implements IService,
         return true;
     }
 
-    start(): void {
-        this._scheduler.start();
-    }
-
-    async stop(): Promise<void> {
-        this._scheduler.stop();
-    }
-
-    private catchupInitialization(): void {
-        this.deferredLogger.log("Running catch-up initialization");
-        const now = new Date();
-        let statement = "select * from deferredtoken where updated < \$1";
-        const parameters = [now];
-
-        this.log(this.deferredLogger, statement, parameters);
-        this.conn.v.pool.query(statement, parameters).then((result) => {
-            if (result.rows.length > 0) {
-                // Capture all the results before we delete these rows, to
-                // avoid other parallel servers picking these up.
-                const resultSet = new MemResultSet(result.rows);
-                // Delete these rows, to avoid other parallel servers
-                // picking these up.
-                statement = "delete from deferredtoken where updated < \$1";
-                this.log(this.deferredLogger, statement, parameters);
-                this.conn.v.pool.query(statement, parameters).then(() => {
-                    while (resultSet.next()) {
-                        const token = resultSet.getRow().raw() as DeferredToken;
-                        const context = new DeferredContext(
-                            token.updatedbynum, token.updatedby);
-                        this.performTokenUpdate(
-                            this.deferredLogger, context, token, true);
-                    }
-                });
-            } else {
-                this.deferredLogger.log("No catch-up tasks to do");
-            }
-        });
-    }
-
     async getSession(logger: Logger, id: string): Promise<Row> {
         const row = await this.getOne(
             logger, NOCONTEXT, this.sessionEntity.v, id);
@@ -775,8 +701,7 @@ export class PgClient extends PgBaseClient implements IService,
         }
         if (row.get("expiry") <= Date.now()) {
             // no need to await the deletion
-            this.deleteLocal(
-                logger, NOCONTEXT, this.sessionEntity.v, id);
+            this.deleteLocal(logger, this.sessionEntity.v, id);
             throw new PgClientError("Session expired", 401);
         }
         return row;
@@ -1019,61 +944,18 @@ export class PgClient extends PgBaseClient implements IService,
         }
     }
 
-    async put(logger: Logger, context: IContext, entity: Entity, id: string,
-              row: Row): Promise<Row> {
-        if (!entity.canUpdate) {
-            throw new PgClientError(
-                `Entity ${entity.name} is ${entity.species}, cannot update ` +
-                `it this way`, 400);
-        }
-        // Check dups by key
-        if (entity.keyFields.size) {
-            let param = 1;
-            const parameters = [];
-            const keyWhere = [];
-            for (const key of entity.keyFields.keys()) {
-                keyWhere.push(`${key} = \$${param++}`);
-                parameters.push(row.get(key));
-            }
-            parameters.push(row.get("_id"));
-            const statement = `select _id from ${entity.table} ` +
-                `where ${keyWhere.join(" and ")} and _id != \$${param} limit 1`;
-            this.log(logger, statement, parameters);
-            const result = await this.pool.query(statement, parameters);
-            if (result.rows.length) {
-                throw new PgClientError(
-                    `Duplicate '${entity.name}': ${parameters.join(", ")}`,
-                    409);
-            }
-        }
+    protected async putEntity(logger: Logger, userId: string,
+                              client: pg.Client, entity: Entity, id: string,
+                              row: Row): Promise<Row> {
         if (entity.versioned) {
-            const versions = await this.pullVcTable(logger, entity, id);
+            const versions = await this.pullVcTable(logger, entity, id, client);
             const mvccResult = this.mvccController.putMvcc(
-                row, versions, false, context.userAccountId);
-            const client = await this.pool.connect();
-            try {
-                let statement = "BEGIN";
-                this.log(logger, statement);
-                await client.query(statement);
-
-                await this.applyMvccResults(logger, client, entity, mvccResult);
-
-                statement = "COMMIT";
-                this.log(logger, statement);
-                await client.query(statement);
-
-                return Row.must(mvccResult.leafTable.leafActionPut?.payload);
-            } catch (err: any) {
-                const statement = "ROLLBACK";
-                this.log(logger, statement);
-                await client.query(statement);
-                throw err;
-            } finally {
-                client.release();
-            }
+                row, versions, false, userId);
+            await this.applyMvccResults(logger, client, entity, mvccResult);
+            return Row.must(mvccResult.leafTable.leafActionPut?.payload);
         } else if (entity.local) {
             row.updateOrAdd("updated", new Date());
-            row.updateOrAdd("updatedby", context.userAccountId);
+            row.updateOrAdd("updatedby", userId);
             const setRow = row.copyWithout(["_id"]);
             const setList = setRow.getUpdateSet();
             const statement =
@@ -1081,7 +963,7 @@ export class PgClient extends PgBaseClient implements IService,
                 `where _id = \$${setList.length + 1}`;
             const parameters = setRow.values().concat(id);
             this.log(logger, statement, parameters);
-            const pgResult = await this.pool.query(statement, parameters);
+            const pgResult = await client.query(statement, parameters);
             if (pgResult.rowCount != 1) {
                 throw new PgClientError(
                     `local put: update ${entity.name}, id = ${id} ; rowCount ` +
@@ -1095,8 +977,51 @@ export class PgClient extends PgBaseClient implements IService,
         }
     }
 
-    async post(logger: Logger, context: IContext, entity: Entity,
-               row: Row): Promise<Row> {
+    async put(logger: Logger, context: IContext, entity: Entity, id: string,
+              row: Row): Promise<Row> {
+        if (!entity.canUpdate) {
+            throw new PgClientError(
+                `Entity ${entity.name} is ${entity.species}, cannot update ` +
+                `it this way`, 400);
+        }
+        const client = await this.pool.connect();
+        try {
+            await this.checkDupesForPut(logger, client, entity, row);
+            return await this.putEntity(
+                logger, context.userAccountId, client, entity, id, row);
+        } finally {
+            client.release();
+        }
+    }
+
+    private async checkDupesForPut(logger: Logger, client: pg.Client,
+                                   entity: Entity, row: Row): Promise<void> {
+        // Check dups by key
+        if (entity.keyFields.size) {
+            let param = 1;
+            const parameters = [];
+            const keyWhere = [];
+            for (const key of entity.keyFields.keys()) {
+                keyWhere.push(`${key} = \$${param++}`);
+                parameters.push(row.get(key));
+            }
+            parameters.push(row.get("_id"));
+            const statement = `select _id from ${entity.table} ` +
+                `where ${keyWhere.join(" and ")} and _id != \$${param} limit 1`;
+            this.log(logger, statement, parameters);
+            const result = client !== undefined ?
+                await client.query(statement, parameters) :
+                await this.pool.query(statement, parameters);
+            if (result.rows.length) {
+                throw new PgClientError(
+                    `Duplicate '${entity.name}': ${parameters.join(", ")}`,
+                    409);
+            }
+        }
+    }
+
+    private async checkDupesForPost(logger: Logger, entity: Entity, row: Row,
+                                    client: pg.Client): Promise<void> {
         // Check dups by key
         if (entity.keyFields.size) {
             let param = 1;
@@ -1109,18 +1034,25 @@ export class PgClient extends PgBaseClient implements IService,
             const statement = `select _id from ${entity.table} ` +
                 `where ${keyWhere.join(" and ")} limit 1`;
             this.log(logger, statement, parameters);
-            const result = await this.pool.query(statement, parameters);
+            const result = client !== undefined ?
+                await client.query(statement, parameters) :
+                await this.pool.query(statement, parameters);
             if (result.rows.length) {
                 throw new PgClientError(
                     `Duplicate '${entity.name}': ${parameters.join(", ")}`,
                     409);
             }
         }
+    }
+
+    async post(logger: Logger, context: IContext, entity: Entity,
+               row: Row): Promise<Row> {
         const client = await this.pool.connect();
         try {
             let statement = "BEGIN";
             this.log(logger, statement);
             await client.query(statement);
+            await this.checkDupesForPost(logger, entity, row, client);
             const result = await this.postEntity(
                 logger, context.userAccountId, client, entity, row, context);
             statement = "COMMIT";
@@ -1137,13 +1069,116 @@ export class PgClient extends PgBaseClient implements IService,
         }
     }
 
-    private async deleteLocal(logger: Logger, context: IContext, entity: Entity,
-                              id: string): Promise<void> {
+    async processBizTrans(logger: Logger,
+                          bizTrans: BizTrans): Promise<BizTrans> {
+        const result = new BizTrans();
+        const context = bizTrans.context;
+        const userId = context.userAccountId;
+        const client = await this.pool.connect();
+        try {
+            let statement = "BEGIN";
+            this.log(logger, statement);
+            await client.query(statement);
+            for (const entry of bizTrans.entries) {
+                let resultRow: Row;
+                switch (entry.action) {
+                    case "post":
+                        await this.checkDupesForPost(
+                            logger, entry.entity, entry.row, client);
+                        resultRow = await this.postEntity(
+                            logger, userId, client, entry.entity,
+                            entry.row);
+                        result.post(logger, context, entry.entity, resultRow);
+                        break;
+                    case "put":
+                        if (!entry.entity.canUpdate) {
+                            throw new PgClientError(
+                                `Entity ${entry.entity.name} is ` +
+                                `${entry.entity.species}, cannot update it ` +
+                                `this way`, 400);
+                        }
+                        await this.checkDupesForPut(
+                            logger, client, entry.entity, entry.row);
+                        resultRow = await this.putEntity(
+                            logger, userId, client, entry.entity, entry.id,
+                            entry.row);
+                        result.put(
+                            logger, context, entry.entity, entry.id, resultRow);
+                        break;
+                    case "delete":
+                        if (!entry.entity.canDelete) {
+                            throw new PgClientError(
+                                `Entity ${entry.entity.name} is ` +
+                                `${entry.entity.species}, cannot delete it ` +
+                                `this way`, 400);
+                        }
+                        if (entry.entity.versioned && !entry.hasRev) {
+                            throw new PgClientError(
+                                `Must specify 'rev' to delete ` +
+                                `${entry.entity.name}`);
+                        }
+                        await this.deleteEntity(
+                            logger, userId, client, entry.entity,
+                            entry.id, entry.rev);
+                        result.delete(
+                            logger, context, entry.entity, entry.id, entry.rev);
+                        break;
+                    default:
+                        throw new PgClientError(
+                            `Unknown biztrans action: ${entry.action}`);
+                }
+            }
+            statement = "COMMIT";
+            this.log(logger, statement);
+            await client.query(statement);
+            return result;
+        } catch (err: any) {
+            const statement = "ROLLBACK";
+            this.log(logger, statement);
+            await client.query(statement);
+            throw err;
+        } finally {
+            client.release();
+        }
+    }
+
+    protected async deleteEntity(logger: Logger, userId: string,
+                                 client: pg.Client, entity: Entity,
+                                 id: string, rev?: string): Promise<void> {
+        if (entity.local) {
+            await this.deleteLocal(logger, entity, id, client);
+            return;
+        }
+        const versions = await this.pullVcTable(logger, entity, id, client);
+        const mvccResult = this.mvccController.deleteMvcc(
+            id, rev!, versions, userId);
+        try {
+            let statement = "BEGIN";
+            this.log(logger, statement);
+            await client.query(statement);
+            await this.applyMvccResults(logger, client, entity, mvccResult);
+            statement = "COMMIT";
+            this.log(logger, statement);
+            await client.query(statement);
+        } catch (err: any) {
+            const statement = "ROLLBACK";
+            this.log(logger, statement);
+            await client.query(statement);
+            throw err;
+        }
+    }
+
+    private async deleteLocal(logger: Logger, entity: Entity, id: string,
+                              client?: pg.Client): Promise<void> {
         const statement =
             `delete from ${entity.table} where _id = \$1`;
         const parameters = [id];
         this.log(logger, statement, parameters);
-        await this.pool.query(statement, parameters);
+        if (client) {
+            await client.query(statement, parameters);
+        } else {
+            await this.pool.query(statement, parameters);
+        }
     }
 
     async delete(logger: Logger, context: IContext, entity: Entity, id: string,
@@ -1158,180 +1193,17 @@ export class PgClient extends PgBaseClient implements IService,
             throw new PgClientError(
                 `Must specify 'rev' to delete ${entity.name}`);
         }
-        if (entity.local) {
-            return this.deleteLocal(logger, context, entity, id);
-        }
-        const versions = await this.pullVcTable(logger, entity, id);
-        const mvccResult = this.mvccController.deleteMvcc(
-            id, rev!, versions, context.userAccountId);
         const client = await this.pool.connect();
         try {
-            let statement = "BEGIN";
-            this.log(logger, statement);
-            await client.query(statement);
-
-            await this.applyMvccResults(logger, client, entity, mvccResult);
-
-            statement = "COMMIT";
-            this.log(logger, statement);
-            await client.query(statement);
-
-        } catch (err: any) {
-            const statement = "ROLLBACK";
-            this.log(logger, statement);
-            await client.query(statement);
-            throw err;
+            await this.deleteEntity(
+                logger, context.userAccountId, client, entity, id, rev);
         } finally {
             client.release();
         }
     }
-
-    async getDeferredToken(logger: Logger, context: IContext,
-                           tokenUuid: string): Promise<DeferredToken | null> {
-        const statement =
-            `select * from deferredtoken where token = \$1`;
-        const parameters = [tokenUuid];
-        this.log(logger, statement, parameters);
-        const result = await this.pool.query(statement, parameters);
-        if (result.rows.length === 0) {
-            return null;
-        }
-        return result.rows[0] as DeferredToken;
-    }
-
-    async queryDeferredToken(logger: Logger, context: IContext, parent: string,
-                             contained: string, parentField: string,
-                             containedField: string,
-                             id: string): Promise<DeferredToken | null> {
-        const statement =
-            `select * from deferredtoken where ` +
-            `parent = \$1 and contained = \$2 and parentfield = \$3 and ` +
-            `containedfield = \$4 and id = \$5`;
-        const parameters = [
-            parent,
-            contained,
-            parentField,
-            containedField,
-            id
-        ];
-        this.log(logger, statement, parameters);
-        const result = await this.pool.query(statement, parameters);
-        if (result.rows.length === 0) {
-            return null;
-        }
-        return result.rows[0] as DeferredToken;
-    }
-
-    private performTokenUpdate(logger: Logger, context: IContext,
-                               token: DeferredToken,
-                               skipDelete?: boolean): void {
-        if (!skipDelete) {
-            const statement = `delete from deferredtoken where token = \$1`;
-            const parameters = [token.token];
-            this.log(logger, statement, parameters);
-            this.conn.v.pool.query(statement, parameters);
-            // Note: this delete command runs parallel to the following
-            // statements.
-        }
-
-        const entity = this.configuration.v.getEntity(token.parent);
-        const field = entity.getField(token.parentfield);
-        if (field instanceof SummaryField) {
-            (<SummaryField>field).performTokenUpdate(this, token, context);
-        } else {
-            throw new PgClientError(
-                `Invalid token: field ${field.fqName} is not a 'SummaryField'`);
-        }
-    }
-
-    runTask(context: IContext, row: Row): void {
-        const tokenUuid = row.get("token");
-        // Only if the current token is the same as 'our' token
-        // do we take action. Otherwise, a further update has
-        // occurred and we simply exit without doing anything.
-        this.getDeferredToken(this.deferredLogger, context, tokenUuid)
-        .then((currToken) => {
-            if (currToken) {
-                this.performTokenUpdate(
-                    this.deferredLogger, context, currToken);
-            } else {
-                console.log(
-                    `Deferred token ${tokenUuid} no longer exists`);
-            }
-        })
-        .catch((error) => {
-            console.log(
-                `PgClient: cannot execute deferred update due to: ${error}`);
-        });
-    }
-
-    async putDeferredToken(logger: Logger, context: IContext,
-                           token: DeferredToken): Promise<number> {
-        if (!token.token || !token.updatedby || !token.updated) {
-            throw new PgClientError("Invalid Token", 400);
-        }
-        const existingToken = await this.queryDeferredToken(
-            logger, context, token.parent, token.contained, token.parentfield,
-            token.containedfield, token.id);
-        if (existingToken && existingToken.updated) {
-            // if this put comes in less than 30s after the previous put,
-            // ignore it.
-            const cutoff = Date.now() - 30000;
-            if (existingToken.updated.getTime() > cutoff) {
-                return 0;
-            }
-        }
-        let statement: string;
-        let parameters: any[];
-
-        // Try an update first, if that didn't affect any rows, perform an
-        // insert.
-        statement =
-            `update deferredtoken set ` +
-            `token = \$1, updatedby = \$2, updated = \$3 ` +
-            `where ` +
-            `parent = \$4 and contained = \$5 and parentfield = \$6 and ` +
-            `containedfield = \$7 and id = \$8`;
-        parameters = [
-            token.token,
-            token.updatedby,
-            token.updated,
-            token.parent,
-            token.contained,
-            token.parentfield,
-            token.containedfield,
-            token.id
-        ];
-        this.log(logger, statement, parameters);
-        const result = await this.pool.query(statement, parameters);
-        if (!result.rowCount) {
-            // No update was performed, do an insert instead.
-            statement =
-                `insert into deferredtoken ` +
-                `(parent, contained, parentfield, containedfield, id, token, ` +
-                `updatedby, updated) values (` +
-                `\$1, \$2, \$3, \$4, \$5, \$6, \$7, \$8)`;
-            parameters = [
-                token.parent,
-                token.contained,
-                token.parentfield,
-                token.containedfield,
-                token.id,
-                token.token,
-                token.updatedby,
-                token.updated
-            ];
-            this.log(logger, statement, parameters);
-            await this.pool.query(statement, parameters);
-        }
-        // Schedule the execution of the token expiry
-        this._scheduler.schedule(Row.dataToRow(token), context);
-        return 0;
-    }
-
 }
 
-export class PgClientSource extends ServiceSource implements AsyncTask {
+export class PgClientSource extends ServiceSource {
     _service: PgClient;
 
     constructor(config: TypeCfg<PgClientSourceSpec>,
@@ -1343,19 +1215,10 @@ export class PgClientSource extends ServiceSource implements AsyncTask {
     configure(configuration: IConfiguration) {
         super.configure(configuration);
         this._service.configure(configuration);
-        configuration.registerAsyncTask(this);
     }
 
     get service(): IService {
         return this._service;
-    }
-
-    async start(): Promise<void> {
-        this._service.start();
-    }
-
-    async stop(): Promise<void> {
-        await this._service.stop();
     }
 }
 

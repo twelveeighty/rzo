@@ -300,6 +300,12 @@ export class AmountFieldDDL extends FieldDDL {
     }
 }
 
+export class UuidFieldDDL extends FieldDDL {
+    columnDDLType(field: Field, doVersion: boolean): string {
+        return "uuid";
+    }
+}
+
 export class HistoryFieldDDL extends FieldDDL {
     columnDDLType(field: Field, doVersion: boolean): string {
         return "jsonb";

@@ -294,3 +294,16 @@ export function addressMapAnchor(address: string,
     return anchor;
 }
 
+export function ensure(obj: unknown, targetType: Function): unknown {
+    if (!(obj instanceof targetType)) {
+        throw new Error(
+            `${obj} is not an instance of ${targetType.name}`);
+    }
+    return obj;
+}
+
+export function ensureDate(obj: unknown): Date {
+    ensure(obj, Date);
+    return obj as Date;
+}
+

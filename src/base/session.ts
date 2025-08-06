@@ -17,7 +17,7 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { IContext, Persona, Row, Nobody, Logger } from "../base/core.js";
+import { IContext, Persona, Row, Nobody, Logger, State } from "../base/core.js";
 
 type SubjectType = {
     subject: string;
@@ -27,6 +27,8 @@ type SubjectType = {
 export interface ISessionBackendService {
     get isSessionBackendService(): boolean;
     getSession(logger: Logger, id: string): Promise<Row>;
+    createInMemorySession(logger: Logger, userId: string, expiryOverride?: Date,
+                          personaOverride?: Persona): Promise<State>;
     createSession(logger: Logger, userId: string, expiryOverride?: Date,
                   personaOverride?: Persona): Promise<Row>;
     deleteSession(logger: Logger, id: string): Promise<void>;

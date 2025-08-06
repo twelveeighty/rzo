@@ -18,17 +18,12 @@
 */
 
 import {
-    Row, IService, IContext, IResultSet, EmptyResultSet, Entity, DeferredToken,
-    Collection, Filter, Query, Source, TypeCfg, ClassSpec, Logger, Persona,
-    State
+    Row, IService, IContext, IResultSet, EmptyResultSet, Entity,
+    Collection, Filter, Query, Source, TypeCfg, ClassSpec, Logger, BizTrans
 } from "./core.js";
 
 export class FauxService implements IService {
 
-    createInMemorySession(logger: Logger, userId: string, expiryOverride?: Date,
-                          personaOverride?: Persona): Promise<State> {
-        throw new Error("Not implemented");
-    }
     async getGeneratorNext(logger: Logger, context: IContext,
                      generatorName: string): Promise<string> {
         return "";
@@ -73,25 +68,13 @@ export class FauxService implements IService {
            rev?: string): Promise<void> {
     }
 
-    async queryDeferredToken(logger: Logger, context: IContext, parent: string,
-                       contained: string, parentField: string,
-                       containedField: string,
-                       id: string): Promise<DeferredToken | null> {
-        return null;
-    }
-
-    async getDeferredToken(logger: Logger, context: IContext,
-                     tokenUuid: string): Promise<DeferredToken | null> {
-        return null;
-    }
-
-    async putDeferredToken(logger: Logger, context: IContext,
-                     token: DeferredToken): Promise<number> {
-        return 0;
-    }
-
     async getDBInfo(logger: Logger, context: IContext): Promise<Row> {
         return new Row();
+    }
+
+    async processBizTrans(logger: Logger,
+                          bizTrans: BizTrans): Promise<BizTrans> {
+        return bizTrans;
     }
 }
 

@@ -460,20 +460,15 @@ export class FormPanel extends BasePanel {
 
     constructor(ownerId: string, formId: string, submitBtnId: string,
                 cancelBtnId: string, controls: Control[]) {
-
         super();
-
         this.owner = X.div(ownerId);
         this.form = X.form(formId);
         this.submitBtn = X.btn(submitBtnId);
         this.cancelBtn = X.btn(cancelBtnId);
-
         this.controls = new Map();
-
         for (const control of controls) {
             this.controls.set(control.id, control);
         }
-
         this.state = null;
     }
 
@@ -518,6 +513,30 @@ export class FormPanel extends BasePanel {
         throw new Error(`${id} does not have an input suffix`);
     }
 
+    protected loadDropdown(selectId: string, collection: string,
+                           valueField: string, labelField?: string): void {
+        const sel = this.getSelect(selectId);
+        this.service.v.queryCollection(
+            this.logger, CONTEXT.c, RZO.getCollection(collection))
+        .then((resultSet) => {
+            while (sel.options.length > 1) {
+                sel.remove(1);
+            }
+            while (resultSet.next()) {
+                const opt = document.createElement("option");
+                const value = resultSet.getString(valueField);
+                const label = (labelField ?
+                               resultSet.getString(labelField) : value);
+                opt.value = value;
+                opt.text = label;
+                sel.add(opt);
+            }
+        })
+        .catch((err) => {
+            TOASTER.error(`ERROR: ${err}`);
+        });
+    }
+
     hide(): void {
         this.state = null;
         this.toggleUI(false);
@@ -528,11 +547,9 @@ export class FormPanel extends BasePanel {
             evt.preventDefault();
             this.onSubmit(evt);
         });
-
         this.cancelBtn.addEventListener("click", (evt) => {
             this.onCancel(evt);
         });
-
         for (const control of this.controls.values()) {
             control.element.addEventListener("blur", (evt) => {
                 this.onBlur(control, evt);
@@ -610,16 +627,24 @@ export class FormPanel extends BasePanel {
         }
     }
 
+    protected async save(): Promise<Row> {
+        if (this.state) {
+            const row = this.state.hasId() ?
+                await this.entity.v.put(
+                    this.service.v, this.state, CONTEXT.c) :
+                await this.entity.v.post(
+                    this.service.v, this.state, CONTEXT.c);
+            return row;
+        } else {
+            throw new Error("this.state must be defined at this point");
+        }
+    }
+
     protected onSubmit(evt: Event): void {
         if (this.state) {
             this.validate()
             .then(() => {
-                const action = this.state?.hasId() ?
-                    this.entity.v.put(
-                        this.service.v, this.state!, CONTEXT.c) :
-                    this.entity.v.post(
-                        this.service.v, this.state!, CONTEXT.c);
-                action.then((row) => {
+                this.save().then((row) => {
                     this.controller.v.pop(new PanelData("Row", row));
                 })
                 .catch((err) => {

@@ -21,7 +21,7 @@ import { Modal } from "bootstrap";
 
 import {
     Entity, Field, State, Filter, Query, Collection, Cfg, ServiceSource,
-    IResultSet, MemResultSet, SideEffects, BigDecimal
+    IResultSet, MemResultSet, SideEffects, BigDecimal, Row
 } from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
 
@@ -73,6 +73,9 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
     paymentOwing: HTMLInputElement;
     paymentRecvd: HTMLInputElement;
     txnService: Cfg<IAcctingService>;
+    arAccBal: Row | null;
+    ticketAccBal: Row | null;
+    rTicketAccBal: Row | null;
 
     constructor() {
         super("rider-view-div", "rider-view-tsec", "rider-view-status-sm",
@@ -105,6 +108,9 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
         this.paymentDate = X.txt("rider-payment-posted-txt");
         this.paymentOwing = X.txt("rider-payment-owing-txt");
         this.paymentRecvd = X.txt("rider-payment-recvd-txt");
+        this.arAccBal = null;
+        this.ticketAccBal = null;
+        this.rTicketAccBal = null;
     }
 
     get id(): string {
@@ -153,24 +159,22 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
     }
 
     private onCreateTrip(evt: Event): void {
-        if (this.state) {
-            const ridernum = this.state.value("ridernum");
-            this.tripEntity.v.create(CONTEXT.c, this.service.v)
-            .then((newTrip) => {
-                this.tripRidernumField.v.setValue(
-                    newTrip, ridernum, CONTEXT.c)
-                .then(() => {
-                    this.controller.v.stack(
-                        "trip-edit-panel", new PanelData("State", newTrip));
-                })
-                .catch((err) => {
-                    TOASTER.error(`ERROR: ${err}`);
-                });
+        const ridernum = State.must(this.state).value("ridernum");
+        this.tripEntity.v.create(CONTEXT.c, this.service.v)
+        .then((newTrip) => {
+            this.tripRidernumField.v.setValue(
+                newTrip, ridernum, CONTEXT.c)
+            .then(() => {
+                this.controller.v.stack(
+                    "trip-edit-panel", new PanelData("State", newTrip));
             })
             .catch((err) => {
                 TOASTER.error(`ERROR: ${err}`);
             });
-        }
+        })
+        .catch((err) => {
+            TOASTER.error(`ERROR: ${err}`);
+        });
     }
 
     private onAnchorClick(evt: Event): void {
@@ -182,12 +186,15 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
         }
     }
 
-    private async createAccount(name: string, elementType: string,
-                                description: string, holding: string)
+    private async createAccount(entityId: string, name: string,
+                                elementType: string, description: string,
+                                holding: string)
                                     : Promise<State> {
         const state = await this.accountEntity.v.create(
             CONTEXT.c, this.service.v);
         const validations: Promise<SideEffects>[] = [];
+        validations.push(this.accountEntity.v.setValue(
+            state, "entityid", entityId, CONTEXT.c));
         validations.push(this.accountEntity.v.setValue(
             state, "ledger", ACC_LEDGER, CONTEXT.c));
         validations.push(this.accountEntity.v.setValue(
@@ -197,7 +204,7 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
         validations.push(this.accountEntity.v.setValue(
             state, "description", description, CONTEXT.c));
         validations.push(this.accountEntity.v.setValue(
-            state, "holding", ACC_CUR_HOLDING, CONTEXT.c));
+            state, "holding", holding, CONTEXT.c));
         validations.push(this.accountEntity.v.setValue(
             state, "status", ACC_STATUS, CONTEXT.c));
         await Promise.all(validations);
@@ -214,38 +221,40 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
         return state;
     }
 
-    private async createAccountWithBalance(name: string, elementType: string,
+    private async createAccountWithBalance(entityId: string, name: string,
+                                           elementType: string,
                                            description: string, holding: string)
                                                : Promise<void> {
-        await this.createAccount(name, elementType, description, holding);
+        await this.createAccount(
+            entityId, name, elementType, description, holding);
         await this.createAccountBalance(name);
     }
 
 
-    private async createAllAccounts(ridernum: string): Promise<void> {
+    private async createAllAccounts(entityId: string,
+                                    ridernum: string): Promise<void> {
+        const name = ridernum.replaceAll(".", "_");
         await this.createAccountWithBalance(
-            ACC_AR_PREFIX + ridernum, "ASSET",
+            entityId, ACC_AR_PREFIX + name, "ASSET",
             `${ridernum} Accounts Receivable`, ACC_CUR_HOLDING);
         await this.createAccountWithBalance(
-            ACC_TICKET_PREFIX + ridernum, "LIABILITY",
+            entityId, ACC_TICKET_PREFIX + name, "LIABILITY",
             `${ridernum} Available Tickets`, ACC_TICKET_HOLDING);
         await this.createAccountWithBalance(
-            ACC_RTICKET_PREFIX + ridernum, "LIABILITY",
+            entityId, ACC_RTICKET_PREFIX + name, "LIABILITY",
             `${ridernum} Reserved Tickets`, ACC_TICKET_HOLDING);
     }
 
     private onCreateAccts(evt: Event): void {
-        if (this.state) {
-            this.createAcctsBtn.enabled = false;
-            const ridernum = this.state.asString("ridernum");
-            this.createAllAccounts(ridernum)
-            .then(() => {
-                this.queryAccting();
-            })
-            .catch((err) => {
-                TOASTER.error(`ERROR: ${err}`);
-            });
-        }
+        const rider = State.must(this.state);
+        this.createAcctsBtn.enabled = false;
+        this.createAllAccounts(rider.id, rider.asString("ridernum"))
+        .then(() => {
+            this.queryAccting();
+        })
+        .catch((err) => {
+            TOASTER.error(`ERROR: ${err}`);
+        });
     }
 
     private onOrder(evt: Event): void {
@@ -293,6 +302,8 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
         validations.push(this.accTransEntity.v.setValue(
             state, "account", account, CONTEXT.c));
         validations.push(this.accTransEntity.v.setValue(
+            state, "entityid", State.must(this.state).id, CONTEXT.c));
+        validations.push(this.accTransEntity.v.setValue(
             state, "memo", memo, CONTEXT.c));
         validations.push(this.accTransEntity.v.setValue(
             state, "posted", posted, CONTEXT.c));
@@ -302,40 +313,38 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
         return state;
     }
 
-    private async processTicketOrder(ridernum: string, qty: string,
+    private async processTicketOrder(qty: string,
                                      paid: boolean): Promise<void> {
-        const quantity = new BigDecimal(qty);
-        const amount = quantity.multiply(ACC_TICKET_PRICE);
-        const now = new Date();
-        const creditAccName = ACC_TICKET_PREFIX + ridernum;
-        const debitAccName = paid ? ACC_CHEQ_ACCOUNT : ACC_AR_PREFIX + ridernum;
-        const memo = `Ticket purchase for ${ridernum}`;
-        const transaction = await this.createTransaction(
-            creditAccName, memo, now, now);
-        const transnum = transaction.field("transnum").value;
-        const splits = new MemResultSet();
-        const txn: Txn = {
-            transaction: this.accTransEntity.v.stateToRow(transaction),
-            splits: splits
-        };
-        const crSplit = await this.createSplit(
-            "Cr", transnum, creditAccName, quantity, amount, now, now, memo);
-        splits.addRow(this.accSplitEntity.v.stateToRow(crSplit));
-        const drSplit = await this.createSplit(
-            "Dr", transnum, debitAccName, null, amount, now, now, memo);
-        splits.addRow(this.accSplitEntity.v.stateToRow(drSplit));
-        await this.txnService.v.postTxn(this.logger, CONTEXT.c, txn);
+        if (this.state && this.ticketAccBal && this.arAccBal) {
+            const quantity = new BigDecimal(qty);
+            const amount = quantity.multiply(ACC_TICKET_PRICE);
+            const now = new Date();
+            const creditAccName = this.ticketAccBal.getString("account");
+            const debitAccName = paid ? ACC_CHEQ_ACCOUNT :
+                this.arAccBal.getString("account");
+            const memo =
+                `Ticket purchase for ${this.state.asString("ridernum")}`;
+            const transaction = await this.createTransaction(
+                creditAccName, memo, now, now);
+            const transnum = transaction.field("transnum").value;
+            const splits = new MemResultSet();
+            const txn = new Txn(
+                this.accTransEntity.v.stateToRow(transaction), splits);
+            const crSplit = await this.createSplit(
+                "Cr", transnum, creditAccName, quantity, amount, now, now, memo);
+            splits.addRow(this.accSplitEntity.v.stateToRow(crSplit));
+            const drSplit = await this.createSplit(
+                "Dr", transnum, debitAccName, null, amount, now, now, memo);
+            splits.addRow(this.accSplitEntity.v.stateToRow(drSplit));
+            await this.txnService.v.postTxn(this.logger, CONTEXT.c, txn);
+        }
     }
 
     private onOrderOk(evt: Event): void {
         this.orderModal.hide();
         const qty = this.orderQty.value;
         if (qty) {
-            if (!this.state) {
-                return;
-            }
-            this.processTicketOrder(this.state.asString("ridernum"), qty,
-                                   this.orderPaid.checked)
+            this.processTicketOrder(qty, this.orderPaid.checked)
             .then(() => {
                 this.queryAccting();
             })
@@ -347,20 +356,19 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
         }
     }
 
-    private async processPayment(ridernum: string, posted: Date,
+    private async processPayment(ridernum: string, accountBalance: Row,
+                                 posted: Date,
                                  amount: BigDecimal): Promise<void> {
         const now = new Date();
-        const creditAccName = ACC_AR_PREFIX + ridernum;
+        const creditAccName = accountBalance.getString("account");
         const debitAccName = ACC_CHEQ_ACCOUNT;
         const memo = `Payment received for ${ridernum}`;
         const transaction = await this.createTransaction(
             creditAccName, memo, posted, now);
         const transnum = transaction.field("transnum").value;
         const splits = new MemResultSet();
-        const txn: Txn = {
-            transaction: this.accTransEntity.v.stateToRow(transaction),
-            splits: splits
-        };
+        const txn = new Txn(
+            this.accTransEntity.v.stateToRow(transaction), splits);
         const crSplit = await this.createSplit(
             "Cr", transnum, creditAccName, null, amount, posted, now, memo);
         splits.addRow(this.accSplitEntity.v.stateToRow(crSplit));
@@ -371,24 +379,22 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
     }
 
     private onPayment(evt: Event): void {
-        if (!this.state) {
-            return;
+        if (this.arAccBal) {
+            // Re-query AR accountbalance for current balance
+            const filter = new Filter()
+                .op("_id", "=", this.arAccBal.get("_id"));
+            this.accBalanceCollection.v.query(CONTEXT.c, new Query([], filter))
+            .then((resultSet) => {
+                this.paymentDate.value = (new Date()).toISOString().slice(0, 10);
+                resultSet.next();
+                this.paymentOwing.value = resultSet.getString("balance");
+                this.paymentRecvd.value = "";
+                this.paymentModal.show();
+            })
+            .catch((err) => {
+                TOASTER.error(`ERROR: ${err}`);
+            });
         }
-        // Query AR accountbalance for current balance
-        const ridernum = this.state.asString("ridernum");
-        const filter = new Filter()
-            .op("account", "=", ACC_AR_PREFIX + ridernum);
-        this.accBalanceCollection.v.query(CONTEXT.c, new Query([], filter))
-        .then((resultSet) => {
-            this.paymentDate.value = (new Date()).toISOString().slice(0, 10);
-            resultSet.next();
-            this.paymentOwing.value = resultSet.getString("balance");
-            this.paymentRecvd.value = "";
-            this.paymentModal.show();
-        })
-        .catch((err) => {
-            TOASTER.error(`ERROR: ${err}`);
-        });
     }
 
     private onPaymentOk(evt: Event): void {
@@ -396,22 +402,22 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
         const posted = this.paymentDate.value;
         const payment = this.paymentRecvd.value;
         if (posted && payment) {
-            if (!this.state) {
-                return;
-            }
-            const amount = new BigDecimal(payment);
-            const postedDate = new Date(posted);
-            if (!amount.equals(new BigDecimal(0))) {
-                this.processPayment(this.state.asString("ridernum"), postedDate,
-                                    amount)
-                .then(() => {
-                    this.queryAccting();
-                })
-                .catch((err) => {
-                    TOASTER.error(`ERROR: ${err}`);
-                });
-            } else {
-                TOASTER.error(`Invalid payment: ${amount}`);
+            if (this.state && this.arAccBal) {
+                const amount = new BigDecimal(payment);
+                const postedDate = new Date(posted);
+                if (!amount.equals(new BigDecimal(0))) {
+                    this.processPayment(
+                        this.state.asString("ridernum"), this.arAccBal,
+                        postedDate, amount)
+                    .then(() => {
+                        this.queryAccting();
+                    })
+                    .catch((err) => {
+                        TOASTER.error(`ERROR: ${err}`);
+                    });
+                } else {
+                    TOASTER.error(`Invalid payment: ${amount}`);
+                }
             }
         } else {
             TOASTER.error("You must specify a valid Post Date and Payment");
@@ -419,14 +425,11 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
     }
 
     private queryTrips(): void {
-        if (!this.state) {
-            return;
-        }
         try {
             const query = new Query(
                 [],
                 new Filter().op(
-                    "ridernum_id", "=", this.state.id),
+                    "ridernum_id", "=", State.must(this.state).id),
                 [ { field: "appointmentts", order: "desc" } ]
             );
             this.tripsCollection.v.query(CONTEXT.c, query)
@@ -441,25 +444,28 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
         }
     }
 
-    private handleAccData(resultSet: IResultSet, ridernum: string): void {
+    private handleAccData(resultSet: IResultSet): void {
         // We expect three account balances to be returned
         if (resultSet.rowCount == 3) {
-            const arRow = resultSet.find(
-                (row) => row.get("account") == ACC_AR_PREFIX + ridernum);
-            const ticketRow = resultSet.find(
-                (row) => row.get("account") == ACC_TICKET_PREFIX + ridernum);
-            const rTicketRow = resultSet.find(
-                (row) => row.get("account") == ACC_RTICKET_PREFIX + ridernum);
-            if (arRow && ticketRow && rTicketRow) {
+            this.arAccBal = resultSet.find(
+                (row) => row.getString("account").startsWith(
+                    ACC_AR_PREFIX)) || null;
+            this.ticketAccBal = resultSet.find(
+                (row) => row.getString("account").startsWith(
+                    ACC_TICKET_PREFIX)) || null;
+            this.rTicketAccBal = resultSet.find(
+                (row) => row.getString("account").startsWith(
+                    ACC_RTICKET_PREFIX)) || null;
+            if (this.arAccBal && this.ticketAccBal && this.rTicketAccBal) {
                 X.addRowText(
                     this.acctTBody, "Available Tickets",
-                    ticketRow.getString("balance"));
+                    this.ticketAccBal.getString("balance"));
                 X.addRowText(
                     this.acctTBody, "Reserved Tickets",
-                    rTicketRow.getString("balance"));
+                    this.rTicketAccBal.getString("balance"));
                 X.addRowText(
                     this.acctTBody, "Balance owing",
-                    arRow.getString("balance"));
+                    this.arAccBal.getString("balance"));
                 this.createAcctsBtn.hide();
                 this.orderBtn.show();
                 this.paymentBtn.show();
@@ -480,18 +486,15 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
 
     private queryAccting(): void {
         this.acctTBody.innerHTML = "";
-        if (!this.state) {
-            return;
-        }
-        // Query all three account balances
-        const ridernum = this.state.asString("ridernum");
-        const filter = new Filter("or")
-            .op("account", "=", ACC_AR_PREFIX + ridernum)
-            .op("account", "=", ACC_TICKET_PREFIX + ridernum)
-            .op("account", "=", ACC_RTICKET_PREFIX + ridernum);
+        this.arAccBal = null;
+        this.ticketAccBal = null;
+        this.rTicketAccBal = null;
+        // Query all account balances for this rider
+        const filter = new Filter()
+            .op("entityid", "=", State.must(this.state).id);
         this.accBalanceCollection.v.query(CONTEXT.c, new Query([], filter))
         .then((resultSet) => {
-            this.handleAccData(resultSet, ridernum);
+            this.handleAccData(resultSet);
         })
         .catch((err) => {
             TOASTER.error(`ERROR: ${err}`);
@@ -511,7 +514,6 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
         X.addRowText(this.tableTBody, "City", state.asString("city"));
         X.addRowText(this.tableTBody, "Prov/State", state.asString("stateprov"));
         X.addRowText(this.tableTBody, "Zip", state.asString("postalcode"));
-
         X.addRowText(this.tableTBody, state.asString("phone1label"),
                      state.asString("phone1"));
         X.addRowText(this.tableTBody, state.asString("phone2label"),
@@ -522,9 +524,7 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
                            X.asHTML);
         X.addRowText(this.tableTBody, "Trip Comments",
                      state.asString("tripinfo"), X.asHTML);
-
         this.statusElement.innerText = `${state.id} / ${state.rev}`;
-
         this.queryTrips();
         this.queryAccting();
     }

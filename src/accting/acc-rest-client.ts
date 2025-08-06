@@ -22,7 +22,7 @@ import {
 } from "../base/core.js";
 
 import {
-    Txn, TxnRaw, IAcctingService, AcctingServiceSource, rawToTxnUnparsed
+    Txn, TxnRaw, IAcctingService, AcctingServiceSource
 } from "./acc-core.js";
 
 
@@ -84,7 +84,7 @@ export class AcctingRestClient implements IAcctingService {
             throw AcctingRestClientError.fromResponse(response, body);
         }
         const data = await response.json();
-        return rawToTxnUnparsed(data);
+        return Txn.rawToTxnUnparsed(data);
     }
 }
 

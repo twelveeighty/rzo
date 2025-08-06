@@ -47,6 +47,7 @@ export class TripEditPanel extends FormPanel implements IPanel {
                   new Control("trip-tripnum-txt", "tripnum", false),
                   new Control("trip-zone-sel", "zone", true),
                   new Control("trip-status-sel", "status", true),
+                  new Control("trip-price-sel", "price", true),
                   new Control("trip-triptype-sel", "triptype", true),
                   new LocalDateControl("trip-appointmentts-txt",
                                        "appointmentts", true),

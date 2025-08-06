@@ -25,9 +25,7 @@ import {
 } from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
 
-import {
-    IAcctingService, AcctingServiceSource, Txn
-} from "../../accting/acc-core.js";
+import { Txn, AccTrans } from "../../accting/acc-core.js";
 
 import * as X from "../common.js";
 import { TOASTER } from "../toaster.js";
@@ -52,7 +50,7 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
     tripEntity: Cfg<Entity>;
     accountEntity: Cfg<Entity>;
     accBalanceEntity: Cfg<Entity>;
-    accTransEntity: Cfg<Entity>;
+    accTransEntity: Cfg<AccTrans>;
     accSplitEntity: Cfg<Entity>;
     tripRidernumField: Cfg<Field>;
     tripsCollection: Cfg<Collection>;
@@ -72,7 +70,6 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
     paymentDate: HTMLInputElement;
     paymentOwing: HTMLInputElement;
     paymentRecvd: HTMLInputElement;
-    txnService: Cfg<IAcctingService>;
     arAccBal: Row | null;
     ticketAccBal: Row | null;
     rTicketAccBal: Row | null;
@@ -100,7 +97,6 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
         this.orderOkBtn = X.btn("rider-order-confirm-btn");
         this.orderQty = X.txt("rider-order-qty-txt");
         this.orderPaid = X.cbox("rider-order-paid-cbox");
-        this.txnService = new Cfg("txndb");
         this.paymentBtn = new PanelButton(
             btnDiv, "rider-view-payment-btn", "Process Payment...");
         this.paymentModal = new Modal(X.div("rider-payment-div"));
@@ -122,13 +118,13 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
         this.entity.v = RZO.getEntity("rider");
         this.service.v =
             (<ServiceSource>RZO.getSource("db").ensure(ServiceSource)).service;
-        const txnSource = RZO.getSource(this.txnService.name);
-        this.txnService.v = (<AcctingServiceSource>txnSource.ensure(
-                AcctingServiceSource)).service;
         this.tripEntity.v = RZO.getEntity(this.tripEntity.name);
         this.accountEntity.v = RZO.getEntity(this.accountEntity.name);
         this.accBalanceEntity.v = RZO.getEntity(this.accBalanceEntity.name);
-        this.accTransEntity.v = RZO.getEntity(this.accTransEntity.name);
+        this.accTransEntity.setIfCast(
+            "riderviewpanel",
+            RZO.entities.get(this.accTransEntity.name),
+            AccTrans);
         this.accSplitEntity.v = RZO.getEntity(this.accSplitEntity.name);
         this.tripRidernumField.v = this.tripEntity.v.getField("ridernum");
         this.tripsCollection.v = RZO.getCollection(this.tripsCollection.name);
@@ -331,12 +327,15 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
             const txn = new Txn(
                 this.accTransEntity.v.stateToRow(transaction), splits);
             const crSplit = await this.createSplit(
-                "Cr", transnum, creditAccName, quantity, amount, now, now, memo);
+                "Cr", transnum, creditAccName, quantity, amount, now, now,
+                memo);
             splits.addRow(this.accSplitEntity.v.stateToRow(crSplit));
             const drSplit = await this.createSplit(
                 "Dr", transnum, debitAccName, null, amount, now, now, memo);
             splits.addRow(this.accSplitEntity.v.stateToRow(drSplit));
-            await this.txnService.v.postTxn(this.logger, CONTEXT.c, txn);
+            const bizTrans = await txn.toBizTrans(
+                this.logger, CONTEXT.c, this.service.v, this.accTransEntity.v);
+            await this.service.v.processBizTrans(this.logger, bizTrans);
         }
     }
 
@@ -375,7 +374,9 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
         const drSplit = await this.createSplit(
             "Dr", transnum, debitAccName, null, amount, posted, now, memo);
         splits.addRow(this.accSplitEntity.v.stateToRow(drSplit));
-        await this.txnService.v.postTxn(this.logger, CONTEXT.c, txn);
+        const bizTrans = await txn.toBizTrans(
+            this.logger, CONTEXT.c, this.service.v, this.accTransEntity.v);
+        await this.service.v.processBizTrans(this.logger, bizTrans);
     }
 
     private onPayment(evt: Event): void {

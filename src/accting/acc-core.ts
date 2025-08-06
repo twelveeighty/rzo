@@ -21,7 +21,8 @@ import {
     Logger, IContext, Row, _IError, TypeCfg, IConfiguration,
     BigDecimal, JsonObject, Entity, ImmutableEntity, Cfg, EntitySpec,
     IResultSet, MemResultSet, Nobody, Epilogue, EpilogueColumn,
-    EpilogueColumnOperator, GeneratorField, IService, Phase, State, Filter, BizTrans
+    EpilogueColumnOperator, GeneratorField, IService, Phase, State, Filter, BizTrans,
+    SideEffects
 } from "../base/core.js";
 
 class AcctingError extends _IError {
@@ -53,18 +54,220 @@ export class Txn {
         }
     }
 
+    static rawToTxn(raw: any, accTransEntity: AccTrans): Txn {
+        const asRow = Row.dataToRow(raw);
+        if (asRow.hasAll(["transaction", "splits"])) {
+            const transaction = Row.dataToRow(
+                asRow.get("transaction"), accTransEntity);
+            const splitsRaw = asRow.get("splits");
+            if (Array.isArray(splitsRaw)) {
+                const splits = new MemResultSet(splitsRaw);
+                const splitEntity = accTransEntity.accsplitEntity.v;
+                while (splits.next()) {
+                    splitEntity.transformDataForRow(splits.getRow().raw());
+                }
+                return new Txn(transaction, splits);
+            } else {
+                throw new AcctingError(
+                    "Txn alike object cannot be parsed to a Txn");
+            }
+        } else {
+            throw new AcctingError(
+                `Object cannot be parsed to a Txn: ${JSON.stringify(raw)}`);
+        }
+    }
+
+    static total(splits: IResultSet, change: ChangeType): BigDecimal {
+        let total = new BigDecimal("0");
+        splits.rewind();
+        while (splits.next()) {
+            if (splits.get("change") == change) {
+                total = total.add(BigDecimal.ensure(splits.get("amount")));
+            }
+        }
+        return total;
+    }
+
     constructor(transaction: Row, splits: IResultSet) {
         this.transaction = transaction;
         this.splits = splits;
     }
 
-    toBizTrans(logger: Logger, context: IContext, transEntity: Entity,
-               splitEntity: Entity): BizTrans {
-        const result = new BizTrans();
-        result.post(logger, context, transEntity, this.transaction);
+    private setCreated(now: Date): void {
+        this.transaction.updateOrAdd("created", now);
         this.splits.rewind();
         while (this.splits.next()) {
-            result.post(logger, context, splitEntity, this.splits.getRow());
+            this.splits.getRow().updateOrAdd("created", now);
+        }
+    }
+
+    private async validateTxn(context: IContext, txnState: TxnState,
+                              acctransEntity: Entity,
+                              accsplitEntity: Entity): Promise<void> {
+        const validations: Promise<void>[] = [];
+        validations.push(acctransEntity.validate(
+            "create", txnState.transaction, context));
+        for (const split of txnState.splits) {
+            validations.push(accsplitEntity.validate(
+                "create", split, context));
+        }
+        await Promise.all(validations);
+    }
+
+    private async activateTxn(context: IContext, txnState: TxnState,
+                              acctransEntity: Entity,
+                              accsplitEntity: Entity): Promise<void> {
+        const activations: Promise<SideEffects[]>[] = [];
+        activations.push(acctransEntity.activate(
+            "create", txnState.transaction, context));
+        for (const split of txnState.splits) {
+            activations.push(accsplitEntity.activate(
+                "create", split, context));
+        }
+        await Promise.all(activations);
+    }
+
+    balanceSplits(): void {
+        const drTotal = Txn.total(this.splits, "Dr");
+        const crTotal = Txn.total(this.splits, "Cr");
+        if (!drTotal.equals(crTotal)) {
+            throw new AcctingError(
+                `Splits total debits ${drTotal.toString()} does not equal ` +
+                `credits ${crTotal.toString()}`);
+        }
+        this.transaction.updateOrAdd("amount", drTotal);
+    }
+
+    checkOrSetIds(): void {
+        /* Check _id is specified. If so, the
+         * corresponding acctrans_id, as well as all accsplit's _id
+         * must also be specified.
+         * If _id is not specified, all id's will get created.
+         */
+        if (this.transaction.has("_id") && this.transaction.get("_id")) {
+            const acctrans_id = this.transaction.getString("_id");
+            this.splits.rewind();
+            while (this.splits.next()) {
+                const row = this.splits.getRow();
+                if (!row.has("_id") || !row.has("acctrans_id") ||
+                    row.isNullish("_id") ||
+                    row.get("acctrans_id") != acctrans_id) {
+                    throw new AcctingError(
+                        "Invalid Txn split: missing or mismatched _id " +
+                        "and/or acctrans_id");
+                }
+            }
+        } else {
+            const acctrans_id = Entity.generateId();
+            this.transaction.updateOrAdd("_id", acctrans_id);
+            this.splits.rewind();
+            while (this.splits.next()) {
+                const row = this.splits.getRow();
+                row.updateOrAdd("_id", Entity.generateId());
+                row.updateOrAdd("acctrans_id", acctrans_id);
+            }
+        }
+    }
+
+    checkNums(): boolean {
+        /* Check if transaction has transnum specified. If so, all splits'
+         * corresponding acctrans, as well as all splitnum's must also be
+         * specified.
+         */
+        if (this.transaction.has("transnum") &&
+                this.transaction.isNotNullish("transnum")) {
+            const transnum = this.transaction.getString("transnum");
+            this.splits.rewind();
+            while (this.splits.next()) {
+                const row = this.splits.getRow();
+                if (!row.has("acctrans") || !row.has("splitnum") ||
+                        row.isNullish("acctrans") ||
+                        row.get("acctrans") != transnum) {
+                    throw new AcctingError(
+                        "Invalid Txn split: missing or mismatched splitnum " +
+                        "and/or transnum");
+                }
+            }
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    async createNums(context: IContext, service: IService,
+                     accTrans: AccTrans): Promise<void> {
+        const transnum = await accTrans.transnumField.v.generate(
+            service, context);
+        this.transaction.updateOrAdd("transnum", transnum);
+        this.splits.rewind();
+        while (this.splits.next()) {
+            const row = this.splits.getRow();
+            row.updateOrAdd("acctrans", transnum);
+            const splitnum = await accTrans.splitnumField.v.generate(
+                service, context);
+            row.updateOrAdd("splitnum", splitnum);
+        }
+    }
+
+    txnToTxnState(accTransEntity: AccTrans): TxnState {
+        const splits: State[] = [];
+        this.splits.rewind();
+        const splitEntity = accTransEntity.accsplitEntity.v;
+        while (this.splits.next()) {
+            splits.push(splitEntity.rowToState(this.splits.getRow()));
+        }
+        const result: TxnState = {
+            transaction: accTransEntity.rowToState(this.transaction),
+            splits: splits
+        };
+        return result;
+    }
+
+    processPostedDT(): void {
+        if (!this.transaction.has("posted")) {
+            throw new AcctingError("Transaction is missing 'posted' date");
+        }
+        const posted = this.transaction.get("posted");
+        this.splits.rewind();
+        while (this.splits.next()) {
+            this.splits.getRow().updateOrAdd("posted", posted);
+        }
+    }
+
+    async toBizTrans(logger: Logger, context: IContext, service: IService,
+                     accTrans: AccTrans): Promise<BizTrans> {
+        this.balanceSplits();
+        this.checkOrSetIds();
+        if (!this.checkNums()) {
+            await this.createNums(context, service, accTrans);
+        }
+        this.processPostedDT();
+        this.setCreated(new Date());
+        const splitEntity = accTrans.accsplitEntity.v;
+        /* Since this is the latest all fields have been set, it's only
+         * now that we can finally validate and activate the entities.
+         */
+        const txnState = this.txnToTxnState(accTrans);
+        await this.validateTxn(context, txnState, accTrans, splitEntity);
+        await this.activateTxn(context, txnState, accTrans, splitEntity);
+        /* Unfortunately, even though the activation doesn't modify or
+         * add any fields, to be able to support this for customizations
+         * or future behavior, we must pull fresh Rows from the States
+         */
+        const activatedSplits = new MemResultSet();
+        const activatedTxn = new Txn(
+            accTrans.stateToRow(txnState.transaction),
+            activatedSplits);
+        for (const splitState of txnState.splits) {
+            activatedSplits.addRow(splitEntity.stateToRow(splitState));
+        }
+        const result = new BizTrans();
+        result.post(logger, context, accTrans, activatedTxn.transaction);
+        activatedSplits.rewind();
+        while (activatedSplits.next()) {
+            result.post(
+                logger, context, accTrans.accsplitEntity.v,
+                activatedSplits.getRow());
         }
         return result;
     }
@@ -104,132 +307,6 @@ export class AccTrans extends ImmutableEntity {
             `${this.name}: configuration error: 'splitnum' `,
             configuration.getField(this.splitnumField.name),
             GeneratorField);
-    }
-
-    rawToTxn(raw: any): Txn {
-        const txn = Txn.rawToTxnUnparsed(raw);
-        txn.splits.rewind();
-        while (txn.splits.next()) {
-            this.accsplitEntity.v.transformDataForRow(
-                txn.splits.getRow().raw());
-        }
-        return txn;
-    }
-
-    txnToTxnState(txn: Txn): TxnState {
-        const splits: State[] = [];
-        txn.splits.rewind();
-        while (txn.splits.next()) {
-            splits.push(this.accsplitEntity.v.rowToState(txn.splits.getRow()));
-        }
-        const result: TxnState = {
-            transaction: this.rowToState(txn.transaction),
-            splits: splits
-        };
-        return result;
-    }
-
-    total(splits: IResultSet, change: ChangeType): BigDecimal {
-        let total = new BigDecimal("0");
-        splits.rewind();
-        while (splits.next()) {
-            if (splits.get("change") == change) {
-                total = total.add(BigDecimal.ensure(splits.get("amount")));
-            }
-        }
-        return total;
-    }
-
-    async createNums(txn: Txn, context: IContext,
-                     service: IService): Promise<void> {
-        const transnum = await this.transnumField.v.generate(service, context);
-        txn.transaction.updateOrAdd("transnum", transnum);
-        txn.splits.rewind();
-        while (txn.splits.next()) {
-            const row = txn.splits.getRow();
-            row.updateOrAdd("acctrans", transnum);
-            const splitnum = await this.splitnumField.v.generate(
-                service, context);
-            row.updateOrAdd("splitnum", splitnum);
-        }
-    }
-
-    checkNums(txn: Txn): boolean {
-        /* Check if the passed Txn has transnum specified. If so, all splits'
-         * corresponding acctrans, as well as all splitnum's must also be
-         * specified.
-         */
-        if (txn.transaction.has("transnum") &&
-                txn.transaction.isNotNullish("transnum")) {
-            const transnum = txn.transaction.getString("transnum");
-            txn.splits.rewind();
-            while (txn.splits.next()) {
-                const row = txn.splits.getRow();
-                if (!row.has("acctrans") || !row.has("splitnum") ||
-                        row.isNullish("acctrans") ||
-                        row.get("acctrans") != transnum) {
-                    throw new AcctingError(
-                        "Invalid Txn split: missing or mismatched splitnum " +
-                        "and/or transnum");
-                }
-            }
-            return true;
-        } else {
-            return false;
-        }
-    }
-
-    checkOrSetIds(txn: Txn): void {
-        /* Check if the passed Txn has _id specified. If so, the
-         * corresponding acctrans_id, as well as all accsplit's _id
-         * must also be specified.
-         * If _id is not specified, all id's will get created.
-         */
-        if (txn.transaction.has("_id") && txn.transaction.get("_id")) {
-            const acctrans_id = txn.transaction.getString("_id");
-            txn.splits.rewind();
-            while (txn.splits.next()) {
-                const row = txn.splits.getRow();
-                if (!row.has("_id") || !row.has("acctrans_id") ||
-                    row.isNullish("_id") ||
-                    row.get("acctrans_id") != acctrans_id) {
-                    throw new AcctingError(
-                        "Invalid Txn split: missing or mismatched _id " +
-                        "and/or acctrans_id");
-                }
-            }
-        } else {
-            const acctrans_id = Entity.generateId();
-            txn.transaction.updateOrAdd("_id", acctrans_id);
-            txn.splits.rewind();
-            while (txn.splits.next()) {
-                const row = txn.splits.getRow();
-                row.updateOrAdd("_id", Entity.generateId());
-                row.updateOrAdd("acctrans_id", acctrans_id);
-            }
-        }
-    }
-
-    processPostedDT(txn: Txn): void {
-        if (!txn.transaction.has("posted")) {
-            throw new AcctingError("Transaction is missing 'posted' date");
-        }
-        const posted = txn.transaction.get("posted");
-        txn.splits.rewind();
-        while (txn.splits.next()) {
-            txn.splits.getRow().updateOrAdd("posted", posted);
-        }
-    }
-
-    balanceSplits(txn: Txn): void {
-        const drTotal = this.total(txn.splits, "Dr");
-        const crTotal = this.total(txn.splits, "Cr");
-        if (!drTotal.equals(crTotal)) {
-            throw new AcctingError(
-                `Splits total debits ${drTotal.toString()} does not equal ` +
-                `credits ${crTotal.toString()}`);
-        }
-        txn.transaction.updateOrAdd("amount", drTotal);
     }
 }
 

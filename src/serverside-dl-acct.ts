@@ -26,7 +26,7 @@ import {
     MemResultSet, Nobody
 } from "./base/core.js";
 
-import { TxnRaw, Txn, AcctingServiceSource } from "./accting/acc-core.js";
+import { TxnRaw, Txn, AccTrans } from "./accting/acc-core.js";
 
 import { RZO } from "./base/configuration.js";
 
@@ -119,12 +119,9 @@ try {
     try {
         const source = RZO.getSource("db");
         const service = (<ServiceSource>source.ensure(ServiceSource)).service;
-        const txnsource = RZO.getSource("txndb");
-        const txnservice = (<AcctingServiceSource>txnsource.ensure(
-                AcctingServiceSource)).service;
         const authenticator = RZO.getAuthenticator("auth").service;
         const accountEntity = RZO.getEntity("account");
-        const transEntity = RZO.getEntity("acctrans");
+        const transEntity = RZO.getEntity("acctrans") as AccTrans;
         const splitEntity = RZO.getEntity("accsplit");
         const context = await authenticator.login(logger, credsRow);
         logger.log(`Session: ${JSON.stringify(context)}`);
@@ -181,7 +178,9 @@ try {
                         splitState, "created", now, context);
                     splits.addRow(splitEntity.stateToRow(splitState));
                 }
-                await txnservice.postTxn(logger, context, txn);
+                const bizTrans = await txn.toBizTrans(
+                    logger, context, service, transEntity);
+                await service.processBizTrans(logger, bizTrans);
             }
         } finally {
             await authenticator.logout(logger, context);

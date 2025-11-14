@@ -129,6 +129,9 @@
                 { "name": "iscontra", "type": "BooleanField", "required": true,
                   "default": "false"
                 },
+                { "name": "islogged", "type": "BooleanField", "required": true,
+                  "default": "false"
+                },
                 { "name": "entityid", "type": "UuidField" },
                 { "name": "description", "type": "StringField" },
                 { "name": "status", "type": "AliasValueList",
@@ -180,7 +183,6 @@
                 }
             ],
             "coreFields": [
-                { "name": "entityid", "type": "UuidField" },
                 { "name": "balance", "type": "AmountField", "required": true,
                     "precision": 15, "scale": 2,
                     "default": "0.00"
@@ -188,7 +190,8 @@
                 { "name": "presentvalue", "type": "AmountField", "required": true,
                     "precision": 15, "scale": 2,
                     "default": "0.00"
-                }
+                },
+                { "name": "entityid", "type": "UuidField" }
             ],
             "indexes": [
                 { "name": "entityid",
@@ -206,7 +209,6 @@
         "spec": {
             "type": "accting.acc-core.AccTrans",
             "table": "acctrans",
-            "retention": { "style": "keep" },
             "keyFields": [
                 { "name": "transnum", "type": "GeneratorField", "required": true,
                       "maxlength": 32,
@@ -228,7 +230,7 @@
                 },
                 { "name": "memo", "type": "StringField", "required": true },
                 { "name": "created", "type": "DateTimeField", "required": true },
-                { "name": "posted", "type": "DateField", "required": true }
+                { "name": "posted", "type": "DateTimeField", "required": true }
             ],
             "indexes": [
                 { "name": "entityid",
@@ -246,7 +248,6 @@
         "spec": {
             "type": "accting.acc-core.AccSplit",
             "table": "accsplit",
-            "retention": { "style": "keep" },
             "keyFields": [
                 { "name": "splitnum", "type": "GeneratorField", "required": true,
                       "maxlength": 32,
@@ -269,7 +270,8 @@
                       "collection": "accounts",
                       "copies": [
                           { "from": "elementtype", "to": "elementtype" },
-                          { "from": "holding", "to": "holding" }
+                          { "from": "holding", "to": "holding" },
+                          { "from": "islogged", "to": "islogged" }
                       ]
                 },
                 { "name": "elementtype", "type": "StringField", "required": true,
@@ -281,6 +283,7 @@
                       "value": "name",
                       "collection": "holdings"
                 },
+                { "name": "islogged", "type": "BooleanField", "required": true },
                 { "name": "memo", "type": "StringField" },
                 { "name": "change", "type": "ValueList", "required": true,
                       "maxlength": 2,
@@ -296,7 +299,7 @@
                     "precision": 15, "scale": 2
                 },
                 { "name": "created", "type": "DateTimeField", "required": true },
-                { "name": "posted", "type": "DateField", "required": true }
+                { "name": "posted", "type": "DateTimeField", "required": true }
             ],
             "indexes": [
                 { "name": "accposted",
@@ -305,6 +308,87 @@
                       { "name": "posted", "order": "desc" }
                   ]
                 }
+            ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Entity",
+        "metadata": {
+            "name": "balancelog"
+        },
+        "spec": {
+            "type": "LocalEntity",
+            "table": "balancelog",
+            "canUpdate": false,
+            "canDelete": true,
+            "keyFields": [
+                { "name": "account", "type": "ForeignKey",
+                      "required": true,
+                      "target": "account",
+                      "value": "name",
+                      "collection": "accounts"
+                },
+                { "name": "type", "type": "AliasValueList",
+                      "required": true,
+                      "maxlength": 4,
+                      "internal": [ "D", "M", "A" ],
+                      "aliases": []
+                },
+                { "name": "period", "type": "IntegerField", "required": true }
+            ],
+            "coreFields": [
+                { "name": "balance", "type": "AmountField", "required": true,
+                    "precision": 15, "scale": 2,
+                    "default": "0.00"
+                },
+                { "name": "presentvalue", "type": "AmountField", "required": true,
+                    "precision": 15, "scale": 2,
+                    "default": "0.00"
+                },
+                { "name": "created", "type": "DateTimeField", "required": true },
+                { "name": "posted", "type": "DateTimeField", "required": true }
+            ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Entity",
+        "metadata": {
+            "name": "lastbalancelog"
+        },
+        "spec": {
+            "type": "LocalEntity",
+            "table": "lastbalancelog",
+            "canUpdate": true,
+            "canDelete": true,
+            "keyFields": [
+                { "name": "type", "type": "AliasValueList",
+                      "required": true,
+                      "maxlength": 4,
+                      "internal": [ "D", "M", "A" ],
+                      "aliases": []
+                },
+                { "name": "account", "type": "ForeignKey",
+                      "required": true,
+                      "target": "account",
+                      "value": "name",
+                      "collection": "accounts"
+                }
+            ],
+            "coreFields": [
+                { "name": "invalidated", "type": "IntegerField" },
+                { "name": "period", "type": "IntegerField", "required": true },
+                { "name": "balance", "type": "AmountField", "required": true,
+                    "precision": 15, "scale": 2,
+                    "default": "0.00"
+                },
+                { "name": "presentvalue", "type": "AmountField", "required": true,
+                    "precision": 15, "scale": 2,
+                    "default": "0.00"
+                },
+                { "name": "created", "type": "DateTimeField", "required": true },
+                { "name": "posted", "type": "DateTimeField", "required": true }
             ]
         }
     }

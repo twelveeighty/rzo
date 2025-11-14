@@ -27,7 +27,7 @@ import {
     Entity, IResultSet, IConfiguration, Query, DaemonWorker, EmptyResultSet,
     MemResultSet, Row, TypeCfg, ClassSpec, Collection, IContext, Filter,
     ServiceSource, _IError, Nobody, Persona, Cfg, IService, SideEffects,
-    State, Logger, Epilogue, BizTrans
+    State, Logger, Epilogue, BizTrans, IReadOnlyService
 } from "../base/core.js";
 
 import { VERSION, NOCONTEXT } from "../base/configuration.js";
@@ -111,6 +111,9 @@ export class PgBaseClient {
     ];
 
     static VC_COL_SELECT = PgBaseClient.VC_COLS.join(",");
+
+    static PREVENT_EPILOGUE = true;
+    static PROCESS_EPILOGUE = false;
 
     constructor(pool: string) {
         this.sessionEntity = new Cfg("session");
@@ -289,25 +292,27 @@ export class PgBaseClient {
     protected async postEntity(logger: Logger, userId: string,
                                client: pg.Client, entity: Entity, row: Row,
                                context?: IContext,
-                               preventEpilogue?: boolean): Promise<Row> {
+                               preventEpilogue?: boolean,
+                               roService?: IReadOnlyService): Promise<Row> {
         if (entity.versioned) {
             const mvccResult = this.mvccController.postMvcc(row, userId);
             await this.applyMvccResults(logger, client, entity, mvccResult);
             return Row.must(mvccResult.leafTable.leafActionPost?.payload);
         } else {
-            this.mvccController.convertToPayload(row);
+            const id = Entity.generateId(row);
             // We must calculate _rev without the _id column present
+            this.mvccController.convertToPayload(row);
             const rev = entity.immutable ?
                 `1-${this.mvccController.newVersion(row).hash}` :
                 "";
-            row.add("_id", Entity.generateId());
+            row.add("_id", id);
             if (rev) {
                 row.add("_rev", rev);
             }
             row.add("updated", new Date());
             row.add("updatedby", userId);
             const epilogue = !preventEpilogue && entity.hasEpilogue(row) ?
-                entity.epilogue(row, context) : null;
+                entity.epilogue(row, roService, context) : null;
             const statement = `insert into ${entity.table} ` +
                 `(${row.columns.join()}) ` +
                 `values (` +
@@ -556,6 +561,21 @@ export class PgBaseClient {
         }
     }
 
+    protected async handleDeleteLocalEpilogue(logger: Logger, client: pg.Client,
+                                              epilogue: Epilogue)
+                                                  : Promise<void> {
+        const filter = epilogue.filter || new Filter();
+        if (epilogue.key) {
+            filter.op(epilogue.key.keyColumn, "=", epilogue.key.keyValue);
+        }
+        const where = filter.where;
+        const statement =
+            `delete from ${epilogue.entity.table} ` +
+            `where ${where}`;
+        this.log(logger, statement);
+        await client.query(statement);
+    }
+
     protected async handlePutLocalEpilogue(logger: Logger, client: pg.Client,
                                            epilogue: Epilogue): Promise<void> {
         if (!epilogue.key) {
@@ -599,7 +619,7 @@ export class PgBaseClient {
 
     protected async handleEpilogue(logger: Logger, client: pg.Client,
                                    epilogues: Epilogue[],
-                                   context?: IContext): Promise<void> {
+                                   context?: IContext) : Promise<void> {
         for (const entry of epilogues) {
             if (entry.action == "post") {
                 const row = new Row();
@@ -609,7 +629,8 @@ export class PgBaseClient {
                 const userId = row.has("updatedby") ? row.get("updatedby") :
                     (context?.userAccountId || Nobody.ID);
                 await this.postEntity(
-                    logger, userId, client, entry.entity, row, context, true);
+                    logger, userId, client, entry.entity, row, context,
+                    PgBaseClient.PREVENT_EPILOGUE);
             } else if (entry.action == "put") {
                 if (entry.entity.local) {
                     await this.handlePutLocalEpilogue(logger, client, entry);
@@ -628,6 +649,14 @@ export class PgBaseClient {
                     throw new PgClientError(
                         `Epilogue 'put' is attempting to modify the ` +
                         `immutable entity ${entry.entity.name}`);
+                }
+            } else if (entry.action == "delete") {
+                if (entry.entity.local) {
+                    await this.handleDeleteLocalEpilogue(logger, client, entry);
+                } else {
+                    throw new PgClientError(
+                        `Epilogue 'delete' is attempting to delete a ` +
+                        `non-local entity ${entry.entity.name}`);
                 }
             } else {
                 throw new PgClientError(
@@ -1054,7 +1083,8 @@ export class PgClient extends PgBaseClient implements IService,
             await client.query(statement);
             await this.checkDupesForPost(logger, entity, row, client);
             const result = await this.postEntity(
-                logger, context.userAccountId, client, entity, row, context);
+                logger, context.userAccountId, client, entity, row, context,
+                PgBaseClient.PROCESS_EPILOGUE, this);
             statement = "COMMIT";
             this.log(logger, statement);
             await client.query(statement);
@@ -1086,8 +1116,8 @@ export class PgClient extends PgBaseClient implements IService,
                         await this.checkDupesForPost(
                             logger, entry.entity, entry.row, client);
                         resultRow = await this.postEntity(
-                            logger, userId, client, entry.entity,
-                            entry.row);
+                            logger, userId, client, entry.entity, entry.row,
+                            context, PgBaseClient.PROCESS_EPILOGUE, this);
                         result.post(logger, context, entry.entity, resultRow);
                         break;
                     case "put":

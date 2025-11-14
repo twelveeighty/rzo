@@ -19,7 +19,7 @@
 
 import {
     IConfiguration, Cfg, IContext, TypeCfg, Collection, CollectionSpec, Filter,
-    Entity, ContainedEntity, Query, IResultSet
+    Entity, ContainedEntity, Query, IResultSet, Row, MemResultSet
 } from "./core.js";
 
 class CollectionError extends Error {
@@ -250,6 +250,76 @@ export class JoinedCollection extends Collection {
         const result = new Query(finalFields, finalFilter, finalOrderBy);
         result.fromClause = fromClause;
         return result;
+    }
+}
+
+type PermanentCachedCollectionSpec = CollectionSpec & {
+    key: string;
+    size: number;
+}
+
+export class PermanentCachedCollection extends Collection {
+    key: string;
+    size: number;
+    cache: Map<string, Row>;
+
+    constructor(config: TypeCfg<PermanentCachedCollectionSpec>,
+                blueprints: Map<string, any>) {
+        super(config, blueprints);
+        this.key = config.spec.key;
+        this.size = config.spec.size;
+        if (!Number.isSafeInteger(this.size) || this.size <= 0) {
+            throw new CollectionError(
+                `PermanentCachedCollection ${this.name}: size ` +
+                `${config.spec.size} is not a valid cache size`);
+        }
+        this.cache = new Map();
+    }
+
+    private cacheKey(query?: Query): string | null {
+        if (query && query.filter && query.filter.chunks.length == 1) {
+            const matched = query.filter.chunks[0].match(
+                Filter.ComparisonRegex);
+            if (matched && matched[1] == this.key && matched[2] == "=") {
+                return matched[3];
+            }
+        }
+        return null;
+    }
+
+    async query(context: IContext, query?: Query): Promise<IResultSet> {
+        if (this.via == "collection") {
+            return super.query(context, query);
+        } else {
+            const keyValue = this.cacheKey(query);
+            if (keyValue) {
+                this.logger.debug(
+                    `Cache key query for ${this.key} = ${keyValue}`);
+                const cachedRow = this.cache.get(keyValue);
+                if (cachedRow) {
+                    this.logger.debug(
+                        `Cache match for ${this.key} = ${keyValue}`);
+                    return MemResultSet.fromRow(cachedRow);
+                }
+                this.logger.debug(
+                    `Cache MISS for ${this.key} = ${keyValue}`);
+                const queryRS = await super.query(context, query);
+                if (queryRS.next()) {
+                    if (this.cache.size >= this.size) {
+                        // Delete the first entry to make room
+                        const firstKey = this.cache.keys().next().value;
+                        this.logger.debug(`Evicting key ${firstKey}`);
+                    }
+                    this.logger.debug(`Caching key ${keyValue}`);
+                    this.cache.set(keyValue, queryRS.getRow());
+                    queryRS.rewind();
+                }
+                return queryRS;
+            } else {
+                this.logger.debug("Non cache query");
+                return super.query(context, query);
+            }
+        }
     }
 }
 

@@ -42,8 +42,7 @@
                 { "context": "c", "adapter": "collectionadapter" },
                 { "context": "g", "adapter": "generatoradapter" },
                 { "context": "o", "adapter": "queryoneadapter" },
-                { "context": "s", "adapter": "bootstrapsessionadapter" },
-                { "context": "t", "adapter": "tokenadapter" }
+                { "context": "s", "adapter": "bootstrapsessionadapter" }
             ]
         }
     },

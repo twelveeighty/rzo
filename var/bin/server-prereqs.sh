@@ -21,6 +21,10 @@
 # NOTE: You should "source" this script rather than run it:
 # $ . server-prereqs.sh
 #
+# For a new DB:
+#       create user rzo;
+#       create database rzo owner=rzo;
+#
 export RZOID=01
 export PGDATABASE=rzo
 export PGUSER=rzo

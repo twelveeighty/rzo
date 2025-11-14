@@ -21,8 +21,13 @@ import {
     Entity, Phase, State, FieldState, IContext, ForeignKey, _IError,
     SideEffects, AliasValueList, DateTimeField, IConfiguration, IService,
     Query, Filter, ReplicationFilter, CrossoverForeignKey,
-    CrossoverForeignKeyCfg, Cfg, Field, Row
+    CrossoverForeignKeyCfg, Cfg, Field, Row, EntitySpec, BigDecimal, TypeCfg,
+    BizTrans, BizTransEntry
 } from "../base/core.js";
+
+import { Txn, AccTrans } from "../accting/acc-core.js";
+
+const ACC_TICKET_PRICE = new BigDecimal("10.00");
 
 class TripError extends _IError {
     constructor(message: string, options?: ErrorOptions) {
@@ -221,7 +226,210 @@ export class TripTypeField extends AliasValueList {
     }
 }
 
+type TripEntitySpec = EntitySpec & {
+    ticketPrefix: string;
+    reservedPrefix: string;
+}
+
 export class Trip extends Entity {
+    ticketPrefix: string;
+    reservedPrefix: string;
+    acctransEntity: Cfg<AccTrans>;
+
+    constructor(config: TypeCfg<TripEntitySpec>, blueprints: Map<string, any>) {
+        super(config, blueprints);
+        this.ticketPrefix = config.spec.ticketPrefix || "";
+        this.reservedPrefix = config.spec.reservedPrefix || "";
+        this.acctransEntity = new Cfg("acctrans");
+    }
+
+    configure(configuration: IConfiguration) {
+        super.configure(configuration);
+        this.acctransEntity.setIfCast(
+            `'${this.name}' configuration error: 'acctrans'`,
+            configuration.entities.get(this.acctransEntity.name),
+            AccTrans);
+    }
+
+    private async createTransaction(context: IContext, service: IService,
+                                    account: string, memo: string, now: Date,
+                                    entityId: string): Promise<State> {
+        const state = await this.acctransEntity.v.create(context, service);
+        const validations: Promise<SideEffects>[] = [];
+        validations.push(this.acctransEntity.v.setValue(
+            state, "account", account, context));
+        validations.push(this.acctransEntity.v.setValue(
+            state, "entityid", entityId, context));
+        validations.push(this.acctransEntity.v.setValue(
+            state, "memo", memo, context));
+        validations.push(this.acctransEntity.v.setValue(
+            state, "posted", now, context));
+        validations.push(this.acctransEntity.v.setValue(
+            state, "created", now, context));
+        await Promise.all(validations);
+        return state;
+    }
+
+    private async createSplit(context: IContext, service: IService,
+                              change: string, transnum: string,
+                              account: string, quantity: BigDecimal,
+                              amount: BigDecimal, now: Date,
+                              memo: string): Promise<State> {
+        const accsplitEntity = this.acctransEntity.v.accsplitEntity.v;
+        const split = await accsplitEntity.create(context, service);
+        const validations: Promise<SideEffects>[] = [];
+        // Set acctrans without validation, since it doesn't exist yet.
+        split.field("acctrans").value = transnum;
+        validations.push(accsplitEntity.setValue(
+            split, "account", account, context));
+        validations.push(accsplitEntity.setValue(
+            split, "change", change, context));
+        validations.push(accsplitEntity.setValue(
+            split, "quantity", quantity, context));
+        validations.push(accsplitEntity.setValue(
+            split, "price", ACC_TICKET_PRICE, context));
+        validations.push(accsplitEntity.setValue(
+            split, "amount", amount, context));
+        validations.push(accsplitEntity.setValue(
+            split, "created", now, context));
+        validations.push(accsplitEntity.setValue(
+            split, "posted", now, context));
+        validations.push(accsplitEntity.setValue(
+            split, "memo", memo, context));
+        await Promise.all(validations);
+        return split;
+    }
+
+    async postBizTrans(bizTrans: BizTrans, service: IService, state: State,
+                       context: IContext): Promise<BizTransEntry> {
+        /* We want to tie this newly created Trip to the Transaction, so we
+         * must create and set the Trip _id here.
+         */
+        const tripId = Entity.generateId();
+        const tripEntry = await super.postBizTrans(
+            bizTrans, service, state, context);
+        tripEntry.row.add("_id", tripId);
+        const now = new Date();
+        await this.createReservation(
+            bizTrans, service, context, tripEntry, now,
+            BigDecimal.ensure(tripEntry.row.get("price")), tripId);
+        return tripEntry;
+    }
+
+    private async createReservation(bizTrans: BizTrans, service: IService,
+                                    context: IContext, tripEntry: BizTransEntry,
+                                    now: Date, quantity: BigDecimal,
+                                    tripId: string): Promise<void> {
+        const tripNum = tripEntry.row.getString("tripnum");
+        const amount = quantity.multiply(ACC_TICKET_PRICE);
+        const name = tripEntry.row.getString("ridernum").replaceAll(".", "_");
+        const drName = this.ticketPrefix + name;
+        const crName = this.reservedPrefix + name;
+        const memo =
+            `Ticket reservation for ${name} on trip ${tripNum}`;
+        const transaction = await this.createTransaction(
+            context, service, drName, memo, now, tripId);
+        const transnum = transaction.field("transnum").value;
+        const txn = new Txn(this.acctransEntity.v, transaction);
+        const drSplit = await this.createSplit(
+            context, service, "Dr", transnum, drName, quantity, amount, now,
+            memo);
+        txn.splits.push(drSplit);
+        const crSplit = await this.createSplit(
+            context, service, "Cr", transnum, crName, quantity, amount, now,
+            memo);
+        txn.splits.push(crSplit);
+        await txn.toBizTrans(bizTrans, this.logger, context, service);
+    }
+
+    private async reverseReservation(bizTrans: BizTrans, service: IService,
+                                     context: IContext, tripEntry: BizTransEntry,
+                                     now: Date, oldQuantity: BigDecimal,
+                                     tripId: string): Promise<void> {
+        const tripNum = tripEntry.row.getString("tripnum");
+        const amount = oldQuantity.multiply(ACC_TICKET_PRICE);
+        const name = tripEntry.row.getString("ridernum").replaceAll(".", "_");
+        const drName = this.reservedPrefix + name;
+        const crName = this.ticketPrefix + name;
+        const memo =
+            `Ticket cancellation for ${name} on trip ${tripNum}`;
+        const transaction = await this.createTransaction(
+            context, service, crName, memo, now, tripId);
+        const transnum = transaction.field("transnum").value;
+        const txn = new Txn(this.acctransEntity.v, transaction);
+        const drSplit = await this.createSplit(
+            context, service, "Dr", transnum, drName, oldQuantity, amount, now,
+            memo);
+        txn.splits.push(drSplit);
+        const crSplit = await this.createSplit(
+            context, service, "Cr", transnum, crName, oldQuantity, amount, now,
+            memo);
+        txn.splits.push(crSplit);
+        await txn.toBizTrans(bizTrans, this.logger, context, service);
+    }
+
+    async putBizTrans(bizTrans: BizTrans, service: IService, state: State,
+                      context: IContext): Promise<BizTransEntry> {
+        const tripEntry = await super.putBizTrans(
+            bizTrans, service, state, context);
+        /* If the 'price' has changed, reverse the original reservation and
+         * add a new one with the current price.
+         */
+        const quantityField = state.field("price");
+        if (quantityField.changed) {
+            const oldQuantity = BigDecimal.ensure(quantityField.oldValue);
+            const newQuantity = BigDecimal.ensure(quantityField.value);
+            const now = new Date();
+            await this.reverseReservation(
+                bizTrans, service, context, tripEntry, now, oldQuantity,
+                tripEntry.id);
+            await this.createReservation(
+                bizTrans, service, context, tripEntry, now, newQuantity,
+                tripEntry.id);
+        }
+        return tripEntry;
+    }
+
+    async deleteBizTrans(bizTrans: BizTrans, service: IService, state: State,
+                         context: IContext): Promise<BizTransEntry | null> {
+        const tripEntry = await super.deleteBizTrans(
+            bizTrans, service, state, context);
+        if (tripEntry) {
+            const quantityField = state.findField("quantity");
+            if (quantityField && quantityField.isNotNull) {
+                const now = new Date();
+                const quantity = BigDecimal.ensure(quantityField.value);
+                await this.reverseReservation(
+                    bizTrans, service, context, tripEntry, now, quantity,
+                    tripEntry.id);
+            }
+        }
+        return tripEntry;
+    }
+
+    async post(service: IService, state: State,
+               context: IContext): Promise<Row> {
+        this.logger.error(
+            "WARNING - calling post() instead of postBizTrans() can create " +
+            "accounting inbalances and inconsistencies");
+        return super.post(service, state, context);
+    }
+
+    async put(service: IService, state: State,
+              context: IContext): Promise<Row> {
+        this.logger.error(
+            "WARNING - calling put() instead of putBizTrans() can create " +
+            "accounting inbalances and inconsistencies");
+        return super.put(service, state, context);
+    }
+
+    async delete(service: IService, state: State,
+              context: IContext): Promise<void> {
+        this.logger.error(
+            "WARNING - calling delete() instead of deleteBizTrans() can " +
+            "create accounting inbalances and inconsistencies");
+        super.delete(service, state, context);
+    }
 
     async validate(phase: Phase, state: State,
                    context: IContext): Promise<void> {

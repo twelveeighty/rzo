@@ -307,8 +307,7 @@ export class RestClient implements IService, IAuthenticator {
         if (!sessionId) {
             throw new RestClientError("Session ID missing");
         }
-        const jsonData = this.serializeBizTrans(bizTrans);
-        const payload = JSON.stringify(jsonData);
+        const payload = this.serializeBizTrans(bizTrans);
         const headers = new Headers();
         headers.set("rzo-sessionid", sessionId);
         headers.set("Content-Type", "application/json");

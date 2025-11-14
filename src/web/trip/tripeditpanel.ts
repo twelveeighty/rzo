@@ -17,7 +17,7 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { Cfg, Entity, ServiceSource } from "../../base/core.js";
+import { Cfg, Entity, ServiceSource, BizTrans } from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
 
 import { Trip } from "../../scheduler/trip.js";
@@ -30,7 +30,6 @@ import {
 
 
 export class TripEditPanel extends FormPanel implements IPanel {
-
     ooverrideCheckbox: HTMLInputElement;
     doverrideCheckbox: HTMLInputElement;
     omaplinkManual: HTMLInputElement;
@@ -38,7 +37,6 @@ export class TripEditPanel extends FormPanel implements IPanel {
     riderNum: HTMLInputElement;
     riderName: HTMLInputElement;
     reverseBtn: HTMLButtonElement;
-
     riderEntity: Cfg<Entity>;
 
     constructor() {
@@ -74,7 +72,6 @@ export class TripEditPanel extends FormPanel implements IPanel {
                   new Control("trip-dphone-txt", "dphone", true),
                   new Control("trip-comments-tarea", "comments", false),
               ]);
-
         this.ooverrideCheckbox = X.cbox("trip-ooverride-cbox");
         this.doverrideCheckbox = X.cbox("trip-doverride-cbox");
         this.omaplinkManual = this.getInput("trip-omaplinkmanual-txt");
@@ -82,7 +79,6 @@ export class TripEditPanel extends FormPanel implements IPanel {
         this.riderNum = X.txt("trip-ridernum-txt");
         this.riderName = X.txt("trip-ridername-txt");
         this.reverseBtn = X.btn("trip-edit-reverse-btn");
-
         this.riderEntity = new Cfg("riderEntity");
     }
 
@@ -113,7 +109,6 @@ export class TripEditPanel extends FormPanel implements IPanel {
 
     protected initUI(): void {
         super.initUI();
-
         this.ooverrideCheckbox.addEventListener("change", (evt) => {
             this.toggleOriginOverride();
         });
@@ -191,15 +186,26 @@ export class TripEditPanel extends FormPanel implements IPanel {
 
     protected fromState(): void {
         super.fromState();
-
         if (this.state) {
             const oIsChecked = !!this.state.value("omaplinkmanual");
             this.ooverrideCheckbox.checked = oIsChecked;
             this.toggleReadOnly(this.omaplinkManual, !oIsChecked);
-
             const dIsChecked = !!this.state.value("dmaplinkmanual");
             this.doverrideCheckbox.checked = dIsChecked;
             this.toggleReadOnly(this.dmaplinkManual, !dIsChecked);
+        }
+    }
+
+    private async processSubmit(evt: Event): Promise<void> {
+        if (this.state) {
+            const bizTrans = new BizTrans();
+            const entry = this.state.hasId() ?
+                await this.entity.v.putBizTrans(
+                    bizTrans, this.service.v, this.state, CONTEXT.c) :
+                await this.entity.v.postBizTrans(
+                    bizTrans, this.service.v, this.state, CONTEXT.c);
+            await this.service.v.processBizTrans(this.logger, bizTrans);
+            this.controller.v.pop(new PanelData("Row", entry.row));
         }
     }
 
@@ -207,14 +213,7 @@ export class TripEditPanel extends FormPanel implements IPanel {
         if (this.state) {
             this.validate()
             .then(() => {
-                const action = this.state?.hasId() ?
-                    this.entity.v.put(
-                        this.service.v, this.state!, CONTEXT.c) :
-                    this.entity.v.post(
-                        this.service.v, this.state!, CONTEXT.c);
-                action.then((row) => {
-                    this.controller.v.pop(new PanelData("Row", row));
-                })
+                this.processSubmit(evt)
                 .catch((err) => {
                     TOASTER.error(`ERROR: ${err}`);
                 });
@@ -224,6 +223,5 @@ export class TripEditPanel extends FormPanel implements IPanel {
             });
         }
     }
-
 }
 

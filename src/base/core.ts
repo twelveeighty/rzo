@@ -167,7 +167,8 @@ export class Logger {
 }
 
 type FilterLogical = "and" | "or";
-type FilterOperator = "=" | "!=" | "<>" | ">" | "<" | ">=" | "<=" | "<@";
+type FilterOperator = "=" | "!=" | "<>" | ">" | "<" | ">=" | "<=" | "<@" |
+                      "?=" | "?>" | "?<";
 
 /*
  * https://host.domain/e/asset?f=a,b,c&o=a+&q=a&w=b!,a='hello\, \\ \'\'a=b'
@@ -182,9 +183,11 @@ export class Filter {
     private _sealedWhere?: string;
 
     static NullNotNullRegex = /^(\w+)([~!])$/;
-    static ComparisonRegex = /^([\w\.]+)([<>=!@]+)(.+)/;
+    static ComparisonRegex = /^([\w\.]+)([<>=!@?]+)(.+)/;
     static QueryAnd      = "q=a&w=";
     static QueryOr       = "q=o&w=";
+
+    static AS_IS = true;
 
     constructor(combinedAs?: FilterLogical) {
         this.combinedAs = combinedAs || "and";
@@ -305,6 +308,26 @@ export class Filter {
         return false;
     }
 
+    private compoundOperator(matched: RegExpMatchArray,
+                             components: string[]): boolean {
+        switch (matched[2]) {
+            case "?=":
+                components.push(
+                    `(${matched[1]} is null or ${matched[1]} = ${matched[3]})`);
+                return true;
+            case "?<":
+                components.push(
+                    `(${matched[1]} is null or ${matched[1]} < ${matched[3]})`);
+                return true;
+            case "?>":
+                components.push(
+                    `(${matched[1]} is null or ${matched[1]} > ${matched[3]})`);
+                return true;
+            default:
+                return false;
+        }
+    }
+
     private createWhere(): string {
         const components: string[] = [];
         for (const chunk of this.chunks) {
@@ -316,7 +339,10 @@ export class Filter {
             }
             matched = chunk.match(Filter.ComparisonRegex);
             if (matched) {
-                components.push(`${matched[1]} ${matched[2]} ${matched[3]}`);
+                if (!this.compoundOperator(matched, components)) {
+                    components.push(
+                        `${matched[1]} ${matched[2]} ${matched[3]}`);
+                }
                 continue;
             }
             throw new CoreError(`Invalid filter: '${chunk}'`);
@@ -430,11 +456,13 @@ export class Row {
         return numbers;
     }
 
-    getUpdateSet(): string[] {
+    getUpdateSet(exclude?: string[]): string[] {
         const statements: string[] = [];
         let num = 1;
         for (const column of Object.keys(this._row)) {
-            statements.push(`${column} = \$${num++}`);
+            if (!exclude || !exclude.includes(column)) {
+                statements.push(`${column} = \$${num++}`);
+            }
         }
         return statements;
     }
@@ -977,7 +1005,7 @@ export class BizTrans {
     }
 
     put(logger: Logger, context: IContext, entity: Entity, id: string,
-          row: Row): void {
+          row: Row): BizTransEntry {
         if (!this._context) {
             this._context = context;
         }
@@ -988,9 +1016,11 @@ export class BizTrans {
         entry.row = row;
         entry.id = id;
         this.entries.push(entry);
+        return entry;
     }
 
-    post(logger: Logger, context: IContext, entity: Entity, row: Row): void {
+    post(logger: Logger, context: IContext, entity: Entity,
+         row: Row): BizTransEntry {
         if (!this._context) {
             this._context = context;
         }
@@ -1000,10 +1030,11 @@ export class BizTrans {
         const entry = new BizTransEntry("post", entity);
         entry.row = row;
         this.entries.push(entry);
+        return entry;
     }
 
     delete(logger: Logger, context: IContext, entity: Entity, id: string,
-           rev?: string): void {
+           rev?: string): BizTransEntry {
         if (!this._context) {
             this._context = context;
         }
@@ -1016,21 +1047,25 @@ export class BizTrans {
             entry.rev = rev;
         }
         this.entries.push(entry);
+        return entry;
     }
 }
 
-export interface IService {
+export interface IReadOnlyService {
     getDBInfo(logger: Logger, context: IContext): Promise<Row>;
     getQueryOne(logger: Logger, context: IContext, entity: Entity,
                 filter: Filter): Promise<Row>;
-    getGeneratorNext(logger: Logger, context: IContext,
-                     generatorName: string): Promise<string>;
     getOne(logger: Logger, context: IContext, entity: Entity, id: string,
            rev?: string): Promise<Row>;
     queryCollection(logger: Logger, context: IContext, collection: Collection,
                     query?: Query): Promise<IResultSet>;
     getQuery(logger: Logger, context: IContext, entity: Entity,
              query: Query): Promise<IResultSet>;
+}
+
+export interface IService extends IReadOnlyService {
+    getGeneratorNext(logger: Logger, context: IContext,
+                     generatorName: string): Promise<string>;
     put(logger: Logger, context: IContext, entity: Entity, id: string,
         row: Row): Promise<Row>;
     post(logger: Logger, context: IContext, entity: Entity,
@@ -1107,15 +1142,18 @@ export type EntityRetention = {
 export type EntitySpecies = "versioned" | "immutable" | "local";
 
 /*
- * Epilogues are inserts (post) or updates (put) actions that are taken after
- * unversioned entities are inserted (post), either through business actions,
- * or through replication.
+ * Epilogues are inserts (post), updates (put) or delete actions that are taken
+ * after unversioned entities are inserted (post), either through business
+ * actions, or through replication.
  * Epilogues are therefore only applicable to be triggered from Immutable or
  * Local objects and only on insert (post).
+ * Epilogues are 'calculated' at the time DB operations are performed, so
+ * under normal circumstances, they work 'server-side'.
  *
  * Epilogues support operators such as '+=', which are used to update
- * downstream objects' fields without having to know their current value. This
- * is used, for example, to update an account balance after a financial
+ * downstream objects' fields without having to know their current value, or,
+ * in the case of 'delete', to apply a range to the target rows to be deleted.
+ * This is used, for example, to update an account balance after a financial
  * transaction has taken place: if 'amount' was $100.00, increment the
  * balance by $100.00, without knowing what the current balance is.
  * The following table shows which actions and operators are supported for the
@@ -1135,6 +1173,19 @@ export type EntitySpecies = "versioned" | "immutable" | "local";
  *  Local         |  Yes      |  Yes     |   =  +=  -=   |  Post and Put
  * ---------------|-----------|----------|---------------|---------------------
  *
+ * ----------------------------------------------------------------------------
+ *  Target        |  Delete   |       Operators         |  When triggered by
+ *                |           |                         |  inbound Replication
+ * ---------------|-----------|-------------------------|---------------------
+ *  Versioned     |  No       |                         |
+ * ---------------|-----------|-------------------------|---------------------
+ *  Immutable     |  No       |                         |
+ * ---------------|-----------|-------------------------|---------------------
+ *  Local         |  Yes      | No operators, but the   |  Supported
+ *                |           | where clause can set    |
+ *                |           | via the Epilogue filter.|
+ * ---------------|-----------|-------------------------|---------------------
+ *
  */
 export type EpilogueColumnOperator = "=" | "+=" | "-=";
 
@@ -1151,7 +1202,7 @@ export type EpilogueKey = {
 
 export type Epilogue = {
     entity: Entity;
-    action: "put" | "post";
+    action: "put" | "post" | "delete";
     key?: EpilogueKey;
     filter?: Filter;
     columns: EpilogueColumn[];
@@ -1296,7 +1347,7 @@ export type Attachment = {
 
 export type Attachments = { att: Attachment[] };
 
-class CoreColumns {
+export class CoreColumns {
     _id: string;
     _rev?: string;
     _att: Attachments | null;
@@ -1818,12 +1869,22 @@ export class StringField extends Field {
                     return null;
                 }
             } else {
-                // this conversion should work for most cases, otherwise
-                // the caller must take care of a proper string representation.
+                /* this conversion should work for most cases, otherwise
+                 * the caller must take care of a proper string representation.
+                 */
                 return "" + value;
             }
         } else {
             return null;
+        }
+    }
+
+    transformDataForRow(data: JsonObject): void {
+        if (this.name in data) {
+            const val = data[this.name];
+            if (val !== undefined) {
+                data[this.name] = this.transform(val);
+            }
         }
     }
 
@@ -1853,32 +1914,33 @@ export class IntegerField extends Field {
     static MIN = -2147483648;
     static MAX =  2147483647;
 
-    transform(value: any): any {
-        if (value !== null) {
-            let result: bigint;
-            if (typeof value === "bigint") {
-                result = <bigint>value;
-            } else {
-                try {
-                    result = BigInt(value);
-                } catch (error) {
-                    throw new CoreError(
-                        `Cannot transform ${this.fqName} to ${value}`,
-                        { cause: error });
-                }
-            }
-            if (result < IntegerField.MIN || result > IntegerField.MAX) {
-                throw new CoreError(
-                    `${this.fqName}: value ${value} does not fit in a 4-byte` +
-                    ` integer`);
-            }
+    static parseInteger(value: any): number {
+        let result: bigint;
+        if (typeof value === "bigint") {
+            result = <bigint>value;
+        } else {
             try {
-                return Number.parseInt(result.toString());
+                result = BigInt(value);
             } catch (error) {
                 throw new CoreError(
-                    `Cannot transform ${this.fqName} to ${value}`,
-                    { cause: error });
+                    `Cannot transform ${value} to Integer`, { cause: error });
             }
+        }
+        if (result < IntegerField.MIN || result > IntegerField.MAX) {
+            throw new CoreError(
+                `Value ${value} does not fit in a 4-byte integer`);
+        }
+        try {
+            return Number.parseInt(result.toString());
+        } catch (error) {
+            throw new CoreError(
+                `Cannot transform ${value} to Integer`, { cause: error });
+        }
+    }
+
+    transform(value: any): any {
+        if (value !== null) {
+            return IntegerField.parseInteger(value);
         } else {
             return null;
         }
@@ -1947,6 +2009,18 @@ export class NumberField extends Field {
  * 2. null is converted to null (instead of false).
  */
 export class BooleanField extends Field {
+
+    static toBoolean(value: any): boolean {
+        if (value === null || value === undefined) {
+            throw new CoreError(
+                `Cannot convert value ${value} to boolean`);
+        }
+        if (value === "false") {
+            return false;
+        } else {
+            return Boolean(value);
+        }
+    }
 
     transform(value: any): any {
         if (value !== null) {
@@ -2666,7 +2740,10 @@ export class Entity {
         return "" + input;
     }
 
-    static generateId(): string {
+    static generateId(row?: Row): string {
+        if (row?.has("_id")) {
+            return row.getString("_id");
+        }
         return crypto.randomUUID();
     }
 
@@ -2810,7 +2887,7 @@ export class Entity {
     }
 
     protected async activatePut(state: State, context: IContext): Promise<Row> {
-        if (this.canUpdate) {
+        if (!this.canUpdate) {
             throw new CoreError(
                 `Entity ${this.name} is ${this.species}, cannot update ` +
                 `it this way`);
@@ -2820,11 +2897,10 @@ export class Entity {
         return this.stateToRow(state);
     }
 
-    async put2000(bizTrans: BizTrans, service: IService, state: State,
-              context: IContext): Promise<BizTrans> {
+    async putBizTrans(bizTrans: BizTrans, service: IService, state: State,
+                      context: IContext): Promise<BizTransEntry> {
         const row = await this.activatePut(state, context);
-        bizTrans.put(this.logger, context, this, state.id, row);
-        return bizTrans;
+        return bizTrans.put(this.logger, context, this, state.id, row);
     }
 
     async put(service: IService, state: State,
@@ -2841,11 +2917,10 @@ export class Entity {
         return this.stateToRow(state);
     }
 
-    async post2000(bizTrans: BizTrans, service: IService, state: State,
-                   context: IContext): Promise<BizTrans> {
+    async postBizTrans(bizTrans: BizTrans, service: IService, state: State,
+                       context: IContext): Promise<BizTransEntry> {
         const row = await this.activatePost(state, context);
-        bizTrans.post(this.logger, context, this, row);
-        return bizTrans;
+        return bizTrans.post(this.logger, context, this, row);
     }
 
     async post(service: IService, state: State,
@@ -2865,13 +2940,15 @@ export class Entity {
         await this.activate("delete", state, context);
     }
 
-    async delete2000(bizTrans: BizTrans, service: IService, state: State,
-                     context: IContext): Promise<BizTrans> {
+    async deleteBizTrans(bizTrans: BizTrans, service: IService, state: State,
+                         context: IContext): Promise<BizTransEntry | null> {
         await this.activateDelete(state, context);
         if (state.hasId()) {
-            bizTrans.delete(this.logger, context, this, state.id, state.rev);
+            return bizTrans.delete(
+                this.logger, context, this, state.id, state.rev);
+        } else {
+            return null;
         }
-        return bizTrans;
     }
 
     async delete(service: IService, state: State,
@@ -3072,7 +3149,8 @@ export class Entity {
         return false;
     }
 
-    epilogue(row: Row, context?: IContext): Epilogue[] {
+    epilogue(row: Row, service?: IReadOnlyService,
+             context?: IContext): Epilogue[] {
         throw new CoreError(`Entity ${this.name} does not support epilogue`);
     }
 
@@ -3435,6 +3513,7 @@ export class AmountField extends Field {
         fieldState.load(this.transform(row.get(this.name)));
     }
 
+    /*
     save(row: Row, state: State): void {
         const fieldValue = state.field(this.name).value;
         if (fieldValue !== null) {
@@ -3445,6 +3524,7 @@ export class AmountField extends Field {
             row.updateOrAdd(this.name, null);
         }
     }
+    */
 
     hasChanged(oldValue: any, newValue: any): boolean {
         if (oldValue instanceof BigDecimal && newValue instanceof BigDecimal) {

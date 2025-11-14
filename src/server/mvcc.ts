@@ -1163,8 +1163,8 @@ export class MvccController {
     postMvcc(row: Row, userId: string): MvccResult {
         this.logger.debug("C 074");
         const result = new MvccResult(this.logger);
+        const id = Entity.generateId(row);
         this.convertToPayload(row);
-        const id = Entity.generateId();
         const updated = new Date();
         const updatedBy = userId;
         const rev = this.newVersion(row);

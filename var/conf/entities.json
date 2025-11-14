@@ -234,6 +234,8 @@
             "type": "scheduler.trip.Trip",
             "table": "trip",
             "retention": { "style": "delete" },
+            "ticketPrefix": "C300.100.",
+            "reservedPrefix": "C300.200.",
             "keyFields": [
                 { "name": "tripnum", "type": "GeneratorField", "required": true,
                       "maxlength": 32,

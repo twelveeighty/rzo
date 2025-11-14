@@ -136,7 +136,7 @@ export class Policy {
         if (subject == "${userid}") {
             return context.userAccountId;
         }
-        const subjectRegex = /\$\{my\.(\w+)}/;
+        const subjectRegex = /\$\{my\.(\w+)\}/;
         const match = subjectRegex.exec(subject);
         if (match) {
             const result = context.getSubject(match[1]);

@@ -22,8 +22,7 @@ import { readFile } from "node:fs/promises";
 import { argv } from 'node:process';
 
 import {
-    IService, IContext, Entity, Row, Logger, ServiceSource, Filter, State,
-    MemResultSet, Nobody
+    Row, Logger, ServiceSource, Nobody, BizTrans
 } from "./base/core.js";
 
 import { TxnRaw, Txn, AccTrans } from "./accting/acc-core.js";
@@ -45,45 +44,6 @@ function getUrl(filename: string, subdir?: string): URL {
     return result;
 }
 
-async function loadAccount(logger: Logger, service: IService, context: IContext,
-                           cache: Map<string,Row>, accountEntity: Entity,
-                           name: string): Promise<Row> {
-    let result = cache.get(name);
-    if (result) {
-        return result;
-    }
-    const filter = new Filter().op("name", "=", name);
-    result = await service.getQueryOne(logger, context, accountEntity, filter);
-    if (result.empty) {
-        throw new Error(`Cannot find account: ${name}`);
-    }
-    cache.set(name, result);
-    return result;
-}
-
-async function setTransAccount(logger: Logger, service: IService,
-                               context: IContext, cache: Map<string,Row>,
-                               accountEntity: Entity, row: Row,
-                               state: State): Promise<void> {
-    const account = await loadAccount(
-        logger, service, context, cache, accountEntity, row.get("account"));
-    state.field("account").value = account.get("name");
-    state.field("account_id").value = account.get("_id");
-}
-
-async function setSplitAccount(logger: Logger, service: IService,
-                               context: IContext, cache: Map<string,Row>,
-                               accountEntity: Entity, row: Row,
-                               state: State): Promise<void> {
-    const account = await loadAccount(
-        logger, service, context, cache, accountEntity, row.get("account"));
-    state.field("account").value = account.get("name");
-    state.field("account_id").value = account.get("_id");
-    state.field("holding").value = account.get("holding");
-    state.field("holding_id").value = account.get("holding_id");
-    state.field("elementtype").value = account.get("elementtype");
-}
-
 try {
     if (argv.length != 4) {
         throw new Error(
@@ -97,7 +57,8 @@ try {
                  { encoding: 'utf8' }),
         readFile(getUrl("personas"), { encoding: 'utf8' }),
         readFile(getUrl("collections", "client"), { encoding: 'utf8' }),
-        readFile(getUrl("accting-collections", "server"), { encoding: 'utf8' }),
+        readFile(getUrl("accting-collections", "serverside-client"),
+                 { encoding: 'utf8' }),
         readFile(getUrl("config", "serverside-client"), { encoding: 'utf8' })
     ]);
 
@@ -120,53 +81,40 @@ try {
         const source = RZO.getSource("db");
         const service = (<ServiceSource>source.ensure(ServiceSource)).service;
         const authenticator = RZO.getAuthenticator("auth").service;
-        const accountEntity = RZO.getEntity("account");
+        // const accountEntity = RZO.getEntity("account");
         const transEntity = RZO.getEntity("acctrans") as AccTrans;
         const splitEntity = RZO.getEntity("accsplit");
         const context = await authenticator.login(logger, credsRow);
         logger.log(`Session: ${JSON.stringify(context)}`);
         try {
-            const accountCache: Map<string,Row> = new Map();
             for (const txnRaw of loadData) {
                 const now = new Date();
                 if (!txnRaw) {
                     break;
                 }
                 const transState = await transEntity.create(context, service);
-                const transRow = Row.dataToRow(txnRaw.transaction);
-                for (const column of transRow.columns) {
-                    if (column == "account") {
-                        await setTransAccount(
-                            logger, service, context, accountCache,
-                            accountEntity, transRow, transState);
-                    } else {
-                        await transEntity.setValue(
-                            transState, column, transRow.get(column), context);
-                    }
+                const transInputRow = Row.dataToRow(txnRaw.transaction);
+                for (const column of transInputRow.columns) {
+                    await transEntity.setValue(
+                        transState, column, transInputRow.get(column),
+                        context);
                 }
                 await transEntity.setValue(transState, "created", now, context);
                 const posted = transState.field("posted").value;
                 const acctrans = transState.field("transnum").value;
                 const memo = transState.field("memo").value;
                 const acctrans_id = Nobody.ID;
-                const splits = new MemResultSet();
-                const txn = new Txn(transEntity.stateToRow(transState), splits);
+                const txn = new Txn(transEntity, transState);
                 for (const splitObj of txnRaw.splits) {
-                    const splitRow = Row.dataToRow(splitObj);
+                    const splitInputRow = Row.dataToRow(splitObj);
                     const splitState = await splitEntity.create(
                         context, service);
                     splitState.field("acctrans").value = acctrans;
                     splitState.field("acctrans_id").value = acctrans_id;
-                    for (const column of splitRow.columns) {
-                        if (column == "account") {
-                            await setSplitAccount(
-                                logger, service, context, accountCache,
-                                accountEntity, splitRow, splitState);
-                        } else {
-                            await splitEntity.setValue(
-                                splitState, column, splitRow.get(column),
-                                context);
-                        }
+                    for (const column of splitInputRow.columns) {
+                        await splitEntity.setValue(
+                            splitState, column, splitInputRow.get(column),
+                            context);
                     }
                     const memoFieldState = splitState.field("memo");
                     if (memoFieldState.isNull) {
@@ -176,10 +124,10 @@ try {
                         splitState, "posted", posted, context);
                     await splitEntity.setValue(
                         splitState, "created", now, context);
-                    splits.addRow(splitEntity.stateToRow(splitState));
+                    txn.splits.push(splitState);
                 }
-                const bizTrans = await txn.toBizTrans(
-                    logger, context, service, transEntity);
+                const bizTrans = new BizTrans();
+                await txn.toBizTrans(bizTrans, logger, context, service);
                 await service.processBizTrans(logger, bizTrans);
             }
         } finally {

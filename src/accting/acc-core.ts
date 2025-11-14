@@ -20,9 +20,9 @@
 import {
     Logger, IContext, Row, _IError, TypeCfg, IConfiguration,
     BigDecimal, JsonObject, Entity, ImmutableEntity, Cfg, EntitySpec,
-    IResultSet, MemResultSet, Nobody, Epilogue, EpilogueColumn,
-    EpilogueColumnOperator, GeneratorField, IService, Phase, State, Filter, BizTrans,
-    SideEffects
+    Nobody, Epilogue, EpilogueColumn, EpilogueColumnOperator,
+    GeneratorField, IService, Phase, State, Filter, BizTrans, SideEffects,
+    CoreColumns, IReadOnlyService, BooleanField
 } from "../base/core.js";
 
 class AcctingError extends _IError {
@@ -33,109 +33,138 @@ class AcctingError extends _IError {
 
 export type ChangeType = "Dr" | "Cr";
 
+/* LocalDay is used to capture a *local* day, which can be 23, 24 or 25 hours,
+ * depending on Daylight Savings.
+ */
+export class LocalDay {
+    // The local day's midnight in utc.
+    utc: Date;
+
+    static fromPeriodString(period: string): LocalDay {
+        return new LocalDay(
+            Number.parseInt(period.slice(0, 4)),
+            Number.parseInt(period.slice(4, -2)),
+            Number.parseInt(period.slice(-2))
+        );
+    }
+
+    static fromPeriod(period: number): LocalDay {
+        return LocalDay.fromPeriodString(`${period}`);
+    }
+
+    static toPostgresDate(period: number): string {
+        const asStr = "" + period;
+        if (asStr.length != "YYYYMMDD".length) {
+            throw new AcctingError(
+                `Invalid period number: ${period}`);
+        }
+        return `${asStr.slice(0, 4)}-${asStr.slice(4, 6)}-${asStr.slice(6)}`;
+    }
+
+    static fromUtc(ts: Date): LocalDay {
+        const cpy = new Date(ts);
+        cpy.setHours(0, 0, 0, 0);
+        return new LocalDay(cpy.getFullYear(), cpy.getMonth()+1, cpy.getDate());
+    }
+
+    constructor(year: number, month12: number, day: number) {
+        if (!Number.isSafeInteger(year) || year > 2100 || year < 1971) {
+            throw new AcctingError(`'${year}' is not a valid year`);
+        }
+        if (!Number.isSafeInteger(month12) || month12 > 12 || month12 < 1) {
+            throw new AcctingError(`'${month12}' is not a valid month`);
+        }
+        if (!Number.isSafeInteger(day) || day > 31 || day < 1) {
+            throw new AcctingError(`'${day}' is not a valid day`);
+        }
+        this.utc = new Date(year, month12-1, day);
+    }
+
+    increment(by: number): LocalDay {
+        const inUtc = new Date(this.utc);
+        inUtc.setDate(this.utc.getDate() + by);
+        return new LocalDay(
+            inUtc.getFullYear(), inUtc.getMonth()+1, inUtc.getDate());
+    }
+
+    previous(): LocalDay {
+        return this.increment(-1);
+    }
+
+    next(): LocalDay {
+        return this.increment(1);
+    }
+
+    getPeriod(): number {
+        return this.utc.getFullYear()*10000 + (this.utc.getMonth()+1)*100 +
+            this.utc.getDate();
+    }
+
+    getPeriodString(): string {
+        return `${this.getPeriod()}`;
+    }
+}
+
 export class Txn {
-    transaction: Row;
-    splits: IResultSet;
+    acctrans: AccTrans;
+    transaction: State;
+    splits: State[];
 
-    static rawToTxnUnparsed(raw: any): Txn {
-        const asRow = Row.dataToRow(raw);
-        if (asRow.hasAll(["transaction", "splits"])) {
-            const transaction = Row.dataToRow(asRow.get("transaction"));
-            const splits = asRow.get("splits");
-            if (!transaction.empty && Array.isArray(splits)) {
-                return new Txn(transaction, new MemResultSet(splits));
-            } else {
-                throw new AcctingError(
-                    "Txn alike object cannot be parsed to a Txn");
-            }
-        } else {
-            throw new AcctingError(
-                `Object cannot be parsed to a Txn: ${JSON.stringify(raw)}`);
-        }
+    constructor(entity: AccTrans, state: State) {
+        this.acctrans = entity;
+        this.transaction = state;
+        this.splits = [];
     }
 
-    static rawToTxn(raw: any, accTransEntity: AccTrans): Txn {
-        const asRow = Row.dataToRow(raw);
-        if (asRow.hasAll(["transaction", "splits"])) {
-            const transaction = Row.dataToRow(
-                asRow.get("transaction"), accTransEntity);
-            const splitsRaw = asRow.get("splits");
-            if (Array.isArray(splitsRaw)) {
-                const splits = new MemResultSet(splitsRaw);
-                const splitEntity = accTransEntity.accsplitEntity.v;
-                while (splits.next()) {
-                    splitEntity.transformDataForRow(splits.getRow().raw());
-                }
-                return new Txn(transaction, splits);
-            } else {
-                throw new AcctingError(
-                    "Txn alike object cannot be parsed to a Txn");
-            }
-        } else {
-            throw new AcctingError(
-                `Object cannot be parsed to a Txn: ${JSON.stringify(raw)}`);
-        }
-    }
-
-    static total(splits: IResultSet, change: ChangeType): BigDecimal {
+    total(change: ChangeType): BigDecimal {
         let total = new BigDecimal("0");
-        splits.rewind();
-        while (splits.next()) {
-            if (splits.get("change") == change) {
-                total = total.add(BigDecimal.ensure(splits.get("amount")));
+        for (const split of this.splits) {
+            if (split.field("change").value == change) {
+                total = total.add(
+                    BigDecimal.ensure(split.field("amount").value));
             }
         }
         return total;
     }
 
-    constructor(transaction: Row, splits: IResultSet) {
-        this.transaction = transaction;
-        this.splits = splits;
-    }
-
     private setCreated(now: Date): void {
-        this.transaction.updateOrAdd("created", now);
-        this.splits.rewind();
-        while (this.splits.next()) {
-            this.splits.getRow().updateOrAdd("created", now);
+        this.transaction.field("created").value = now;
+        for (const split of this.splits) {
+            split.field("created").value = now;
         }
     }
 
-    private async validateTxn(context: IContext, txnState: TxnState,
-                              acctransEntity: Entity,
-                              accsplitEntity: Entity): Promise<void> {
+    private async validate(context: IContext): Promise<void> {
+        const accsplit = this.acctrans.accsplitEntity.v;
         const validations: Promise<void>[] = [];
-        validations.push(acctransEntity.validate(
-            "create", txnState.transaction, context));
-        for (const split of txnState.splits) {
-            validations.push(accsplitEntity.validate(
-                "create", split, context));
+        validations.push(this.acctrans.validate(
+            "create", this.transaction, context));
+        for (const split of this.splits) {
+            validations.push(accsplit.validate("create", split, context));
         }
         await Promise.all(validations);
     }
 
-    private async activateTxn(context: IContext, txnState: TxnState,
-                              acctransEntity: Entity,
-                              accsplitEntity: Entity): Promise<void> {
+    private async activate(context: IContext): Promise<void> {
+        const accsplit = this.acctrans.accsplitEntity.v;
         const activations: Promise<SideEffects[]>[] = [];
-        activations.push(acctransEntity.activate(
-            "create", txnState.transaction, context));
-        for (const split of txnState.splits) {
-            activations.push(accsplitEntity.activate(
-                "create", split, context));
+        activations.push(this.acctrans.activate(
+            "create", this.transaction, context));
+        for (const split of this.splits) {
+            activations.push(accsplit.activate("create", split, context));
         }
         await Promise.all(activations);
     }
 
     balanceSplits(): void {
-        const drTotal = Txn.total(this.splits, "Dr");
-        const crTotal = Txn.total(this.splits, "Cr");
+        const drTotal = this.total("Dr");
+        const crTotal = this.total("Cr");
         if (!drTotal.equals(crTotal)) {
             throw new AcctingError(
                 `Splits total debits ${drTotal.toString()} does not equal ` +
                 `credits ${crTotal.toString()}`);
         }
-        this.transaction.updateOrAdd("amount", drTotal);
+        this.transaction.field("amount").value = drTotal;
     }
 
     checkOrSetIds(): void {
@@ -144,27 +173,23 @@ export class Txn {
          * must also be specified.
          * If _id is not specified, all id's will get created.
          */
-        if (this.transaction.has("_id") && this.transaction.get("_id")) {
-            const acctrans_id = this.transaction.getString("_id");
-            this.splits.rewind();
-            while (this.splits.next()) {
-                const row = this.splits.getRow();
-                if (!row.has("_id") || !row.has("acctrans_id") ||
-                    row.isNullish("_id") ||
-                    row.get("acctrans_id") != acctrans_id) {
+        if (this.transaction.hasId()) {
+            const acctransId = this.transaction.id;
+            for (const split of this.splits) {
+                if (!split.hasId() ||
+                    split.field("acctrans_id").value != acctransId) {
+                } else {
                     throw new AcctingError(
                         "Invalid Txn split: missing or mismatched _id " +
                         "and/or acctrans_id");
                 }
             }
         } else {
-            const acctrans_id = Entity.generateId();
-            this.transaction.updateOrAdd("_id", acctrans_id);
-            this.splits.rewind();
-            while (this.splits.next()) {
-                const row = this.splits.getRow();
-                row.updateOrAdd("_id", Entity.generateId());
-                row.updateOrAdd("acctrans_id", acctrans_id);
+            const acctransId = Entity.generateId();
+            this.transaction.core = new CoreColumns(acctransId, null);
+            for (const split of this.splits) {
+                split.core = new CoreColumns(Entity.generateId(), null);
+                split.field("acctrans_id").value = acctransId;
             }
         }
     }
@@ -174,15 +199,13 @@ export class Txn {
          * corresponding acctrans, as well as all splitnum's must also be
          * specified.
          */
-        if (this.transaction.has("transnum") &&
-                this.transaction.isNotNullish("transnum")) {
-            const transnum = this.transaction.getString("transnum");
-            this.splits.rewind();
-            while (this.splits.next()) {
-                const row = this.splits.getRow();
-                if (!row.has("acctrans") || !row.has("splitnum") ||
-                        row.isNullish("acctrans") ||
-                        row.get("acctrans") != transnum) {
+        const transnumField = this.transaction.field("transnum");
+        if (transnumField.isNotNull) {
+            const transnum = transnumField.value;
+            for (const split of this.splits) {
+                const acctransField = split.field("acctrans");
+                if (acctransField.isNull || split.field("splitnum").isNull ||
+                        acctransField.value != transnum) {
                     throw new AcctingError(
                         "Invalid Txn split: missing or mismatched splitnum " +
                         "and/or transnum");
@@ -194,93 +217,54 @@ export class Txn {
         }
     }
 
-    async createNums(context: IContext, service: IService,
-                     accTrans: AccTrans): Promise<void> {
-        const transnum = await accTrans.transnumField.v.generate(
+    async createNums(context: IContext, service: IService): Promise<void> {
+        const transnum = await this.acctrans.transnumField.v.generate(
             service, context);
-        this.transaction.updateOrAdd("transnum", transnum);
-        this.splits.rewind();
-        while (this.splits.next()) {
-            const row = this.splits.getRow();
-            row.updateOrAdd("acctrans", transnum);
-            const splitnum = await accTrans.splitnumField.v.generate(
-                service, context);
-            row.updateOrAdd("splitnum", splitnum);
+        this.transaction.field("transnum").value = transnum;
+        const splitnumField = this.acctrans.splitnumField.v;
+        for (const split of this.splits) {
+            split.field("acctrans").value = transnum;
+            const splitnum = await splitnumField.generate(service, context);
+            split.field("splitnum").value = splitnum;
         }
-    }
-
-    txnToTxnState(accTransEntity: AccTrans): TxnState {
-        const splits: State[] = [];
-        this.splits.rewind();
-        const splitEntity = accTransEntity.accsplitEntity.v;
-        while (this.splits.next()) {
-            splits.push(splitEntity.rowToState(this.splits.getRow()));
-        }
-        const result: TxnState = {
-            transaction: accTransEntity.rowToState(this.transaction),
-            splits: splits
-        };
-        return result;
     }
 
     processPostedDT(): void {
-        if (!this.transaction.has("posted")) {
+        const posted = this.transaction.field("posted").value;
+        if (!posted) {
             throw new AcctingError("Transaction is missing 'posted' date");
         }
-        const posted = this.transaction.get("posted");
-        this.splits.rewind();
-        while (this.splits.next()) {
-            this.splits.getRow().updateOrAdd("posted", posted);
+        for (const split of this.splits) {
+            split.field("posted").value = posted;
         }
     }
 
-    async toBizTrans(logger: Logger, context: IContext, service: IService,
-                     accTrans: AccTrans): Promise<BizTrans> {
+    async toBizTrans(bizTrans: BizTrans, logger: Logger, context: IContext,
+                     service: IService): Promise<void> {
         this.balanceSplits();
         this.checkOrSetIds();
         if (!this.checkNums()) {
-            await this.createNums(context, service, accTrans);
+            await this.createNums(context, service);
         }
         this.processPostedDT();
         this.setCreated(new Date());
-        const splitEntity = accTrans.accsplitEntity.v;
-        /* Since this is the latest all fields have been set, it's only
-         * now that we can finally validate and activate the entities.
-         */
-        const txnState = this.txnToTxnState(accTrans);
-        await this.validateTxn(context, txnState, accTrans, splitEntity);
-        await this.activateTxn(context, txnState, accTrans, splitEntity);
-        /* Unfortunately, even though the activation doesn't modify or
-         * add any fields, to be able to support this for customizations
-         * or future behavior, we must pull fresh Rows from the States
-         */
-        const activatedSplits = new MemResultSet();
-        const activatedTxn = new Txn(
-            accTrans.stateToRow(txnState.transaction),
-            activatedSplits);
-        for (const splitState of txnState.splits) {
-            activatedSplits.addRow(splitEntity.stateToRow(splitState));
+        await this.validate(context);
+        await this.activate(context);
+        bizTrans.post(
+            logger, context,
+            this.acctrans, this.acctrans.stateToRow(this.transaction));
+        const accsplit = this.acctrans.accsplitEntity.v;
+        for (const split of this.splits) {
+            bizTrans.post(
+                logger, context,
+                accsplit, accsplit.stateToRow(split));
         }
-        const result = new BizTrans();
-        result.post(logger, context, accTrans, activatedTxn.transaction);
-        activatedSplits.rewind();
-        while (activatedSplits.next()) {
-            result.post(
-                logger, context, accTrans.accsplitEntity.v,
-                activatedSplits.getRow());
-        }
-        return result;
     }
 }
 
 export type TxnRaw = {
     transaction: JsonObject;
     splits: JsonObject[];
-}
-
-export type TxnState = {
-    transaction: State;
-    splits: State[];
 }
 
 export class AccTrans extends ImmutableEntity {
@@ -313,11 +297,34 @@ export class AccTrans extends ImmutableEntity {
 export class AccSplit extends ImmutableEntity {
     accountBalEntity: Cfg<Entity>;
     holdingEntity: Cfg<Entity>;
+    balanceLogEntity: Cfg<Entity>;
+    lastBalanceLogEntity: Cfg<Entity>;
+
+    static balanceOperator(row: Row): EpilogueColumnOperator {
+        const change = row.get("change");
+        const elementtype = row.get("elementtype");
+        if (change != "Dr" && change != "Cr") {
+            throw new AcctingError(`Invalid change: ${change}`);
+        }
+        switch(elementtype) {
+            case "ASSET":
+            case "EXPENSE":
+                return change == "Dr" ? "+=" : "-=";
+            case "LIABILITY":
+            case "EQUITY":
+            case "INCOME":
+                return change == "Dr" ? "-=" : "+=";
+            default:
+                throw new AcctingError(`Invalid elementtype: ${elementtype}`);
+        }
+    }
 
     constructor(config: TypeCfg<EntitySpec>, blueprints: Map<string, any>) {
         super(config, blueprints);
         this.accountBalEntity = new Cfg("accountbalance");
         this.holdingEntity = new Cfg("holding");
+        this.balanceLogEntity = new Cfg("balancelog");
+        this.lastBalanceLogEntity = new Cfg("lastbalancelog");
     }
 
     configure(configuration: IConfiguration) {
@@ -326,6 +333,10 @@ export class AccSplit extends ImmutableEntity {
             configuration.getEntity(this.accountBalEntity.name);
         this.holdingEntity.v =
             configuration.getEntity(this.holdingEntity.name);
+        this.balanceLogEntity.v =
+            configuration.getEntity(this.balanceLogEntity.name);
+        this.lastBalanceLogEntity.v =
+            configuration.getEntity(this.lastBalanceLogEntity.name);
     }
 
     async validate(phase: Phase, state: State,
@@ -350,40 +361,29 @@ export class AccSplit extends ImmutableEntity {
         }
     }
 
-    balanceOperator(row: Row): EpilogueColumnOperator {
-        const change = row.get("change");
-        const elementtype = row.get("elementtype");
-        if (change != "Dr" && change != "Cr") {
-            throw new AcctingError(`Invalid change: ${change}`);
-        }
-        switch(elementtype) {
-            case "ASSET":
-            case "EXPENSE":
-                return change == "Dr" ? "+=" : "-=";
-            case "LIABILITY":
-            case "EQUITY":
-            case "INCOME":
-                return change == "Dr" ? "-=" : "+=";
-            default:
-                throw new AcctingError(`Invalid elementtype: ${elementtype}`);
-        }
-    }
-
     hasEpilogue(row?: Row): boolean {
         return true;
     }
 
-    epilogue(row: Row, context?: IContext): Epilogue[] {
+    epilogue(row: Row, service?: IReadOnlyService,
+             context?: IContext): Epilogue[] {
         /* Inbound: row => accsplit,
          * Outbound:
+         *           balancelog delete (if account is 'islogged' and 'posted'
+         *                              before the accounting day period's
+         *                              midnight)
+         *           lastbalancelog update (if account is 'islogged' and 'posted'
+         *                                  before the accounting day period's
+         *                                  midnight)
          *           accountbalance update (always)
+         *           balancelog post (always)
          *           holding update (if 'price' was specified in the accsplit)
          */
         const updatedby = context ? context.userAccountId : (
             row.has("updatedby") ? row.get("updatedby") : Nobody.ID);
         const updated = row.has("updated") ? row.get("updated") : new Date();
         const cols: EpilogueColumn[] = [];
-        const operator = this.balanceOperator(row);
+        const operator = AccSplit.balanceOperator(row);
         const amount = row.get("amount");
         cols.push({
             column: "presentvalue",
@@ -431,6 +431,52 @@ export class AccSplit extends ImmutableEntity {
             };
             result.push(holdingUpdate);
 
+        }
+        if (BooleanField.toBoolean(row.get("islogged"))) {
+            /* If this transaction is posted before the current local day's
+             * midnight we invalidate the balancelogs.
+             */
+            const todayPeriod = LocalDay.fromUtc(new Date()).getPeriod();
+            const postedPeriod = LocalDay.fromUtc(
+                row.get("posted")).getPeriod();
+            if (postedPeriod < todayPeriod) {
+                if (this.logger.willLog("Debug")) {
+                    this.logger.debug(
+                        `Acct ${row.get("account")} split posted ` +
+                        `${row.get("posted")} before ${todayPeriod} ` +
+                        `invalidates balancelog`);
+                }
+                const deleteFilter = new Filter().
+                    op("type", "=", "D").
+                    op("period", ">=", `${postedPeriod}`, true);
+                const logDelete: Epilogue = {
+                    entity: this.balanceLogEntity.v,
+                    action: "delete",
+                    key: {
+                        keyColumn: "account_id",
+                        keyValue: row.getString("account_id")
+                    },
+                    filter: deleteFilter,
+                    columns: []
+                };
+                result.push(logDelete);
+                const updateFilter = new Filter().
+                    op("type", "=", "D").
+                    op("invalidated", "?>", `${postedPeriod}`, true);
+                const logUpdate: Epilogue = {
+                    entity: this.lastBalanceLogEntity.v,
+                    action: "put",
+                    key: {
+                        keyColumn: "account_id",
+                        keyValue: row.getString("account_id")
+                    },
+                    filter: updateFilter,
+                    columns: [
+                        { column: "invalidated", value: postedPeriod }
+                    ]
+                };
+                result.push(logUpdate);
+            }
         }
         return result;
     }

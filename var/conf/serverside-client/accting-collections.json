@@ -1,0 +1,95 @@
+[
+    {
+        "apiVersion": "v1",
+        "kind": "Collection",
+        "metadata": {
+            "name": "holdings"
+        },
+        "spec": {
+            "type": "Collection",
+            "entity": "holding",
+            "source": "db",
+            "via": "query",
+            "fields": [ "*" ],
+            "orderBy": [ { "field": "name", "order": "asc" } ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Collection",
+        "metadata": {
+            "name": "ledgers"
+        },
+        "spec": {
+            "type": "Collection",
+            "entity": "ledger",
+            "source": "db",
+            "via": "query",
+            "fields": [ "*" ],
+            "orderBy": [ { "field": "name", "order": "asc" } ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Collection",
+        "metadata": {
+            "name": "accounts"
+        },
+        "spec": {
+            "type": "base.collection.PermanentCachedCollection",
+            "entity": "account",
+            "key": "name",
+            "size": 10000,
+            "source": "db",
+            "via": "query",
+            "fields": [ "*" ],
+            "orderBy": [ { "field": "name", "order": "asc" } ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Collection",
+        "metadata": {
+            "name": "accountbalances"
+        },
+        "spec": {
+            "type": "Collection",
+            "entity": "accountbalance",
+            "source": "db",
+            "via": "query",
+            "fields": [ "*" ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Collection",
+        "metadata": {
+            "name": "acctransactions"
+        },
+        "spec": {
+            "type": "Collection",
+            "entity": "acctrans",
+            "source": "db",
+            "via": "query",
+            "fields": [ "*" ],
+            "orderBy": [ { "field": "transnum", "order": "asc" } ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Collection",
+        "metadata": {
+            "name": "accsplits"
+        },
+        "spec": {
+            "type": "Collection",
+            "entity": "accsplit",
+            "source": "db",
+            "via": "query",
+            "fields": [ "*" ],
+            "orderBy": [ { "field": "splitnum", "order": "asc" } ]
+        }
+    }
+]
+
+

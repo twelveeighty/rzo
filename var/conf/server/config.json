@@ -35,9 +35,23 @@
             "type": "server.election.LeaderElector",
             "source": "db",
             "leaderElectRowId": 1,
-            "leaderCastVoteInterval": "2 minutes",
-            "leaderCastVoteFrequency": 120000,
-            "leaderReelectFrequency": 60000
+            "leaderCastVoteInterval": "1 minute",
+            "leaderCastVoteFrequency": 60000,
+            "leaderReelectFrequency": 30000
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Worker",
+        "metadata": {
+            "name": "balancelog"
+        },
+        "spec": {
+            "type": "server.pg-balancelog.BalanceLogWorker",
+            "pool": "pgconnection",
+            "leaderElector": "leaderelector",
+            "extraMinutes": 1,
+            "checkFrequency": 30000
         }
     },
     {
@@ -89,18 +103,6 @@
     },
     {
         "apiVersion": "v1",
-        "kind": "Source",
-        "metadata": {
-            "name": "pgacctdb"
-        },
-        "spec": {
-            "type": "server.pg-accting.PgAcctingSource",
-            "pool": "pgconnection",
-            "source": "db"
-        }
-    },
-    {
-        "apiVersion": "v1",
         "kind": "Worker",
         "metadata": {
             "name": "restserver"
@@ -113,14 +115,12 @@
                 { "context": "b", "adapter": "bizadapter" },
                 { "context": "e", "adapter": "entityadapter" },
                 { "context": "c", "adapter": "collectionadapter" },
-                { "context": "f", "adapter": "acctadapter" },
                 { "context": "g", "adapter": "generatoradapter" },
                 { "context": "o", "adapter": "queryoneadapter" },
                 { "context": "r", "adapter": "replicationadapter" },
                 { "context": "ri", "adapter": "imreplicationadapter" },
                 { "context": "s", "adapter": "authadapter" },
-                { "context": "otl", "adapter": "onetimeloginadapter" },
-                { "context": "t", "adapter": "tokenadapter" }
+                { "context": "otl", "adapter": "onetimeloginadapter" }
             ]
         }
     },
@@ -175,20 +175,6 @@
             "source": "db",
             "cache": "sessioncache",
             "sessionBackendSource": "db"
-        }
-    },
-    {
-        "apiVersion": "v1",
-        "kind": "Worker",
-        "metadata": {
-            "name": "acctadapter"
-        },
-        "spec": {
-            "type": "server.rest-accting.AcctingAdapter",
-            "source": "db",
-            "cache": "sessioncache",
-            "sessionBackendSource": "db",
-            "acctingSource": "pgacctdb"
         }
     },
     {
@@ -324,9 +310,11 @@
                 { "name": "adapter/replicationadapter", "level": "Info" },
                 { "name": "adapter/imreplicationadapter", "level": "Info" },
                 { "name": "adapter/entityadapter", "level": "Info" },
+                { "name": "adapter/bizadapter", "level": "Debug" },
                 { "name": "adapter/attachadapter", "level": "Info" },
-                { "name": "adapter/acctadapter", "level": "Debug" },
-                { "name": "hoover", "level": "Debug" }
+                { "name": "balancelogger", "level": "Debug" },
+                { "name": "entity/accsplit", "level": "Debug" },
+                { "name": "hoover", "level": "Info" }
             ]
         }
     }

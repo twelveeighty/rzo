@@ -56,7 +56,8 @@ export class PgAttach extends PgBaseClient implements IAttachService {
             row.has("_deleted")) {
             return new Row();
         }
-        const hashArrayBuffer = await crypto.subtle.digest("SHA-256", data);
+        const hashArrayBuffer = await crypto.subtle.digest(
+            "SHA-256", <BufferSource>data);
         const hash = Buffer.from(hashArrayBuffer).toString("hex");
         const attObj = {
             n: name,

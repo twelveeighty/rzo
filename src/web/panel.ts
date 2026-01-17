@@ -19,15 +19,15 @@
 
 import {
     State, Row, Entity, IService, Cfg, IContext, SideEffects, StringField,
-    Logger, MemResultSet
+    Logger, MemResultSet, JsonObject
 } from "../base/core.js";
 import { RZO, CONTEXT } from "../base/configuration.js";
-
 import { TOASTER } from "./toaster.js";
-import * as X from "./common.js";
 
 type PanelDataType = "None" | "State" | "Row" | "string" | "Parameter";
 type PanelParameter = "Refresh" | "NoRefresh";
+type RenderAs = "asHTML" | "asText";
+type ControlType = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
 
 export class PanelData {
 
@@ -139,20 +139,22 @@ export class AttributeJoiner {
 }
 
 export class NavMenuItem {
-    parent: HTMLUListElement;
+    parent: HTMLElement;
     title: string;
     id: string;
     listener: EventListener | null;
-    li: HTMLLIElement | null;
+    li: HTMLElement | null;
     anchor: HTMLAnchorElement | null;
+    abortController: AbortController | null;
 
-    constructor(parent: HTMLUListElement, id: string, title: string) {
+    constructor(parent: HTMLElement, id: string, title: string) {
         this.parent = parent;
         this.id = id;
         this.title = title;
         this.listener = null;
         this.li = null;
         this.anchor = null;
+        this.abortController = null;
     }
 
     initialize(listener: EventListener): void {
@@ -173,28 +175,37 @@ export class NavMenuItem {
 
     show(): void {
         if (!this.li && !this.anchor) {
-            this.li = document.createElement("li") as HTMLLIElement;
-            this.li.className = "nav-item";
-
-            this.anchor = document.createElement("a") as HTMLAnchorElement;
-            this.anchor.id = this.id;
-            this.anchor.className = "nav-link";
-            this.anchor.ariaDisabled = "false";
-            this.anchor.href = "#";
-            this.anchor.innerHTML = this.title;
-
             if (this.listener) {
-                this.anchor.addEventListener("click", this.listener, false);
+                this.abortController = new AbortController();
             }
-            this.li.appendChild(this.anchor);
+            const anchor = new DynElement(
+                {
+                    tag: "a",
+                    id: this.id,
+                    css: "nav-link",
+                    href: "#",
+                    text: this.title
+                })
+            .addAttribute("ariaDisabled", "false")
+            .addOptionalListener("click", this.listener, this.abortController);
+            const li = new DynElement(
+                {
+                    tag: "li",
+                    css: "nav-item"
+                }
+            )
+            .append(anchor);
+            this.li = li.asElement();
+            this.anchor = anchor.asAnchorElement();
             this.parent.appendChild(this.li);
         }
     }
 
     hide(): void {
         if (this.li && this.anchor) {
-            if (this.listener) {
-                this.anchor.removeEventListener("click", this.listener, false);
+            if (this.abortController != null) {
+                this.abortController.abort();
+                this.abortController = null;
             }
             this.li.removeChild(this.anchor);
             this.anchor = null;
@@ -210,13 +221,19 @@ export class PanelButton {
     id: string;
     listener: EventListener | null;
     btn: HTMLButtonElement | null;
+    css: string | null;
 
-    constructor(parent: HTMLElement, id: string, title: string) {
+    constructor(parent: HTMLElement, id: string, title: string, css?: string) {
         this.parent = parent;
         this.id = id;
         this.title = title;
         this.listener = null;
         this.btn = null;
+        if (css) {
+            this.css = css;
+        } else {
+            this.css = null;
+        }
     }
 
     initialize(listener: EventListener): void {
@@ -231,11 +248,15 @@ export class PanelButton {
 
     show(): void {
         if (!this.btn) {
-            this.btn = document.createElement("button") as HTMLButtonElement;
-            this.btn.id = this.id;
-            this.btn.type = "button";
-            this.btn.className = "btn btn-primary";
-            this.btn.innerHTML = this.title;
+            this.btn = new DynElement(
+                {
+                    tag: "button",
+                    id: this.id,
+                    type: "button",
+                    css: this.css || "btn btn-primary",
+                    html: this.title
+                }
+            ).asButtonElement();
             if (this.listener) {
                 this.btn.addEventListener("click", this.listener, false);
             }
@@ -259,12 +280,23 @@ export class BasePanel {
     service: Cfg<IService>;
     controller: Cfg<PanelController>;
     logger: Logger;
+    prefix: string;
+
+    static queryElement(id: string): HTMLElement {
+        const element = document.getElementById(id);
+        if (element) {
+            return element;
+        } else {
+            throw new Error(`No such element: ${id}`);
+        }
+    }
 
     constructor() {
         this.logger = new Logger("client");
         this.entity = new Cfg("entity");
         this.service = new Cfg("service");
         this.controller = new Cfg("controller");
+        this.prefix = "";
     }
 
     initialize(): void {
@@ -281,6 +313,182 @@ export class BasePanel {
 
     async onMessage(message: PanelMessage): Promise<void> {
     }
+
+    ensure(obj: unknown, targetType: Function): unknown {
+        if (!(obj instanceof targetType)) {
+            throw new Error(
+                `${obj} is not an instance of ${targetType.name}`);
+        }
+        return obj;
+    }
+
+    ensureDate(obj: unknown): Date {
+        this.ensure(obj, Date);
+        return obj as Date;
+    }
+
+    fqId(id: string): string {
+        return (id[0] == "-" && this.prefix) ? `${this.prefix}${id}` : id;
+    }
+
+    qElement(id: string): HTMLElement {
+        const fullId = this.fqId(id);
+        return BasePanel.queryElement(fullId);
+    }
+
+    qSVG(id: string): SVGElement {
+        const element = this.qElement(id);
+        if (element instanceof SVGElement) {
+            return element;
+        } else {
+            throw new Error(
+                `Element ${element.id} is not an SVGElement`);
+        }
+    }
+
+    qInput(id: string): HTMLInputElement {
+        const element = this.qElement(id);
+        if (element instanceof HTMLInputElement) {
+            return element;
+        } else {
+            throw new Error(
+                `Element ${element.id} is not an HTMLInputElement`);
+        }
+    }
+
+    qButton(id: string): HTMLButtonElement {
+        const element = this.qElement(id);
+        if (element instanceof HTMLButtonElement) {
+            return element;
+        } else {
+            throw new Error(
+                `Element ${element.id} is not an HTMLButtonElement`);
+        }
+    }
+
+    qTableSection(id: string): HTMLTableSectionElement {
+        const element = this.qElement(id);
+        if (element instanceof HTMLTableSectionElement) {
+            return element;
+        } else {
+            throw new Error(
+                `Element ${element.id} is not an HTMLTableSectionElement`);
+        }
+    }
+
+    qSelect(id: string): HTMLSelectElement {
+        const element = this.qElement(id);
+        if (element instanceof HTMLSelectElement) {
+            return element;
+        } else {
+            throw new Error(
+                `Element ${element.id} is not an HTMLSelectElement`);
+        }
+    }
+
+    qForm(id: string): HTMLFormElement {
+        const element = this.qElement(id);
+        if (element instanceof HTMLFormElement) {
+            return element;
+        } else {
+            throw new Error(
+                `Element ${element.id} is not an HTMLFormElement`);
+        }
+    }
+
+    addTableRowElement(tbody: HTMLElement, header: string,
+                       value: HTMLElement): void {
+        if (value) {
+            const tr = new DynElement( { tag: "tr" })
+            .append(
+                new DynElement(
+                {
+                    tag: "th",
+                    text: header
+                })
+                .addAttribute("scope", "row")
+            )
+            .append(
+                new DynElement( { tag: "td" })
+                .appendElement(value)
+            );
+            tbody.appendChild(tr.asElement());
+        }
+    }
+
+    addTableRowText(tbody: HTMLElement, header: string, value: string,
+                    renderAs?: RenderAs, tdClass?: string): void {
+        if (value) {
+            const tr = new DynElement( { tag: "tr" })
+            .append(
+                new DynElement(
+                {
+                    tag: "th",
+                    text: header
+                })
+                .addAttribute("scope", "row")
+            );
+            if (renderAs == "asHTML") {
+                if (tdClass) {
+                    tr.append(
+                        new DynElement(
+                        {
+                            tag: "td",
+                            css: tdClass,
+                            html: value
+                        })
+                    );
+                } else {
+                    tr.append(
+                        new DynElement(
+                        {
+                            tag: "td",
+                            html: value
+                        })
+                    );
+                }
+            } else {
+                if (tdClass) {
+                    tr.append(
+                        new DynElement(
+                        {
+                            tag: "td",
+                            css: tdClass,
+                            text: value
+                        })
+                    );
+                } else {
+                    tr.append(
+                        new DynElement(
+                        {
+                            tag: "td",
+                            text: value
+                        })
+                    );
+                }
+            }
+            tbody.appendChild(tr.asElement());
+        }
+    }
+
+    mapLink(input: string): string {
+        if (input.startsWith("q=")) {
+            return input.slice(2);
+        }
+        return encodeURIComponent(input);
+    }
+
+    addressMapAnchor(address: string, mapvalue: string): HTMLElement {
+        const anchor = new DynElement(
+            {
+                tag: "a",
+                href:
+                    `https://maps.google.com/maps?q=${this.mapLink(mapvalue)}`,
+                text: address
+            })
+        .addAttribute("target", "new");
+        return anchor.asElement();
+    }
 }
 
 export interface IBoundControl extends HTMLElement {
@@ -290,17 +498,59 @@ export interface IBoundControl extends HTMLElement {
     reportValidity(): boolean;
 }
 
+/* Control is a data-bound, i.e. State-aware UI element.
+ */
 export class Control {
     id: string;
     attribute: string;
     required: boolean;
     element: IBoundControl;
 
+    static instantiate(id: string): ControlType {
+        const element = document.getElementById(id);
+        if (element) {
+            const parts = id.split("-");
+            if (parts.length > 1) {
+                const suffix = parts.slice(-1)[0];
+                switch(suffix) {
+                    case "sel":
+                        if (element instanceof HTMLSelectElement) {
+                            return element as HTMLSelectElement;
+                        } else {
+                            throw new Error(
+                                `Element ${id} is not an HTMLSelectElement`);
+                        }
+                    case "txt":
+                        if (element instanceof HTMLInputElement) {
+                            return element as HTMLInputElement;
+                        } else {
+                            throw new Error(
+                                `Element ${id} is not an HTMLInputElement`);
+                        }
+                    case "tarea":
+                        if (element instanceof HTMLTextAreaElement) {
+                            return element as HTMLTextAreaElement;
+                        } else {
+                            throw new Error(
+                                `Element ${id} is not an HTMLTextAreaElement`);
+                        }
+                    default:
+                        throw new Error(
+                            `Element id ${id} is not a control type`);
+                }
+            } else {
+                throw new Error(`Cannot parse element id: ${id}`);
+            }
+        } else {
+            throw new Error(`No such element: ${id}`);
+        }
+    }
+
     constructor(id: string, attribute: string, required?: boolean) {
         this.id = id;
         this.attribute = attribute;
         this.required = !!required;
-        this.element = X.control(id);
+        this.element = Control.instantiate(id);
     }
 
     fromState(state: State): void {
@@ -315,6 +565,187 @@ export class Control {
             this.element.setCustomValidity(`${err}`);
             throw err;
         });
+    }
+}
+
+/* DynElement is a "short-hand" way of creating HTML Elements.
+ * It is meant purely as a way to create more clean/readable code when
+ * dynamically creating elements.
+ * The constructor takes a plain object with the following fields:
+ *
+ * tag: (string) - what element to create; input, button, etc. (required)
+ * ns: (string) - if specified createElementNS will be used (optional)
+ * id: (string) - the element id (optional)
+ * css: (string) - the space separated css class(es) (optional)
+ * text: (string) - the element's innerText will be set to this value (optional)
+ * html: (string) - the element's innerHTML will be set to this value (optional)
+ * type: (string) - used for <input> and <button> type (optional)
+ * href: (string) - sets the element's href (optional)
+ * data: (object) - sets each key/value pair as 'data-{key} = value' (optional)
+ *
+ */
+export class DynElement {
+    scaffold: Row;
+    private _element: HTMLElement | null;
+
+    constructor(scaffold: JsonObject) {
+        this.scaffold = new Row(scaffold);
+        this._element = null;
+    }
+
+    protected build(): HTMLElement {
+        const tag = this.scaffold.get("tag");
+        const newElement = this.scaffold.has("ns") ?
+            document.createElementNS(this.scaffold.get("ns"), tag) :
+            document.createElement(tag);
+        if (this.scaffold.has("id")) {
+            newElement.id = this.scaffold.get("id");
+        }
+        if (this.scaffold.has("css")) {
+            newElement.className = this.scaffold.get("css");
+        }
+        if (this.scaffold.has("text")) {
+            newElement.innerText = this.scaffold.get("text");
+        }
+        if (this.scaffold.has("html")) {
+            newElement.innerHTML = this.scaffold.get("html");
+        }
+        if (this.scaffold.has("type")) {
+            newElement.setAttribute("type", this.scaffold.get("type"));
+        }
+        if (this.scaffold.has("href")) {
+            newElement.setAttribute("href", this.scaffold.get("href"));
+        }
+        if (this.scaffold.has("data")) {
+            const data = new Row(this.scaffold.get("data"));
+            for (const key of data.columns) {
+                newElement.setAttribute(`data-${key}`, data.get(key));
+            }
+        }
+        this._element = newElement;
+        return newElement;
+    }
+
+    addOptionalListener(type: string, listener?: EventListener | null,
+                        controller?: AbortController | null): DynElement {
+        if (listener) {
+            return this.addListener(type, listener, controller);
+        }
+        return this;
+    }
+
+    addListener(type: string, listener: EventListener,
+                controller?: AbortController | null): DynElement {
+
+        const element = this.asElement();
+        if (controller) {
+            element.addEventListener(
+                type, listener, { signal: controller.signal });
+        } else {
+            element.addEventListener(type, listener);
+        }
+        return this;
+    }
+
+    addAttribute(key: string, value: string): DynElement {
+        this.asElement().setAttribute(key, value);
+        return this;
+    }
+
+    asElement(): HTMLElement {
+        if (this._element) {
+            return this._element;
+        }
+        return this.build();
+    }
+
+    asButtonElement(): HTMLButtonElement {
+        const check = this.asElement();
+        if (check instanceof HTMLButtonElement) {
+            return check;
+        } else {
+            throw new Error(
+                `Element ${check.localName} is not an HTMLButtonElement`);
+        }
+    }
+
+    asAnchorElement(): HTMLAnchorElement {
+        const check = this.asElement();
+        if (check instanceof HTMLAnchorElement) {
+            return check;
+        } else {
+            throw new Error(
+                `Element ${check.localName} is not an HTMLAnchorElement`);
+        }
+    }
+
+    asInputElement(): HTMLInputElement {
+        const check = this.asElement();
+        if (check instanceof HTMLInputElement) {
+            return check;
+        } else {
+            throw new Error(
+                `Element ${check.localName} is not an HTMLInputElement`);
+        }
+    }
+
+    asOptionElement(): HTMLOptionElement {
+        const check = this.asElement();
+        if (check instanceof HTMLOptionElement) {
+            return check;
+        } else {
+            throw new Error(
+                `Element ${check.localName} is not an HTMLOptionElement`);
+        }
+    }
+
+    append(child: DynElement): DynElement {
+        const element = this.asElement();
+        const childElement = child.asElement();
+        element.appendChild(childElement);
+        return this;
+    }
+
+    appendElement(child: HTMLElement): DynElement {
+        const element = this.asElement();
+        element.appendChild(child);
+        return this;
+    }
+
+    appendChild(child: HTMLElement): HTMLElement {
+        const element = this.asElement();
+        element.appendChild(child);
+        return element;
+    }
+
+    appendTextNode(text: string): DynElement {
+        const element = this.asElement();
+        element.appendChild(document.createTextNode(text));
+        return this;
+    }
+
+    appendSVG(useRef: string): DynElement {
+        const svg = new DynElement(
+        {
+            ns: "http://www.w3.org/2000/svg",
+            tag: "svg"
+        })
+        .addAttribute("class", "bi me-1")
+        .addAttribute("width", "32px")
+        .addAttribute("height", "32px")
+        .addAttribute("role", "img")
+        .addAttribute("aria-label", useRef)
+        .append(
+            new DynElement(
+            {
+                ns: "http://www.w3.org/2000/svg",
+                tag: "use",
+                href: `#${useRef}`
+            })
+        );
+        const element = this.asElement();
+        element.appendChild(svg.asElement());
+        return this;
     }
 }
 
@@ -359,28 +790,20 @@ export class ViewPanel extends BasePanel {
     div: HTMLElement;
     backBtn: HTMLButtonElement;
     editBtn: HTMLButtonElement;
-
     editPanelId: string;
-
-    tableTBody: HTMLTableSectionElement;
-    statusElement: HTMLElement;
-
+    tbody: HTMLTableSectionElement;
     state: State | null;
     dirty: boolean;
 
-    constructor(divId: string, tableId: string, statusId: string,
+    constructor(prefix: string, divId: string, tableId: string,
                 backBtnId: string, editBtnId: string, editPanelId: string) {
         super();
-
+        this.prefix = prefix;
         this.editPanelId = editPanelId;
-
-        this.div = X.div(divId);
-        this.tableTBody = X.tsec(tableId);
-        this.statusElement = X.htmlElement(statusId);
-
-        this.backBtn = X.btn(backBtnId);
-        this.editBtn = X.btn(editBtnId);
-
+        this.div = this.qElement(divId);
+        this.tbody = this.qTableSection(tableId);
+        this.backBtn = this.qButton(backBtnId);
+        this.editBtn = this.qButton(editBtnId);
         this.dirty = false;
         this.state = null;
     }
@@ -404,7 +827,7 @@ export class ViewPanel extends BasePanel {
     }
 
     private onEdit(evt: Event): void {
-        // Stack on the 'DriverEdit' panel
+        // Stack on the 'edit' panel
         if (this.state) {
             this.controller.v.stack(
                 this.editPanelId, new PanelData("State", this.state));
@@ -412,6 +835,11 @@ export class ViewPanel extends BasePanel {
     }
 
     protected stateToUI(state: State): void {
+    }
+
+    addRowText(header: string, value: string, renderAs?: RenderAs,
+               tdClass?: string): void {
+        this.addTableRowText(this.tbody, header, value, renderAs, tdClass);
     }
 
     async show(panelData?: PanelData): Promise<void> {
@@ -458,13 +886,14 @@ export class FormPanel extends BasePanel {
     cancelBtn: HTMLButtonElement;
     controls: Map<string, Control>;
 
-    constructor(ownerId: string, formId: string, submitBtnId: string,
-                cancelBtnId: string, controls: Control[]) {
+    constructor(prefix: string, ownerId: string, formId: string,
+                submitBtnId: string, cancelBtnId: string, controls: Control[]) {
         super();
-        this.owner = X.div(ownerId);
-        this.form = X.form(formId);
-        this.submitBtn = X.btn(submitBtnId);
-        this.cancelBtn = X.btn(cancelBtnId);
+        this.prefix = prefix;
+        this.owner = this.qElement(ownerId);
+        this.form = this.qForm(formId);
+        this.submitBtn = this.qButton(submitBtnId);
+        this.cancelBtn = this.qButton(cancelBtnId);
         this.controls = new Map();
         for (const control of controls) {
             this.controls.set(control.id, control);
@@ -473,44 +902,30 @@ export class FormPanel extends BasePanel {
     }
 
     getControl(id: string): Control {
-        const control = this.controls.get(id);
+        const fullId = this.fqId(id);
+        const control = this.controls.get(fullId);
         if (control) {
             return control;
         }
-        throw new Error(`${id} is not part of this form`);
+        throw new Error(`${fullId} is not part of this form`);
     }
 
     getSelect(id: string): HTMLSelectElement {
-        if (X.suffix(id) == "sel") {
-            const control = this.controls.get(id);
-            if (control) {
-                return control.element as unknown as HTMLSelectElement;
-            }
-            throw new Error(`${id} is not part of this form`);
+        const control = this.getControl(id);
+        if (control.element instanceof HTMLSelectElement) {
+            return control.element as unknown as HTMLSelectElement;
+        } else {
+            throw new Error(`${id} is not a Select element`);
         }
-        throw new Error(`${id} does not have a select suffix`);
     }
 
     getInput(id: string): HTMLInputElement {
-        if (X.suffix(id) == "txt") {
-            const control = this.controls.get(id);
-            if (control) {
-                return control.element as unknown as HTMLInputElement;
-            }
-            throw new Error(`${id} is not part of this form`);
+        const control = this.getControl(id);
+        if (control.element instanceof HTMLInputElement) {
+            return control.element as unknown as HTMLInputElement;
+        } else {
+            throw new Error(`${id} is not a Select element`);
         }
-        throw new Error(`${id} does not have an input suffix`);
-    }
-
-    getCheckbox(id: string): HTMLInputElement {
-        if (X.suffix(id) == "cbox") {
-            const control = this.controls.get(id);
-            if (control) {
-                return control.element as unknown as HTMLInputElement;
-            }
-            throw new Error(`${id} is not part of this form`);
-        }
-        throw new Error(`${id} does not have an input suffix`);
     }
 
     protected loadDropdown(selectId: string, collection: string,

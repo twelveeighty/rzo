@@ -19,7 +19,8 @@
 
 import {
     IConfiguration, Cfg, IContext, TypeCfg, Collection, CollectionSpec, Filter,
-    Entity, ContainedEntity, Query, IResultSet, Row, MemResultSet
+    Entity, ContainedEntity, Query, IResultSet, Row, MemResultSet,
+    EmptyResultSet
 } from "./core.js";
 
 class CollectionError extends Error {
@@ -323,34 +324,70 @@ export class PermanentCachedCollection extends Collection {
     }
 }
 
-type PagedCollectionSpec = CollectionSpec & {
-    pagedOn: string;
-}
+export class MaterializedCollection extends Collection {
+    private _cache: IResultSet;
 
-export class PagedCollection extends Collection {
-    pagedOn: string;
-    headers: string[];
-
-    constructor(config: TypeCfg<PagedCollectionSpec>,
-                blueprints: Map<string, any>) {
+    constructor(config: TypeCfg<CollectionSpec>, blueprints: Map<string, any>) {
         super(config, blueprints);
-        this.pagedOn = config.spec.pagedOn;
-        this.headers = [];
+        this._cache = new EmptyResultSet();
     }
 
-    configure(configuration: IConfiguration): void {
-        super.configure(configuration);
-        if (!this.entity.v.hasField(this.pagedOn)) {
-            throw new CollectionError(
-                `PagedCollection '${this.name}': entity ` +
-                `'${this.entity.name}' does not have a field called ` +
-                `${this.pagedOn}`);
+    async build(context: IContext, query?: Query): Promise<void> {
+        this._cache = await super.query(context, query);
+    }
+
+    private unQuote(input: string): string {
+        if (input.at(0) == "'" && input.at(-1) == "'") {
+            return input.slice(1, -1);
+        } else {
+            return input;
+        }
+    }
+
+    get cache(): IResultSet {
+        return new MemResultSet(this._cache.getAll());
+    }
+
+    find(key: string, value: any): Row {
+        const found = this._cache.find((row) => row.get(key) == value);
+        if (found) {
+            return found.copy();
+        } else {
+            return new Row();
         }
     }
 
     async query(context: IContext, query?: Query): Promise<IResultSet> {
-        this.headers = [];
-        return await super.query(context, query);
+        if (query && query.filter) {
+            if (query.filter.sealed) {
+                throw new CollectionError(
+                    `MaterializedCollection ${this.name} does not support ` +
+                    `sealed 'where' clause.`);
+            }
+            if (query.filter.chunks.length != 1) {
+                throw new CollectionError(
+                    `MaterializedCollection ${this.name} does not support ` +
+                    `multiple filter operators`);
+            }
+            const matched = query.filter.chunks[0].match(
+                Filter.ComparisonRegex);
+            if (matched && matched[2] == "=") {
+                const key = matched[1];
+                const value = this.unQuote(matched[3]);
+                const found = this._cache.find((row) => row.get(key) == value);
+                if (found) {
+                    return MemResultSet.fromRow(found);
+                } else {
+                    return new EmptyResultSet();
+                }
+            } else {
+                throw new CollectionError(
+                    `MaterializedCollection ${this.name} does not support ` +
+                    `operator: ${query.filter.chunks[0]}`);
+            }
+        } else {
+            return new MemResultSet(this._cache.getAll());
+        }
     }
 }
 

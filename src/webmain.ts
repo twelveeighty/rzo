@@ -42,8 +42,12 @@ import { DriverEditPanel } from "./web/driver/drivereditpanel.js";
 import { DriverViewPanel } from "./web/driver/driverviewpanel.js";
 
 import { AccountsListPanel } from "./web/accting/accountslistpanel.js";
+import { AccountViewPanel } from "./web/accting/accountviewpanel.js";
 import { AccountEditPanel } from "./web/accting/accounteditpanel.js";
 import { SplitsListPanel } from "./web/accting/splitslistpanel.js";
+import { LogSplitsListPanel } from "./web/accting/logsplitslistpanel.js";
+import { TransViewPanel } from "./web/accting/transviewpanel.js";
+import { TransCreatePanel } from "./web/accting/transcreatepanel.js";
 
 const metadataName = "./metadata.js";
 
@@ -76,8 +80,12 @@ panelController.add(new DriverEditPanel());
 panelController.add(new DriverViewPanel());
 
 panelController.add(new AccountsListPanel());
+panelController.add(new AccountViewPanel());
 panelController.add(new AccountEditPanel());
 panelController.add(new SplitsListPanel());
+panelController.add(new LogSplitsListPanel());
+panelController.add(new TransViewPanel());
+panelController.add(new TransCreatePanel());
 
 function locationHashToMap(hash: string): Map<string, string> {
     const result = new Map();

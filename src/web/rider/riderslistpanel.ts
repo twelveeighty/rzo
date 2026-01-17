@@ -19,31 +19,23 @@
 
 import { Collection, Cfg, ServiceSource } from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
-
-import * as X from "../common.js";
 import { TOASTER } from "../toaster.js";
-
 import { IPanel, BasePanel, PanelData } from "../panel.js";
-
 import { EntityList } from "../list.js";
 
 export class RidersListPanel extends BasePanel implements IPanel {
     collection: Cfg<Collection>;
-    div: HTMLElement;
-    createBtn: HTMLButtonElement;
     list: EntityList;
 
     constructor() {
         super();
-        this.div = X.div("riders-div");
+        this.prefix = "riders";
         this.list = new EntityList(
-            X.div("riders-list-div"),
-            "ril",
+            this.qElement("-list-div"),
             "name",
             "status",
             "ridernum",
             "zone");
-        this.createBtn = X.btn("rider-create-btn");
         this.collection = new Cfg("collection");
     }
 
@@ -55,7 +47,7 @@ export class RidersListPanel extends BasePanel implements IPanel {
         this.collection.v = RZO.getCollection("riders");
         this.service.v =
             (<ServiceSource>RZO.getSource("db").ensure(ServiceSource)).service;
-        this.createBtn.addEventListener("click", (evt) => {
+        this.qButton("-create-btn").addEventListener("click", (evt) => {
             this.createRider(evt);
         });
         this.list.initialize((evt) => {
@@ -69,12 +61,12 @@ export class RidersListPanel extends BasePanel implements IPanel {
     }
 
     private onAnchorClick(evt: Event): void {
-        const target = evt.currentTarget as Element;
-        if (target && target.id && target.id.length > 4) {
+        const target = evt.currentTarget as HTMLElement;
+        const id = target.dataset["id"];
+        if (id) {
             // console.log(`clicked: ${target.id}`);
-            const _id = target.id.slice(4);
             this.controller.v.stack(
-                "rider-view-panel", new PanelData("string", _id));
+                "rider-view-panel", new PanelData("string", id));
         }
     }
 
@@ -89,21 +81,20 @@ export class RidersListPanel extends BasePanel implements IPanel {
     }
 
     async show(panelData?: PanelData): Promise<void> {
-        const nav = X.a("nav-riders-a");
+        const nav = this.qElement("nav-riders-a");
         nav.classList.add("active");
         nav.ariaCurrent = "page";
-        this.div.hidden = false;
+        this.qElement("-div").hidden = false;
         if (!PanelData.isParam("NoRefresh", panelData)) {
             this.queryList();
         }
     }
 
     hide(): void {
-        const nav = X.a("nav-riders-a");
+        const nav = this.qElement("nav-riders-a");
         nav.classList.remove("active");
         nav.ariaCurrent = "false";
-        this.div.hidden = true;
+        this.qElement("-div").hidden = true;
     }
-
 }
 

@@ -24,14 +24,10 @@ import {
     IResultSet, SideEffects, BigDecimal, Row, BizTrans
 } from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
-
 import { Txn, AccTrans } from "../../accting/acc-core.js";
-
-import * as X from "../common.js";
 import { TOASTER } from "../toaster.js";
-
 import {
-    IPanel, ViewPanel, PanelData, PanelButton
+    IPanel, ViewPanel, PanelData, PanelButton, DynElement
 } from "../panel.js";
 import { TripList } from "../trip/triplist.js";
 
@@ -56,28 +52,20 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
     tripsCollection: Cfg<Collection>;
     accBalanceCollection: Cfg<Collection>;
     tripList: TripList;
-    acctTBody: HTMLTableSectionElement;
-    createBtn: HTMLButtonElement;
+    acctbody: HTMLElement;
     createAcctsBtn: PanelButton;
     orderBtn: PanelButton;
     orderModal: Modal;
-    orderOkBtn: HTMLButtonElement;
-    orderQty: HTMLInputElement;
-    orderPaid: HTMLInputElement;
     paymentBtn: PanelButton;
     paymentModal: Modal;
-    paymentOkBtn: HTMLButtonElement;
-    paymentDate: HTMLInputElement;
-    paymentOwing: HTMLInputElement;
-    paymentRecvd: HTMLInputElement;
     arAccBal: Row | null;
     ticketAccBal: Row | null;
     rTicketAccBal: Row | null;
 
     constructor() {
-        super("rider-view-div", "rider-view-tsec", "rider-view-status-sm",
-             "rider-view-back-btn", "rider-view-edit-btn", "rider-edit-panel");
-        this.tripList = new TripList(X.div("rider-view-trips-div"), "vtl");
+        super("rider", "-view-div", "-view-tsec", "-view-back-btn",
+              "-view-edit-btn", "rider-edit-panel");
+        this.tripList = new TripList(this.qElement("-view-trips-div"));
         this.tripEntity = new Cfg("trip");
         this.accountEntity = new Cfg("account");
         this.accBalanceEntity = new Cfg("accountbalance");
@@ -86,24 +74,16 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
         this.tripRidernumField = new Cfg("tripRidernumField");
         this.tripsCollection = new Cfg("trips");
         this.accBalanceCollection = new Cfg("accountbalances");
-        this.createBtn = X.btn("rider-view-create-btn");
-        this.acctTBody = X.tsec("rider-view-acct-tsec");
-        const btnDiv = X.div("rider-acct-buttons-div");
+        this.acctbody = this.qElement("-view-acct-tsec");
+        const btnDiv = this.qElement("-acct-buttons-div");
         this.createAcctsBtn = new PanelButton(
-            btnDiv, "rider-view-createaccts-btn", "Create Accounts");
+            btnDiv, this.fqId("-view-createaccts-btn"), "Create Accounts");
         this.orderBtn = new PanelButton(
-            btnDiv, "rider-view-order-btn", "Order Tickets...");
-        this.orderModal = new Modal(X.div("rider-order-div"));
-        this.orderOkBtn = X.btn("rider-order-confirm-btn");
-        this.orderQty = X.txt("rider-order-qty-txt");
-        this.orderPaid = X.cbox("rider-order-paid-cbox");
+            btnDiv, this.fqId("-view-order-btn"), "Order Tickets...");
         this.paymentBtn = new PanelButton(
-            btnDiv, "rider-view-payment-btn", "Process Payment...");
-        this.paymentModal = new Modal(X.div("rider-payment-div"));
-        this.paymentOkBtn = X.btn("rider-payment-confirm-btn");
-        this.paymentDate = X.txt("rider-payment-posted-txt");
-        this.paymentOwing = X.txt("rider-payment-owing-txt");
-        this.paymentRecvd = X.txt("rider-payment-recvd-txt");
+            btnDiv, this.fqId("-view-payment-btn"), "Process Payment...");
+        this.orderModal = new Modal(this.qElement("-order-div"));
+        this.paymentModal = new Modal(this.qElement("-payment-div"));
         this.arAccBal = null;
         this.ticketAccBal = null;
         this.rTicketAccBal = null;
@@ -130,7 +110,7 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
         this.tripsCollection.v = RZO.getCollection(this.tripsCollection.name);
         this.accBalanceCollection.v =
             RZO.getCollection(this.accBalanceCollection.name);
-        this.createBtn.addEventListener("click", (evt) => {
+        this.qButton("-view-create-btn").addEventListener("click", (evt) => {
             this.onCreateTrip(evt);
         });
         this.tripList.initialize((evt) => {
@@ -143,13 +123,14 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
         this.orderBtn.initialize((evt) => {
             this.onOrder(evt);
         });
-        this.orderOkBtn.addEventListener("click", (evt) => {
+        this.qButton("-order-confirm-btn").addEventListener("click", (evt) => {
             this.onOrderOk(evt);
         });
         this.paymentBtn.initialize((evt) => {
             this.onPayment(evt);
         });
-        this.paymentOkBtn.addEventListener("click", (evt) => {
+        this.qButton("-payment-confirm-btn")
+        .addEventListener("click", (evt) => {
             this.onPaymentOk(evt);
         });
     }
@@ -174,11 +155,11 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
     }
 
     private onAnchorClick(evt: Event): void {
-        const target = evt.currentTarget as Element;
-        if (target && target.id && target.id.length > 4) {
-            const _id = target.id.slice(4);
+        const target = evt.currentTarget as HTMLElement;
+        const id = target.dataset["id"];
+        if (id) {
             this.controller.v.stack(
-                "trip-view-panel", new PanelData("string", _id));
+                "trip-view-panel", new PanelData("string", id));
         }
     }
 
@@ -340,9 +321,10 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
 
     private onOrderOk(evt: Event): void {
         this.orderModal.hide();
-        const qty = this.orderQty.value;
+        const qty = this.qInput("-order-qty-txt").value;
         if (qty) {
-            this.processTicketOrder(qty, this.orderPaid.checked)
+            this.processTicketOrder(qty,
+                                    this.qInput("-order-paid-cbox").checked)
             .then(() => {
                 this.queryAccting();
             })
@@ -384,10 +366,12 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
                 .op("_id", "=", this.arAccBal.get("_id"));
             this.accBalanceCollection.v.query(CONTEXT.c, new Query([], filter))
             .then((resultSet) => {
-                this.paymentDate.value = (new Date()).toISOString().slice(0, 10);
+                this.qInput("-payment-posted-txt").value =
+                    (new Date()).toISOString().slice(0, 10);
                 resultSet.next();
-                this.paymentOwing.value = resultSet.getString("balance");
-                this.paymentRecvd.value = "";
+                this.qInput("-payment-owing-txt").value =
+                    resultSet.getString("balance");
+                this.qInput("-payment-recvd-txt").value = "";
                 this.paymentModal.show();
             })
             .catch((err) => {
@@ -398,8 +382,8 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
 
     private onPaymentOk(evt: Event): void {
         this.paymentModal.hide();
-        const posted = this.paymentDate.value;
-        const payment = this.paymentRecvd.value;
+        const posted = this.qInput("-payment-posted-txt").value;
+        const payment = this.qInput("-payment-recvd-txt").value;
         if (posted && payment) {
             if (this.state && this.arAccBal) {
                 const amount = new BigDecimal(payment);
@@ -456,15 +440,15 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
                 (row) => row.getString("account").startsWith(
                     ACC_RTICKET_PREFIX)) || null;
             if (this.arAccBal && this.ticketAccBal && this.rTicketAccBal) {
-                X.addRowText(
-                    this.acctTBody, "Available Tickets",
-                    this.ticketAccBal.getString("balance"));
-                X.addRowText(
-                    this.acctTBody, "Reserved Tickets",
-                    this.rTicketAccBal.getString("balance"));
-                X.addRowText(
-                    this.acctTBody, "Balance owing",
-                    this.arAccBal.getString("balance"));
+                this.addTableRowText(
+                    this.acctbody, "Available Tickets",
+                    this.ticketAccBal.get("balance"), "asText", "text-end");
+                this.addTableRowText(
+                    this.acctbody, "Reserved Tickets",
+                    this.rTicketAccBal.get("balance"), "asText", "text-end");
+                this.addTableRowText(
+                    this.acctbody, "Balance owing",
+                    this.arAccBal.get("balance"), "asText", "text-end");
                 this.createAcctsBtn.hide();
                 this.orderBtn.show();
                 this.paymentBtn.show();
@@ -473,8 +457,8 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
                     "ERROR: Missing one of the expected account balances");
             }
         } else {
-            X.addRowText(
-                this.acctTBody, "NOTE",
+            this.addTableRowText(
+                this.acctbody, "NOTE",
                 "Accounts not yet set up for this rider");
             this.createAcctsBtn.show();
             this.createAcctsBtn.enabled = true;
@@ -484,7 +468,7 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
     }
 
     private queryAccting(): void {
-        this.acctTBody.innerHTML = "";
+        this.acctbody.innerHTML = "";
         this.arAccBal = null;
         this.ticketAccBal = null;
         this.rTicketAccBal = null;
@@ -501,29 +485,31 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
     }
 
     protected stateToUI(state: State): void {
-        this.tableTBody.innerHTML = "";
-        X.addRowText(this.tableTBody, "Rider", state.asString("name"));
-        X.addRowText(this.tableTBody, "Rider Num", state.asString("ridernum"));
-        X.addRowText(this.tableTBody, "Status", state.asString("status"));
-        X.addRowText(this.tableTBody, "Zone", state.asString("zone"));
-        X.addRowElement(this.tableTBody, "Address",
-                    X.addressMapAnchor(state.asString("address1"),
-                                      state.asString("maplink")));
-        X.addRowText(this.tableTBody, "Address2", state.asString("address2"));
-        X.addRowText(this.tableTBody, "City", state.asString("city"));
-        X.addRowText(this.tableTBody, "Prov/State", state.asString("stateprov"));
-        X.addRowText(this.tableTBody, "Zip", state.asString("postalcode"));
-        X.addRowText(this.tableTBody, state.asString("phone1label"),
-                     state.asString("phone1"));
-        X.addRowText(this.tableTBody, state.asString("phone2label"),
-                     state.asString("phone2"));
-        X.addRowText(this.tableTBody, state.asString("phone3label"),
-                     state.asString("phone3"));
-        X.addRowText(this.tableTBody, "Comments", state.asString("comments"),
-                           X.asHTML);
-        X.addRowText(this.tableTBody, "Trip Comments",
-                     state.asString("tripinfo"), X.asHTML);
-        this.statusElement.innerText = `${state.id} / ${state.rev}`;
+        this.tbody.innerHTML = "";
+        this.addRowText("Rider", state.asString("name"));
+        this.addRowText("Rider Num", state.asString("ridernum"));
+        this.addRowText("Status", state.asString("status"));
+        this.addRowText("Zone", state.asString("zone"));
+        this.addTableRowElement(
+            this.tbody, "Address",
+            this.addressMapAnchor(state.asString("address1"),
+                                  state.asString("maplink")));
+        this.addRowText("Address2", state.asString("address2"));
+        this.addRowText("City", state.asString("city"));
+        this.addRowText("Prov/State", state.asString("stateprov"));
+        this.addRowText("Zip", state.asString("postalcode"));
+        this.addRowText(state.asString("phone1label"),
+                        state.asString("phone1"));
+        this.addRowText(state.asString("phone2label"),
+                        state.asString("phone2"));
+        this.addRowText(state.asString("phone3label"),
+                        state.asString("phone3"));
+        this.addRowText("Comments", state.asString("comments"), "asHTML");
+        this.addRowText("Trip Comments", state.asString("tripinfo"), "asHTML");
+        this.addTableRowElement(this.tbody, "DB Id",
+            new DynElement({ tag: "samp", text: state.id }).asElement());
+        this.addTableRowElement(this.tbody, "DB Version",
+            new DynElement({ tag: "samp", text: state.rev }).asElement());
         this.queryTrips();
         this.queryAccting();
     }

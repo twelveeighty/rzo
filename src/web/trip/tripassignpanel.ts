@@ -21,56 +21,38 @@ import {
     Field, State, Filter, Query, Collection, Cfg, Row, ServiceSource
 } from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
-
-import * as X from "../common.js";
 import { TOASTER } from "../toaster.js";
-
-import {
-    IPanel, BasePanel, PanelData, AttributeJoiner
-} from "../panel.js";
+import { IPanel, BasePanel, PanelData } from "../panel.js";
+import { EntityList } from "../list.js";
 
 export class TripAssignPanel extends BasePanel implements IPanel {
     collection: Cfg<Collection>;
     appointmentTsField: Cfg<Field>;
     drivernumField: Cfg<Field>;
-
-    div: HTMLElement;
-    nameElement: HTMLElement;
-    statusElement: HTMLElement;
-    driverElement: HTMLElement;
-
-    driversDiv: HTMLElement;
-
-    backBtn: HTMLButtonElement;
-    unassignBtn: HTMLButtonElement;
-
     row: Row | null;
     state: State | null;
     dateTimeFormat: Intl.DateTimeFormat;
-    abortController: AbortController | null;
+    list: EntityList;
 
     constructor() {
         super();
-
-        this.div = X.div("trip-assign-div");
-        this.nameElement = X.heading("trip-assign-name-heading");
-        this.statusElement = X.p("trip-assign-status-p");
-        this.driverElement = X.p("trip-assign-driver-p");
-        this.driversDiv = X.div("trip-assign-drivers-div");
-        this.backBtn = X.btn("trip-assign-back-btn");
-        this.unassignBtn = X.btn("trip-assign-unassign-btn");
-
+        this.prefix = "trip-assign";
         this.collection = new Cfg("collection");
         this.appointmentTsField = new Cfg("appointmentTsField");
         this.drivernumField = new Cfg("drivernumField");
-
         this.row = null;
         this.state = null;
-        this.abortController = null;
-
         this.dateTimeFormat = new Intl.DateTimeFormat(
             "en",
             { dateStyle: "full", timeStyle: "short" }
+        );
+        this.list = new EntityList(
+            this.qElement("-drivers-div"),
+            "name",
+            "status",
+            "drivernum",
+            "phone1",
+            ["drivernum"]
         );
     }
 
@@ -85,12 +67,15 @@ export class TripAssignPanel extends BasePanel implements IPanel {
             (<ServiceSource>RZO.getSource("db").ensure(ServiceSource)).service;
         this.appointmentTsField.v = RZO.getField("trip.appointmentts");
         this.drivernumField.v = RZO.getField("trip.drivernum");
-
-        this.backBtn.addEventListener("click", (evt) => {
+        this.qButton("-back-btn").addEventListener("click", (evt) => {
             this.onBack(evt);
         });
-        this.unassignBtn.addEventListener("click", (evt) => {
+        this.qButton("-unassign-btn").addEventListener("click", (evt) => {
             this.onUnassign(evt);
+        });
+        this.list.initialize((evt) => {
+            evt.preventDefault();
+            this.onAnchorClick(evt);
         });
     }
 
@@ -118,18 +103,18 @@ export class TripAssignPanel extends BasePanel implements IPanel {
     }
 
     private onAnchorClick(evt: Event): void {
-        const target = evt.currentTarget as Element;
-        if (target && target.id && target.id.length > 4) {
-            const driver_num = target.id.slice(4);
-            if (this.state && this.row) {
-                const trip_id = this.row.getString("_id");
+        if (this.state && this.row) {
+            const tripId = this.row.get("_id");
+            const target = evt.currentTarget as HTMLElement;
+            const driverNum = target.dataset["drivernum"];
+            if (driverNum) {
                 this.drivernumField.v.setValue(
-                    this.state, driver_num, CONTEXT.c)
+                    this.state, driverNum, CONTEXT.c)
                 .then(() => {
                     this.entity.v.put(
                         this.service.v, this.state!, CONTEXT.c)
                     .then((row) => {
-                        this.controller.v.pop(new PanelData("string", trip_id));
+                        this.controller.v.pop(new PanelData("string", tripId));
                     })
                     .catch((err) => {
                         TOASTER.error(`ERROR: ${err}`);
@@ -142,97 +127,42 @@ export class TripAssignPanel extends BasePanel implements IPanel {
         }
     }
 
-    private queryDrivers(): void {
+    private async queryDrivers(): Promise<void> {
         try {
-            if (this.abortController !== null) {
-                this.abortController.abort();
-                this.abortController = null;
-            }
             const query = new Query(
                 [],
                 new Filter().op("status", "=", "ACTIVE")
             );
-            this.collection.v.query(CONTEXT.c, query)
-            .then((resultSet) => {
-                this.abortController = new AbortController();
-                this.driversDiv.innerHTML = "";
-                while (resultSet.next()) {
-                    const anchor = document.createElement("a");
-                    anchor.href = "#";
-                    anchor.className =
-                        "list-group-item list-group-item-action";
-                    anchor.id = `adl-${resultSet.getString("drivernum")}`;
-
-                    anchor.addEventListener("click", (evt) => {
-                        evt.preventDefault();
-                        this.onAnchorClick(evt);
-                    },
-                    { signal: this.abortController.signal }
-                    );
-
-                    this.driversDiv.appendChild(anchor);
-
-                    const headingDiv = document.createElement("div");
-                    headingDiv.className =
-                        "d-flex w-100 justify-content-between";
-
-                    anchor.appendChild(headingDiv);
-
-                    const heading5 = document.createElement("h5");
-                    heading5.className = "mb-1";
-                    heading5.innerText = resultSet.getString("name");
-
-                    const statusSmall = document.createElement("small");
-                    statusSmall.innerText = resultSet.getString("status");
-
-                    headingDiv.appendChild(heading5);
-                    headingDiv.appendChild(statusSmall);
-
-                    const para = document.createElement("p");
-                    para.className = "mb-1";
-                    para.innerText = resultSet.getString("drivernum");
-
-                    anchor.appendChild(para);
-
-                    const phone1 = document.createElement("small");
-                    phone1.innerText = resultSet.getString("phone1");
-
-                    anchor.appendChild(phone1);
-                }
-            })
-            .catch((err) => {
-                TOASTER.error(`ERROR: ${err}`);
-            });
+            const rs = await this.collection.v.query(CONTEXT.c, query);
+            this.list.render(rs);
         } catch (err) {
-            console.error(err);
+            TOASTER.exc(err);
         }
     }
 
     private rowToUI(row: Row): void {
-        this.nameElement.innerText = row.getString("ridername");
-
-        const appointmentts = this.dateTimeFormat.format(
-            this.appointmentTsField.v.transform(row.get("appointmentts")));
-
-        const returnts = row.get("returnts") ?
+        this.qElement("-name-heading").innerText = row.getString("ridername");
+        const tbody = this.qElement("-tsec");
+        tbody.innerHTML = "";
+        this.addTableRowText(tbody, "Trip", row.get("tripnum"));
+        this.addTableRowText(tbody, "Description", row.get("odescription"));
+        this.addTableRowText(tbody, "Type", row.get("triptype"));
+        this.addTableRowText(
+            tbody, "Pickup",
             this.dateTimeFormat.format(
-                this.appointmentTsField.v.transform(row.get("returnts"))) :
-            "";
-
-        this.statusElement.innerText = new AttributeJoiner().
-            add("", `${row.getString("tripnum")} (${row.getString("status")})`).
-            add("", row.getString("odescription")).
-            add("", row.getString("triptype")).
-            add("Pickup", appointmentts).
-            add("Return", returnts).
-            toText();
-
+                this.appointmentTsField.v.transform(row.get("appointmentts"))));
+        this.addTableRowText(
+            tbody, "Return",
+            row.isNotNullish("returnts") ?
+                this.dateTimeFormat.format(
+                    this.appointmentTsField.v.transform(row.get("returnts"))) :
+                "");
         if (!row.isNull("drivername")) {
-            this.driverElement.innerText = row.getString("drivername");
-            this.unassignBtn.disabled = false;
+            this.qElement("-driver-p").innerText = row.getString("drivername");
+            this.qButton("-unassign-btn").disabled = false;
         } else {
-            this.driverElement.innerText = "(none)";
-            this.unassignBtn.disabled = true;
+            this.qElement("-driver-p").innerText = "(none)";
+            this.qButton("-unassign-btn").disabled = true;
         }
     }
 
@@ -245,12 +175,12 @@ export class TripAssignPanel extends BasePanel implements IPanel {
             this.entity.v.loadState(this.row, this.state);
             this.rowToUI(this.row);
             this.queryDrivers();
-            this.div.hidden = false;
+            this.qElement("-div").hidden = false;
         }
     }
 
     hide(): void {
-        this.div.hidden = true;
+        this.qElement("-div").hidden = true;
     }
 }
 

@@ -19,21 +19,17 @@
 
 import { ServiceSource } from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
-
 import { TOASTER } from "../toaster.js";
-import * as X from "../common.js";
 import {
     IPanel, FormPanel, Control, PanelMessage, PanelData
 } from "../panel.js";
 
 export class RiderEditPanel extends FormPanel implements IPanel {
-    overrideCheckbox: HTMLInputElement;
-    maplinkManual: HTMLInputElement;
     maplinkManualControl: Control;
 
     constructor() {
-        super("rider-edit-div", "rider-edit-form",
-              "rider-edit-btn", "rider-edit-cancel-btn",
+        super("rider", "-edit-div", "-edit-form",
+              "-edit-btn", "-edit-cancel-btn",
               [
                   new Control("rider-ridernum-txt", "ridernum", true),
                   new Control("rider-zone-sel", "zone", true),
@@ -53,10 +49,8 @@ export class RiderEditPanel extends FormPanel implements IPanel {
                   new Control("rider-comments-tarea", "comments", false),
                   new Control("rider-tripinfo-tarea", "tripinfo", false),
               ]);
-
-        this.overrideCheckbox = X.cbox("rider-override-cbox");
-        this.maplinkManual = this.getInput("rider-maplinkmanual-txt");
-        this.maplinkManualControl = this.getControl("rider-maplinkmanual-txt");
+        this.maplinkManualControl = this.getControl("-maplinkmanual-txt");
+        this.prefix = "rider";
     }
 
     get id(): string {
@@ -64,7 +58,7 @@ export class RiderEditPanel extends FormPanel implements IPanel {
     }
 
     private loadZones(): void {
-        const riderZoneSel = this.getSelect("rider-zone-sel");
+        const riderZoneSel = this.getSelect("-zone-sel");
         this.service.v.queryCollection(
             this.logger, CONTEXT.c, RZO.getCollection("zones"))
         .then((resultSet) => {
@@ -86,8 +80,7 @@ export class RiderEditPanel extends FormPanel implements IPanel {
 
     protected initUI(): void {
         super.initUI();
-
-        this.overrideCheckbox.addEventListener("change", (evt) => {
+        this.qInput("-override-cbox").addEventListener("change", (evt) => {
             this.toggleOverride();
         });
     }
@@ -119,13 +112,14 @@ export class RiderEditPanel extends FormPanel implements IPanel {
     }
 
     private toggleOverride(): void {
-        if (!this.overrideCheckbox.checked) {
+        if (!this.qInput("-override-cbox").checked) {
             // This is the same as clearing the manual field
-            this.maplinkManual.value = "";
+            this.qInput("-maplinkmanual-txt").value = "";
             this.onBlur(this.maplinkManualControl);
         }
         this.toggleReadOnly(
-            this.maplinkManual, !this.overrideCheckbox.checked);
+            this.qInput("-maplinkmanual-txt"),
+            !this.qInput("-override-cbox").checked);
     }
 
     protected fromState(): void {
@@ -133,8 +127,8 @@ export class RiderEditPanel extends FormPanel implements IPanel {
 
         if (this.state) {
             const isChecked = !!this.state.value("maplinkmanual");
-            this.overrideCheckbox.checked = isChecked;
-            this.toggleReadOnly(this.maplinkManual, !isChecked);
+            this.qInput("-override-cbox").checked = isChecked;
+            this.toggleReadOnly(this.qInput("-maplinkmanual-txt"), !isChecked);
         }
     }
 }

@@ -167,7 +167,11 @@ export class Logger {
 }
 
 type FilterLogical = "and" | "or";
-type FilterOperator = "=" | "!=" | "<>" | ">" | "<" | ">=" | "<=" | "<@" |
+/*
+ * The ?=, ?> and ?< FilterOperators resolve to:
+ *        X ?= Y :  (X is null OR X = Y)
+ */
+type FilterOperator = "=" | "!=" | "<>" | ">" | "<" | ">=" | "<=" | "<@" | "~" |
                       "?=" | "?>" | "?<";
 
 /*
@@ -183,7 +187,7 @@ export class Filter {
     private _sealedWhere?: string;
 
     static NullNotNullRegex = /^(\w+)([~!])$/;
-    static ComparisonRegex = /^([\w\.]+)([<>=!@?]+)(.+)/;
+    static ComparisonRegex = /^([\w\.]+)([<>=!@?~]+)(.+)/;
     static QueryAnd      = "q=a&w=";
     static QueryOr       = "q=o&w=";
 
@@ -439,6 +443,10 @@ export class Row {
         } else {
             this._row = {};
         }
+    }
+
+    copy(): Row {
+        return this.copyWithout();
     }
 
     copyWithout(exclude?: string[]): Row {

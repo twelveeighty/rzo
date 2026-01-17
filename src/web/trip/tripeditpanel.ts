@@ -23,7 +23,6 @@ import { RZO, CONTEXT } from "../../base/configuration.js";
 import { Trip } from "../../scheduler/trip.js";
 
 import { TOASTER } from "../toaster.js";
-import * as X from "../common.js";
 import {
     IPanel, FormPanel, Control, LocalDateControl, PanelMessage, PanelData
 } from "../panel.js";
@@ -34,14 +33,11 @@ export class TripEditPanel extends FormPanel implements IPanel {
     doverrideCheckbox: HTMLInputElement;
     omaplinkManual: HTMLInputElement;
     dmaplinkManual: HTMLInputElement;
-    riderNum: HTMLInputElement;
-    riderName: HTMLInputElement;
-    reverseBtn: HTMLButtonElement;
     riderEntity: Cfg<Entity>;
 
     constructor() {
-        super("trip-edit-div", "trip-edit-form",
-              "trip-edit-btn", "trip-edit-cancel-btn", [
+        super("trip", "-edit-div", "-edit-form",
+              "-edit-btn", "-edit-cancel-btn", [
                   new Control("trip-tripnum-txt", "tripnum", false),
                   new Control("trip-zone-sel", "zone", true),
                   new Control("trip-status-sel", "status", true),
@@ -67,18 +63,14 @@ export class TripEditPanel extends FormPanel implements IPanel {
                   new Control("trip-dstateprov-txt", "dstateprov", false),
                   new Control("trip-dpostalcode-txt", "dpostalcode", false),
                   new Control("trip-dmaplink-txt", "dmaplink", false),
-                  new Control("trip-dmaplinkmanual-txt", "dmaplinkmanual",
-                              false),
+                  new Control("trip-dmaplinkmanual-txt", "dmaplinkmanual", false),
                   new Control("trip-dphone-txt", "dphone", true),
                   new Control("trip-comments-tarea", "comments", false),
               ]);
-        this.ooverrideCheckbox = X.cbox("trip-ooverride-cbox");
-        this.doverrideCheckbox = X.cbox("trip-doverride-cbox");
-        this.omaplinkManual = this.getInput("trip-omaplinkmanual-txt");
-        this.dmaplinkManual = this.getInput("trip-dmaplinkmanual-txt");
-        this.riderNum = X.txt("trip-ridernum-txt");
-        this.riderName = X.txt("trip-ridername-txt");
-        this.reverseBtn = X.btn("trip-edit-reverse-btn");
+        this.ooverrideCheckbox = this.qInput("-ooverride-cbox");
+        this.doverrideCheckbox = this.qInput("-doverride-cbox");
+        this.omaplinkManual = this.getInput("-omaplinkmanual-txt");
+        this.dmaplinkManual = this.getInput("-dmaplinkmanual-txt");
         this.riderEntity = new Cfg("riderEntity");
     }
 
@@ -87,7 +79,7 @@ export class TripEditPanel extends FormPanel implements IPanel {
     }
 
     private loadZones(): void {
-        const tripZoneSel = this.getSelect("trip-zone-sel");
+        const tripZoneSel = this.getSelect("-zone-sel");
         this.service.v.queryCollection(
             this.logger, CONTEXT.c, RZO.getCollection("zones"))
         .then((resultSet) => {
@@ -115,7 +107,7 @@ export class TripEditPanel extends FormPanel implements IPanel {
         this.doverrideCheckbox.addEventListener("change", (evt) => {
             this.toggleDestOverride();
         });
-        this.reverseBtn.addEventListener("click", (evt) => {
+        this.qButton("-edit-reverse-btn").addEventListener("click", (evt) => {
             this.onReverse(evt);
         });
     }
@@ -157,8 +149,8 @@ export class TripEditPanel extends FormPanel implements IPanel {
     private async showRider(ridernum_id: string): Promise<void> {
         const riderState = await this.riderEntity.v.load(
             this.service.v, CONTEXT.c, ridernum_id);
-        this.riderNum.value = riderState.value("ridernum");
-        this.riderName.value = riderState.value("name");
+        this.qInput("-ridernum-txt").value = riderState.value("ridernum");
+        this.qInput("-ridername-txt").value = riderState.value("name");
     }
 
     private toggleOriginOverride(): void {
@@ -199,13 +191,18 @@ export class TripEditPanel extends FormPanel implements IPanel {
     private async processSubmit(evt: Event): Promise<void> {
         if (this.state) {
             const bizTrans = new BizTrans();
-            const entry = this.state.hasId() ?
+            if (this.state.hasId()) {
                 await this.entity.v.putBizTrans(
-                    bizTrans, this.service.v, this.state, CONTEXT.c) :
+                    bizTrans, this.service.v, this.state, CONTEXT.c);
+            } else {
                 await this.entity.v.postBizTrans(
                     bizTrans, this.service.v, this.state, CONTEXT.c);
+            }
             await this.service.v.processBizTrans(this.logger, bizTrans);
-            this.controller.v.pop(new PanelData("Row", entry.row));
+            this.controller.v.show(
+                "rider-view-panel",
+                new PanelData("string", this.state.asString("ridernum_id")));
+            // this.controller.v.pop(new PanelData("Row", entry.row));
         }
     }
 

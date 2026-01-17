@@ -2,15 +2,15 @@
   "dependencies": {
     "@popperjs/core": "^2.11.8",
     "@types/bootstrap": "^5.2.10",
-    "@types/node": "^24.0.0",
-    "@types/pg-cursor": "^2.7.0",
-    "@types/pg-pool": "^2.0.3",
+    "@types/node": "^24.10.1",
+    "@types/pg-cursor": "^2.7.2",
+    "@types/pg-pool": "^2.0.6",
     "md5": "^2.3.0",
-    "pg": "^8.10.0",
-    "pg-cursor": "^2.9.0",
-    "pg-pool": "^3.6.0"
+    "pg": "^8.16.3",
+    "pg-cursor": "^2.15.3",
+    "pg-pool": "^3.10.1"
   },
   "devDependencies": {
-    "@types/md5": "^2.3.2"
+    "@types/md5": "^2.3.6"
   }
 }

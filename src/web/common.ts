@@ -117,6 +117,15 @@ export function a(id: string): HTMLAnchorElement {
     }
 }
 
+export function createBtn(): HTMLButtonElement {
+    const element = document.createElement("button");
+    if (element instanceof HTMLButtonElement) {
+        return element as HTMLButtonElement;
+    } else {
+        throw new Error(`Created 'button' Element is not an HTMLButtonElement`);
+    }
+}
+
 export function btn(id: string): HTMLButtonElement {
     const element = checkElement("btn", id);
     if (element instanceof HTMLButtonElement) {
@@ -154,7 +163,16 @@ export function pre(id: string): HTMLPreElement {
     return element as HTMLPreElement;
 }
 
-export function txt(id: string): HTMLInputElement {
+export function createInput(): HTMLInputElement {
+    const element = document.createElement("input");
+    if (element instanceof HTMLInputElement) {
+        return element as HTMLInputElement;
+    } else {
+        throw new Error(`Created 'input' Element is not an HTMLInputElement`);
+    }
+}
+
+export function input(id: string): HTMLInputElement {
     const element = checkElement("txt", id);
     if (element instanceof HTMLInputElement) {
         return element as HTMLInputElement;
@@ -222,7 +240,7 @@ export function path(id: string): SVGPathElement {
     }
 }
 
-export function addRowElement(tbody: HTMLTableSectionElement, header: string,
+export function addRowElement(tbody: HTMLElement, header: string,
                               value: HTMLElement): void {
     if (value) {
         const tr = document.createElement("tr");
@@ -241,14 +259,17 @@ export type RenderAs = "asHTML" | "asText";
 export const asHTML: RenderAs = "asHTML";
 export const asText: RenderAs = "asText";
 
-export function addRowText(tbody: HTMLTableSectionElement, header: string,
-                   value: string, renderAs?: RenderAs): void {
+export function addRowText(tbody: HTMLElement, header: string, value: string,
+                           renderAs?: RenderAs, tdClass?: string): void {
     if (value) {
         const tr = document.createElement("tr");
         const th = document.createElement("th");
         th.setAttribute("scope", "row");
         th.innerText = header;
         const td = document.createElement("td");
+        if (tdClass) {
+            td.className = tdClass;
+        }
         if (renderAs == "asHTML") {
             td.innerHTML = value;
         } else {
@@ -258,22 +279,6 @@ export function addRowText(tbody: HTMLTableSectionElement, header: string,
         tr.appendChild(td);
         tbody.appendChild(tr);
     }
-}
-
-export function addSVG(td: HTMLElement, useRef: string): void {
-    const svgElement = document.createElementNS(
-        "http://www.w3.org/2000/svg", "svg");
-    svgElement.setAttribute("class", "bi me-1");
-    svgElement.setAttribute("width", "32px");
-    svgElement.setAttribute("height", "32px");
-    svgElement.setAttribute("role", "img");
-    svgElement.setAttribute("aria-label", useRef);
-
-    const useElement = document.createElementNS(
-        "http://www.w3.org/2000/svg", "use");
-    useElement.setAttribute("href", `#${useRef}`);
-    svgElement.appendChild(useElement);
-    td.appendChild(svgElement);
 }
 
 export function mapLink(input: string): string {
@@ -292,18 +297,5 @@ export function addressMapAnchor(address: string,
     anchor.setAttribute("target", "new");
     anchor.innerText = address;
     return anchor;
-}
-
-export function ensure(obj: unknown, targetType: Function): unknown {
-    if (!(obj instanceof targetType)) {
-        throw new Error(
-            `${obj} is not an instance of ${targetType.name}`);
-    }
-    return obj;
-}
-
-export function ensureDate(obj: unknown): Date {
-    ensure(obj, Date);
-    return obj as Date;
 }
 

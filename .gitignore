@@ -2,6 +2,7 @@ build
 debug
 node_modules
 mx
+deps
 
 # Logs
 logs

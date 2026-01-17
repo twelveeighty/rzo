@@ -25,18 +25,25 @@ CFG="$VAR/conf"
 CLT="$CFG/client"
 SRC="../src"
 MODS="../node_modules"
+BOOTSTRAP="../deps/bootstrap-5.3.8-dist"
 
 if [[ $(basename "$(pwd)") = "build" ]]; then
     echo "In build directory"
 
-    node "config-merge.js" \
-        "$CFG/entities.json" \
-        "$CFG/accting.json" \
-        "$CFG/personas.json" \
-        "$CLT/collections.json" \
-        "$CLT/accting-collections.json" \
-        "$CLT/config.json" \
-        > "./metadata.js"
+    configs=(
+        "$CFG/entities.json"
+        "$CFG/accting.json"
+        "$CFG/personas.json"
+        "$CLT/collections.json"
+        "$CLT/accting-collections.json"
+        "$CLT/config.json"
+        )
+
+    for i in ${!configs[@]}; do
+      echo "> ${configs[$i]}"
+    done
+
+    node "config-merge.js" ${configs[@]} > "./metadata.js"
 
     cp -v "$VAR/img/rzo.png" .
     cp -v "$SRC/index.html" .
@@ -44,6 +51,13 @@ if [[ $(basename "$(pwd)") = "build" ]]; then
 
     mkdir -p ./popperjs/
     rsync -av "$MODS/@popperjs/core/dist/esm/" ./popperjs/
+
+    mkdir -p ./bootstrap/css
+    cp -v "$BOOTSTRAP/css/bootstrap.min."* ./bootstrap/css/
+
+    mkdir -p ./bootstrap/js
+    cp -v "$BOOTSTRAP/js/bootstrap.esm.min."* ./bootstrap/js/
+
 else
     echo "This script must be run from the 'build' directory"
 fi

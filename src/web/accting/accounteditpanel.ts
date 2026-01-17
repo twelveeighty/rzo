@@ -29,8 +29,8 @@ export class AccountEditPanel extends FormPanel implements IPanel {
     balanceEntity: Cfg<Entity>;
 
     constructor() {
-        super("account-edit-div", "account-edit-form",
-              "account-edit-btn", "account-edit-cancel-btn", [
+        super("account", "-edit-div", "-edit-form",
+              "-edit-btn", "-edit-cancel-btn", [
                   new Control("account-name-txt", "name", true),
                   new Control("account-ledger-sel", "ledger", true),
                   new Control("account-holding-sel", "holding", true),
@@ -49,11 +49,11 @@ export class AccountEditPanel extends FormPanel implements IPanel {
     }
 
     private loadLedgers(): void {
-        this.loadDropdown("account-ledger-sel", "ledgers", "name");
+        this.loadDropdown("-ledger-sel", "ledgers", "name");
     }
 
     private loadHoldings(): void {
-        this.loadDropdown("account-holding-sel", "holdings", "name");
+        this.loadDropdown("-holding-sel", "holdings", "name");
     }
 
     async onMessage(message: PanelMessage): Promise<void> {

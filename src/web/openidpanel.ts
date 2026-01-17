@@ -17,19 +17,12 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import * as X from "./common.js";
-
 import { IPanel, BasePanel, PanelData } from "./panel.js";
 
 export class OpenIDPanel extends BasePanel implements IPanel {
-    div: HTMLElement;
-    errorPre: HTMLPreElement;
-
     constructor() {
         super();
-
-        this.div = X.div("openid-div");
-        this.errorPre = X.pre("openid-error-pre");
+        this.prefix = "openid";
     }
 
     get id(): string {
@@ -41,15 +34,16 @@ export class OpenIDPanel extends BasePanel implements IPanel {
 
     async show(panelData?: PanelData): Promise<void> {
         if (PanelData.typeOf(panelData) == "string") {
-            this.errorPre.innerText = PanelData.stringOf(panelData);
+            this.qElement("-error-pre").innerText =
+                PanelData.stringOf(panelData);
         } else {
-            this.errorPre.innerText = "";
+            this.qElement("-error-pre").innerText = "";
         }
-        this.div.hidden = false;
+        this.qElement("-div").hidden = false;
     }
 
     hide(): void {
-        this.div.hidden = true;
+        this.qElement("-div").hidden = true;
     }
 }
 

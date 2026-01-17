@@ -19,20 +19,18 @@
 
 import { IResultSet, Field, Cfg } from "../../base/core.js";
 import { RZO } from "../../base/configuration.js";
-
+import { DynElement } from "../panel.js";
 
 export class TripList {
     abortController: AbortController | null;
     parentDiv: HTMLElement;
-    listIdPrefix: string;
     appointmentTsField: Cfg<Field>;
     listener: EventListener | null;
     dateFormat: Intl.DateTimeFormat;
     timeFormat: Intl.DateTimeFormat;
 
-    constructor(parentDiv: HTMLElement, listIdPrefix: string) {
+    constructor(parentDiv: HTMLElement) {
         this.parentDiv = parentDiv;
-        this.listIdPrefix = listIdPrefix;
         this.abortController = null;
         this.listener = null;
         this.appointmentTsField = new Cfg("appointmentTsField");
@@ -84,87 +82,93 @@ export class TripList {
         const endOfToday = new Date();
         endOfToday.setHours(23, 59, 59);
         while (resultSet.next()) {
-            const anchor = document.createElement("a");
-            anchor.href = "#";
             const appointmentts =
                 this.appointmentTsField.v.transform(
                     resultSet.get("appointmentts"));
             const colorCode = this.colorCoding(
                 startOfToday, endOfToday, appointmentts, resultSet);
-            anchor.className =
-                `list-group-item list-group-item-action ${colorCode}`;
-            anchor.id = `${this.listIdPrefix}-${resultSet.getString("_id")}`;
-
-            anchor.addEventListener(
-                "click",
-                this.listener!,
-                { signal: this.abortController.signal }
-            );
-
-            this.parentDiv.appendChild(anchor);
-
-            const headingDiv = document.createElement("div");
-            headingDiv.className =
-                "d-flex w-100 justify-content-between";
-
-            anchor.appendChild(headingDiv);
-
-            const heading5 = document.createElement("h5");
-            heading5.className = "mb-1";
-            heading5.innerText =
-                `${resultSet.getString("ridername")} - ` +
-                `${resultSet.getString("odescription")}`;
-
             const returnts = resultSet.get("returnts") ?
                     this.appointmentTsField.v.transform(
                         resultSet.get("returnts")) :
                     null;
-
             const appointmentDateTime =
                 `${this.dateFormat.format(appointmentts)} ` +
                 `${this.timeFormat.format(appointmentts)}`;
             const returnTime = returnts ?
                 ` - ${this.timeFormat.format(returnts)}` : "";
-
-            const statusSmall = document.createElement("small");
-
-            const tripTypeSVG = document.createElementNS(
-                "http://www.w3.org/2000/svg", "svg");
-            tripTypeSVG.setAttribute("class", "bi me-1");
-            tripTypeSVG.setAttribute("width", "2em");
-            tripTypeSVG.setAttribute("height", "1em");
-            tripTypeSVG.setAttribute("role", "img");
-            tripTypeSVG.setAttribute("aria-label", "TripType");
-
-            const tripTypeUse = document.createElementNS(
-                "http://www.w3.org/2000/svg", "use");
             const tripType = resultSet.getString("triptype");
-            if (tripType == "ONEWAY") {
-                tripTypeUse.setAttribute("href", "#oneway-sym");
-            } else {
-                tripTypeUse.setAttribute("href", "#return-sym");
-            }
-            tripTypeSVG.appendChild(tripTypeUse);
-            statusSmall.appendChild(tripTypeSVG);
-            statusSmall.appendChild(document.createTextNode(
-                `  ${tripType} - ` +
-                `${appointmentDateTime}${returnTime}`
-            ));
-
-            headingDiv.appendChild(heading5);
-            headingDiv.appendChild(statusSmall);
-
-            const para = document.createElement("p");
-            para.className = "mb-1";
-            const contents = `${resultSet.getString("daddress1")}<br/>` +
-                `${resultSet.getString("comments")}`;
-            para.innerHTML = contents;
-            anchor.appendChild(para);
-
-            const regionSmall = document.createElement("small");
-            regionSmall.innerText = resultSet.getString("zone");
-
-            anchor.appendChild(regionSmall);
+            const anchor = new DynElement(
+            {
+                tag: "a",
+                href: "#",
+                css: `list-group-item list-group-item-action ${colorCode}`,
+                data: {
+                    id: resultSet.get("_id")
+                }
+            })
+            .addOptionalListener(
+                "click", this.listener, this.abortController
+            )
+            .append(// headingDiv
+                new DynElement(
+                {
+                    tag: "div",
+                    css: "d-flex w-100 justify-content-between"
+                })
+                .append(// heading5
+                    new DynElement(
+                    {
+                        tag: "h5",
+                        css: "mb-1",
+                        text: `${resultSet.get("ridername")} - ` +
+                                 `${resultSet.get("odescription")}`
+                    })
+                )
+                .append(// statusSmall
+                    new DynElement( { tag: "small" })
+                    .append(// tripTypeSVG
+                        new DynElement(
+                        {
+                            ns: "http://www.w3.org/2000/svg",
+                            tag: "svg"
+                        })
+                        .addAttribute("class", "bi me-1")
+                        .addAttribute("width", "2em")
+                        .addAttribute("height", "1em")
+                        .addAttribute("role", "img")
+                        .addAttribute("aria-label", "TripType")
+                        .append(// tripTypeUse
+                            new DynElement(
+                            {
+                                ns: "http://www.w3.org/2000/svg",
+                                tag: "use",
+                                href: tripType == "ONEWAY" ?
+                                    "#oneway-sym" : "#return-sym"
+                            })
+                        )
+                    )
+                    .appendTextNode(
+                        `  ${tripType} - ${appointmentDateTime}${returnTime}`
+                    )
+                )
+            )
+            .append(// para
+                new DynElement(
+                {
+                    tag: "p",
+                    css: "mb-1",
+                    html: `${resultSet.get("daddress1")}<br/>` +
+                             `${resultSet.getString("comments")}`
+                })
+            )
+            .append(// regionSmall
+                new DynElement(
+                {
+                    tag: "small",
+                    text: resultSet.get("zone")
+                })
+            );
+            this.parentDiv.appendChild(anchor.asElement());
         }
     }
 }

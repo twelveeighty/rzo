@@ -509,7 +509,6 @@ export class Trip extends Entity {
         const awayTrip = this.rowToState(trip);
         const returnTrip = await this.cloneTrip(context, service, trip);
         this.reverseTrip(returnTrip);
-
         // Set the asynchronous values on both away and return trips
         const sideEffects: Promise<SideEffects>[] = [];
         sideEffects.push(this.setValue(
@@ -519,16 +518,20 @@ export class Trip extends Entity {
         sideEffects.push(this.setValue(
             returnTrip, "appointmentts", trip.get("returnts"), context));
         await Promise.all(sideEffects);
-
-        /* Save both away and return trips. This is different behavior from
-         * `cloneTrip`, which returns a not yet saved trip's state.
-         * We do not await the awayTrip's `put`, since we want to at least try
-         * to get the returnTrip saved.
-         */
-        this.put(service, awayTrip, context);
-        const returnTripRow = await this.post(service, returnTrip, context);
-        return this.rowToState(returnTripRow);
+        const bizTrans = new BizTrans();
+        await this.putBizTrans(bizTrans, service, awayTrip, context);
+        await this.postBizTrans(bizTrans, service, returnTrip, context);
+        const resultTrans = await service.processBizTrans(
+            this.logger, bizTrans);
+        // Fish out the 'POST' return trip
+        const returnTripEntry = resultTrans.entries.find(
+            (entry) => entry.action == "post" &&
+                entry.entity.name == this.name);
+        if (returnTripEntry) {
+            return this.rowToState(returnTripEntry.row);
+        } else {
+            throw new TripError("BizTrans did not produce a return trip");
+        }
     }
-
 }
 

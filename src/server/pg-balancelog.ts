@@ -134,7 +134,7 @@ export class BalanceLogWorker extends DaemonWorker {
 
     private maxDayPeriod(now: Date): number {
         const maxDayDate = new Date(now.valueOf() - this.yesterdayMillis);
-        return LocalDay.fromUtc(maxDayDate).getPeriod();
+        return LocalDay.fromDate(maxDayDate).getPeriod();
     }
 
     private schedule(): void {
@@ -357,7 +357,7 @@ export class BalanceLogWorker extends DaemonWorker {
                 /* The start period may be before dayPeriod, so check the first
                  * row for its posted date.
                  */
-                let period = LocalDay.fromUtc(
+                let period = LocalDay.fromDate(
                     Row.dataToRow(rows[0]).get("posted")).getPeriod();
                 let splitPeriod = period;
                 if (startUtc == null) {
@@ -373,7 +373,7 @@ export class BalanceLogWorker extends DaemonWorker {
                     const page = new MemResultSet(rows);
                     while (page.next()) {
                         const splitRow = page.getRow();
-                        splitPeriod = LocalDay.fromUtc(
+                        splitPeriod = LocalDay.fromDate(
                             splitRow.get("posted")).getPeriod();
                         if (period != splitPeriod) {
                             const nextPeriod =

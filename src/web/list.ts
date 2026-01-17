@@ -17,7 +17,8 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { IResultSet } from "../base/core.js";
+import { IResultSet, Row } from "../base/core.js";
+import { DynElement } from "./panel.js";
 
 export class EntityList {
     /*
@@ -29,68 +30,91 @@ export class EntityList {
      */
     abortController: AbortController | null;
     parentDiv: HTMLElement;
-    idPrefix: string;
     listener: EventListener | null;
     titleField: string;
     shortField: string;
     descField: string;
     minorField: string;
+    dataFields: string[];
 
-    constructor(parentDiv: HTMLElement, idPrefix: string, titleField: string,
-               shortField: string, descField: string, minorField: string) {
+    constructor(parentDiv: HTMLElement, titleField: string, shortField: string,
+                descField: string, minorField: string, dataFields?: string[]) {
         this.parentDiv = parentDiv;
-        this.idPrefix = idPrefix;
         this.titleField = titleField;
         this.shortField = shortField;
         this.descField = descField;
         this.minorField = minorField;
         this.listener = null;
         this.abortController = null;
+        this.dataFields = dataFields || [];
     }
 
     initialize(listener: EventListener): void {
         this.listener = listener;
     }
 
-    render(resultSet: IResultSet): void {
+    render(rs: IResultSet): void {
         if (this.abortController !== null) {
             this.abortController.abort();
         }
         this.parentDiv.innerHTML = "";
         if (this.listener) {
             this.abortController = new AbortController();
+        } else {
+            this.abortController = null;
         }
-        while (resultSet.next()) {
-            const anchor = document.createElement("a");
-            anchor.href = "#";
-            anchor.className =
-                "list-group-item list-group-item-action";
-            anchor.id = `${this.idPrefix}-${resultSet.getString("_id")}`;
-            if (this.listener && this.abortController) {
-                anchor.addEventListener(
-                    "click",
-                    this.listener,
-                    { signal: this.abortController.signal });
+        while (rs.next()) {
+            const dataRow = new Row ( { id: rs.get("_id") } );
+            for (const field of this.dataFields) {
+                dataRow.add(field, rs.get(field));
             }
-            this.parentDiv.appendChild(anchor);
-            const headingDiv = document.createElement("div");
-            headingDiv.className =
-                "d-flex w-100 justify-content-between";
-            anchor.appendChild(headingDiv);
-            const titleElement = document.createElement("h5");
-            titleElement.className = "mb-1";
-            titleElement.innerText = resultSet.getString(this.titleField);
-            const shortElement = document.createElement("small");
-            shortElement.innerText = resultSet.getString(this.shortField);
-            headingDiv.appendChild(titleElement);
-            headingDiv.appendChild(shortElement);
-            const descElement = document.createElement("p");
-            descElement.className = "mb-1";
-            descElement.innerText = resultSet.getString(this.descField);
-            anchor.appendChild(descElement);
-            const minorElement = document.createElement("small");
-            minorElement.innerText = resultSet.getString(this.minorField);
-            anchor.appendChild(minorElement);
+            const anchor = new DynElement(
+            {
+                tag: "a",
+                href: "#",
+                css: "list-group-item list-group-item-action",
+                data: dataRow.raw()
+            })
+            .append(// headingDiv
+              new DynElement(
+                  {
+                      tag: "div",
+                      css: "d-flex w-100 justify-content-between"
+                  })
+                  .append(// titleElement
+                      new DynElement(
+                      {
+                          tag: "h5",
+                          css: "mb-1",
+                          text: rs.get(this.titleField)
+                      })
+                  )
+                  .append(// shortElement
+                      new DynElement(
+                      {
+                          tag: "small",
+                          text: rs.get(this.shortField)
+                      })
+                  )
+            )
+            .append(// descElement
+              new DynElement(
+                  {
+                      tag: "p",
+                      css: "mb-1",
+                      text: rs.get(this.descField)
+                  })
+            )
+            .append(// minorElement
+              new DynElement(
+                  {
+                      tag: "small",
+                      text: rs.get(this.minorField)
+                  })
+            );
+            anchor.addOptionalListener(
+                "click", this.listener, this.abortController);
+            this.parentDiv.appendChild(anchor.asElement());
         }
     }
 }

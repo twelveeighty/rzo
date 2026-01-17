@@ -48,6 +48,21 @@
         "apiVersion": "v1",
         "kind": "Collection",
         "metadata": {
+            "name": "accountscache"
+        },
+        "spec": {
+            "type": "base.collection.MaterializedCollection",
+            "entity": "account",
+            "source": "db",
+            "via": "query",
+            "fields": [ "*" ],
+            "orderBy": [ { "field": "name", "order": "asc" } ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Collection",
+        "metadata": {
             "name": "accountbalances"
         },
         "spec": {
@@ -86,6 +101,21 @@
             "via": "query",
             "fields": [ "*" ],
             "orderBy": [ { "field": "splitnum", "order": "asc" } ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Collection",
+        "metadata": {
+            "name": "balancelogs"
+        },
+        "spec": {
+            "type": "Collection",
+            "entity": "balancelog",
+            "source": "db",
+            "via": "query",
+            "fields": [ "*" ],
+            "orderBy": [ { "field": "period", "order": "asc" } ]
         }
     }
 ]

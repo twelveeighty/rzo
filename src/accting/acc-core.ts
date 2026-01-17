@@ -61,10 +61,21 @@ export class LocalDay {
         return `${asStr.slice(0, 4)}-${asStr.slice(4, 6)}-${asStr.slice(6)}`;
     }
 
-    static fromUtc(ts: Date): LocalDay {
+    static fromDate(ts: Date): LocalDay {
         const cpy = new Date(ts);
         cpy.setHours(0, 0, 0, 0);
         return new LocalDay(cpy.getFullYear(), cpy.getMonth()+1, cpy.getDate());
+    }
+
+    /* This converts from the confusing <input type="date" ../> valueAsDate()
+     * return value. That element's valueAsDate() returns the selected date to
+     * midnight *in UTC* for the selected month/day/year.
+     */
+    static fromUtc(ts: Date): LocalDay {
+        const cpy = new Date(ts);
+        cpy.setUTCHours(0, 0, 0, 0);
+        return new LocalDay(
+            cpy.getUTCFullYear(), cpy.getUTCMonth()+1, cpy.getUTCDate());
     }
 
     constructor(year: number, month12: number, day: number) {
@@ -436,8 +447,8 @@ export class AccSplit extends ImmutableEntity {
             /* If this transaction is posted before the current local day's
              * midnight we invalidate the balancelogs.
              */
-            const todayPeriod = LocalDay.fromUtc(new Date()).getPeriod();
-            const postedPeriod = LocalDay.fromUtc(
+            const todayPeriod = LocalDay.fromDate(new Date()).getPeriod();
+            const postedPeriod = LocalDay.fromDate(
                 row.get("posted")).getPeriod();
             if (postedPeriod < todayPeriod) {
                 if (this.logger.willLog("Debug")) {

@@ -1,7 +1,7 @@
 /*
     RZO - A Business Application Framework
 
-    Copyright (C) 2024 Frank Vanderham
+    Copyright (C) 2024-2025 Frank Vanderham
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -18,84 +18,40 @@
 */
 
 import { Modal } from "bootstrap";
-
 import {
     Entity, Field, Cfg, Row, ServiceSource
 } from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
-
 import { Trip } from "../../scheduler/trip.js";
-
-import * as X from "../common.js";
 import { TOASTER } from "../toaster.js";
-
 import {
-    IPanel, BasePanel, PanelMessage, PanelData, AttributeJoiner, PanelButton
+    IPanel, BasePanel, PanelMessage, PanelData, DynElement, PanelButton
 } from "../panel.js";
 
 
 export class TripViewPanel extends BasePanel implements IPanel {
     appointmentTsField: Cfg<Field>;
-
     div: HTMLElement;
-    statusElement: HTMLElement;
-
-    driverElement: HTMLElement;
-
-    pickupTBody: HTMLTableSectionElement;
-    destTBody: HTMLTableSectionElement;
     acceptButton: PanelButton;
     assignButton: PanelButton;
     editButton: PanelButton;
     cloneButton: PanelButton;
     splitButton: PanelButton;
-    backBtn: HTMLButtonElement;
-
     confirmModal: Modal;
-    tripAcceptConfirmBtn: HTMLButtonElement;
-
     splitModal: Modal;
-    tripSplitConfirmBtn: HTMLButtonElement;
-
     driverEntity: Cfg<Entity>;
     driver: Row | null;
     row: Row | null;
-
     dateFormat: Intl.DateTimeFormat;
     timeFormat: Intl.DateTimeFormat;
     dirty: boolean;
+    driverAbortController: AbortController | null;
+    driverClickedListener: EventListener;
 
     constructor() {
         super();
-
-        this.div = X.div("trip-view-div");
-        this.statusElement = X.htmlElement("trip-view-status-sm");
-
-        this.driverElement = X.p("trip-view-driver-p");
-        this.pickupTBody = X.tsec("trip-view-pickup-table-tsec");
-        this.destTBody = X.tsec("trip-view-dest-table-tsec");
-
-        const parentDiv = X.div("trip-view-buttons-div");
-        this.acceptButton = new PanelButton(
-            parentDiv, "trip-view-accept-btn", "Accept ride...");
-        this.assignButton = new PanelButton(
-            parentDiv, "trip-view-assign-btn", "Assign Driver...");
-        this.editButton = new PanelButton(
-            parentDiv, "trip-view-edit-btn", "Edit Trip...");
-        this.splitButton = new PanelButton(
-            parentDiv, "trip-view-split-btn", "Split Return Trip");
-        this.cloneButton = new PanelButton(
-            parentDiv, "trip-view-clone-btn", "Create Similar...");
-        this.backBtn = X.btn("trip-view-back-btn");
-
-        this.confirmModal = new Modal(X.div("trip-confirm-accept-div"));
-        this.tripAcceptConfirmBtn = X.btn("trip-accept-confirm-btn");
-
-        this.splitModal = new Modal(X.div("trip-confirm-split-div"));
-        this.tripSplitConfirmBtn = X.btn("trip-split-confirm-btn");
-
+        this.prefix = "trip";
         this.appointmentTsField = new Cfg("appointmentTsField");
-
         this.driverEntity = new Cfg("driver");
         this.driver = null;
         this.row = null;
@@ -109,7 +65,23 @@ export class TripViewPanel extends BasePanel implements IPanel {
             { hour12: true, hourCycle: "h12", hour: "numeric",
               minute: "2-digit", formatMatcher: "basic" }
         );
+        this.div = this.qElement("-view-div");
+        const parentDiv = this.qElement("-view-buttons-div");
+        this.acceptButton = new PanelButton(
+            parentDiv, this.fqId("-view-accept-btn"), "Accept ride...");
+        this.assignButton = new PanelButton(
+            parentDiv, this.fqId("-view-assign-btn"), "Assign Driver...");
+        this.editButton = new PanelButton(
+            parentDiv, this.fqId("-view-edit-btn"), "Edit Trip...");
+        this.splitButton = new PanelButton(
+            parentDiv, this.fqId("-view-split-btn"), "Split Return Trip");
+        this.cloneButton = new PanelButton(
+            parentDiv, this.fqId("-view-clone-btn"), "Create Similar...");
+        this.confirmModal = new Modal(this.qElement("-confirm-accept-div"));
+        this.splitModal = new Modal(this.qElement("-confirm-split-div"));
         this.dirty = false;
+        this.driverAbortController = null;
+        this.driverClickedListener = (evt) => { this.onDriverClicked(evt); };
     }
 
     get id(): string {
@@ -171,11 +143,9 @@ export class TripViewPanel extends BasePanel implements IPanel {
         super.initialize();
         this.entity.v = RZO.getEntity("trip");
         this.driverEntity.v = RZO.getEntity("driver");
-
         this.service.v =
             (<ServiceSource>RZO.getSource("db").ensure(ServiceSource)).service;
         this.appointmentTsField.v = RZO.getField("trip.appointmentts");
-
         this.acceptButton.initialize((evt) => {
             this.onAccept(evt);
         });
@@ -191,13 +161,13 @@ export class TripViewPanel extends BasePanel implements IPanel {
         this.cloneButton.initialize((evt) => {
             this.onClone(evt);
         });
-        this.backBtn.addEventListener("click", (evt) => {
+        this.qButton("-view-back-btn").addEventListener("click", (evt) => {
             this.onBack(evt);
         });
-        this.tripSplitConfirmBtn.addEventListener("click", (evt) => {
+        this.qButton("-split-confirm-btn").addEventListener("click", (evt) => {
             this.onSplitConfirm(evt);
         });
-        this.tripAcceptConfirmBtn.addEventListener("click", (evt) => {
+        this.qButton("-accept-confirm-btn").addEventListener("click", (evt) => {
             this.onAcceptConfirm(evt);
         });
     }
@@ -217,6 +187,17 @@ export class TripViewPanel extends BasePanel implements IPanel {
         }
     }
 
+    private onDriverClicked(evt: Event): void {
+        evt.preventDefault();
+        const target = evt.currentTarget as HTMLElement;
+        const id = target.dataset["id"];
+        if (id) {
+            this.controller.v.stack(
+                "driver-view-panel",
+                new PanelData("string", id));
+        }
+    }
+
     private onAcceptConfirm(evt: Event): void {
         this.confirmModal.hide();
         if (this.row && this.driver) {
@@ -233,11 +214,11 @@ export class TripViewPanel extends BasePanel implements IPanel {
                     this.rowToUI(this.row);
                 })
                 .catch((err) => {
-                    TOASTER.error(`ERROR: ${err}`);
+                    TOASTER.exc(err);
                 });
             })
             .catch((err) => {
-                TOASTER.error(`ERROR: ${err}`);
+                TOASTER.exc(err);
             });
         }
     }
@@ -291,51 +272,80 @@ export class TripViewPanel extends BasePanel implements IPanel {
         }
     }
 
-    private addDirections(tBody: HTMLTableSectionElement, row: Row): void {
+    private addDirections(tBody: HTMLElement, row: Row): void {
         const driverHome = this.driver != null ?
-            X.mapLink(this.driver.get("maplink")) : null;
-        const riderOrigin = X.mapLink(row.get("omaplink"));
-        const riderDest = X.mapLink(row.get("dmaplink"));
-        const tr = document.createElement("tr");
-        const th = document.createElement("th");
-        th.setAttribute("scope", "row");
-        th.innerText = "Directions";
-
-        const td = document.createElement("td");
-
-        const dirAnchor = document.createElement("a");
-        dirAnchor.setAttribute(
-            "href", `https://maps.google.com/maps?saddr=${riderOrigin}&` +
-                `daddr=${riderDest}`);
-        dirAnchor.setAttribute("target", "new");
-        X.addSVG(dirAnchor, "trip-directions-sym");
-        dirAnchor.appendChild(new Text("Trip Directions"));
-
-        let threeWayAnchor;
+            this.mapLink(this.driver.get("maplink")) : null;
+        const riderOrigin = this.mapLink(row.get("omaplink"));
+        const riderDest = this.mapLink(row.get("dmaplink"));
+        const td = new DynElement({ tag: "td" })
+        .append(
+            new DynElement(
+            {
+                tag: "a",
+                href: `https://maps.google.com/maps?saddr=${riderOrigin}&` +
+                        `daddr=${riderDest}`
+            })
+            .addAttribute("target", "new")
+            .appendSVG("trip-directions-sym")
+            .appendTextNode("Trip Directions")
+        );
         if (driverHome) {
-            threeWayAnchor = document.createElement("a");
-            threeWayAnchor.setAttribute(
-                "href", `https://maps.google.com/maps?saddr=${driverHome}&` +
-                    `daddr=${riderOrigin}+to:${riderDest}`);
-            threeWayAnchor.setAttribute("target", "new");
-            X.addSVG(threeWayAnchor, "trip-3way-sym");
-            threeWayAnchor.appendChild(new Text("Three-way directions"));
+            td.appendTextNode("\u00A0\u00A0")
+            .append(
+                new DynElement(
+                {
+                    tag: "a",
+                    href: `https://maps.google.com/maps?saddr=${driverHome}&` +
+                             `daddr=${riderOrigin}+to:${riderDest}`
+                })
+                .addAttribute("target", "new")
+                .appendSVG("trip-3way-sym")
+                .appendTextNode("Three-way directions")
+            );
         }
+        const tr = new DynElement({ tag: "tr" })
+        .append(
+            new DynElement(
+            {
+                tag: "th",
+                text: "Directions"
+            })
+            .addAttribute("scope", "row")
+        )
+        .append(td);
+        tBody.appendChild(tr.asElement());
+    }
 
-        td.appendChild(dirAnchor);
-        if (threeWayAnchor) {
-            td.appendChild(new Text("\u00A0\u00A0"));
-            td.appendChild(threeWayAnchor);
+    private setDriverInfo(row: Row): void {
+        const driverTbody = this.qElement("-view-driver-table-tsec");
+        if (this.driverAbortController != null) {
+            this.driverAbortController.abort();
         }
-
-        tr.appendChild(th);
-        tr.appendChild(td);
-        tBody.appendChild(tr);
+        driverTbody.innerHTML = "";
+        const driverAnchor = new DynElement(
+            {
+                tag: "a",
+                href: "#",
+                text: row.get("drivernum"),
+                data: {
+                    id: row.get("drivernum_id")
+                }
+            }
+        )
+        .addListener(
+            "click", this.driverClickedListener, this.driverAbortController);
+        this.addTableRowElement(
+            driverTbody, "Driver", driverAnchor.asElement());
+        this.addTableRowText(driverTbody, "Name", row.get("drivername"));
     }
 
     private rowToUI(row: Row): void {
-        this.pickupTBody.innerHTML = "";
-        this.destTBody.innerHTML = "";
+        const pickup = this.qElement("-view-pickup-table-tsec");
+        const dest = this.qElement("-view-dest-table-tsec");
+        const status = this.qElement("-view-status-tsec");
+        pickup.innerHTML = "";
+        dest.innerHTML = "";
+        status.innerHTML = "";
         const appointmentts =
             this.appointmentTsField.v.transform(row.get("appointmentts"));
         const returnts = row.get("returnts") ?
@@ -346,50 +356,39 @@ export class TripViewPanel extends BasePanel implements IPanel {
             `${this.timeFormat.format(appointmentts)}`;
         const returnTime =
             returnts ? ` - ${this.timeFormat.format(returnts)}` : "";
-
-        X.addRowText(this.pickupTBody, "Rider", row.getString("ridername"));
-        X.addRowText(this.pickupTBody, "Date/Time",
+        this.addTableRowText(pickup, "Rider", row.get("ridername"));
+        this.addTableRowText(pickup, "Date/Time",
                     `${appointmentDateTime}${returnTime}`);
-        X.addRowText(this.pickupTBody, "Type", row.getString("triptype"));
-        X.addRowText(this.pickupTBody, "Zone", row.getString("zone"));
-        X.addRowText(this.pickupTBody, "From",
-                        row.getString("odescription"));
-        X.addRowElement(this.pickupTBody, "Address",
-                    X.addressMapAnchor(row.getString("oaddress1"),
-                                       row.getString("omaplink")));
-        X.addRowText(this.pickupTBody, "Address2", row.getString("oaddress2"));
-        X.addRowText(this.pickupTBody, "City", row.getString("ocity"));
-        X.addRowText(this.pickupTBody, "Prov/State",
-                    row.getString("ostateprov"));
-        X.addRowText(this.pickupTBody, "Zip", row.getString("opostalcode"));
-        X.addRowText(this.pickupTBody, "Phone", row.getString("ophone"));
-        X.addRowText(this.pickupTBody, "Notes", row.getString("comments"),
-                           X.asHTML);
-
-        X.addRowText(this.destTBody, "To", row.getString("ddescription"));
-        X.addRowElement(this.destTBody, "Address",
-                    X.addressMapAnchor(row.getString("daddress1"),
-                                       row.getString("dmaplink")));
-        X.addRowText(this.destTBody, "Address2", row.getString("daddress2"));
-        X.addRowText(this.destTBody, "City", row.getString("dcity"));
-        X.addRowText(this.destTBody, "Prov/State",
-                    row.getString("dstateprov"));
-        X.addRowText(this.destTBody, "Zip", row.getString("dpostalcode"));
-        X.addRowText(this.destTBody, "Phone", row.getString("dphone"));
-        this.addDirections(this.destTBody, row);
-
-        if (!row.isNull("drivername")) {
-            this.driverElement.innerText = row.getString("drivername");
-        } else {
-            this.driverElement.innerText = "(none)";
-        }
-
-        this.statusElement.innerText = new AttributeJoiner().
-            add("", `${row.getString("status")} `).
-            add("", `${row.getString("tripnum")}`).
-            add("", `${row.getString("_id")} / ${row.getString("_rev")}`).
-            toText();
-
+        this.addTableRowText(pickup, "Type", row.get("triptype"));
+        this.addTableRowText(pickup, "Zone", row.get("zone"));
+        this.addTableRowText(pickup, "From", row.get("odescription"));
+        this.addTableRowElement(
+            pickup, "Address",
+            this.addressMapAnchor(row.get("oaddress1"), row.get("omaplink")));
+        this.addTableRowText(pickup, "Address2", row.get("oaddress2"));
+        this.addTableRowText(pickup, "City", row.get("ocity"));
+        this.addTableRowText(pickup, "Prov/State",
+                    row.get("ostateprov"));
+        this.addTableRowText(pickup, "Zip", row.get("opostalcode"));
+        this.addTableRowText(pickup, "Phone", row.get("ophone"));
+        this.addTableRowText(pickup, "Notes", row.get("comments"), "asHTML");
+        this.addTableRowText(dest, "To", row.get("ddescription"));
+        this.addTableRowElement(
+            dest, "Address",
+            this.addressMapAnchor(row.get("daddress1"), row.get("dmaplink")));
+        this.addTableRowText(dest, "Address2", row.get("daddress2"));
+        this.addTableRowText(dest, "City", row.get("dcity"));
+        this.addTableRowText(dest, "Prov/State", row.get("dstateprov"));
+        this.addTableRowText(dest, "Zip", row.get("dpostalcode"));
+        this.addTableRowText(dest, "Phone", row.get("dphone"));
+        this.addDirections(dest, row);
+        this.setDriverInfo(row);
+        this.addTableRowText(status, "Status", row.get("status"));
+        this.addTableRowText(status, "Trip No", row.get("tripnum"));
+        this.addTableRowElement(status, "DB Id",
+            new DynElement({ tag: "samp", text: row.get("_id") }).asElement());
+        this.addTableRowElement(status, "DB Version",
+            new DynElement({ tag: "samp", text: row.get("_rev") }).asElement());
         const persona = CONTEXT.c.persona.name;
         if (persona == "drivers") {
             this.acceptButton.enabled = row.isNull("drivername");

@@ -19,24 +19,16 @@
 
 import { Cfg, IAuthenticator, Row } from "../base/core.js";
 import { RZO, CONTEXT } from "../base/configuration.js";
-
-import * as X from "./common.js";
 import { TOASTER } from "./toaster.js";
-
 import { IPanel, BasePanel, PanelData } from "./panel.js";
 
 export class CreateLoginPanel extends BasePanel implements IPanel {
-    div: HTMLElement;
-    form: HTMLFormElement;
-    passwordTxt: HTMLInputElement;
     authenticator: Cfg<IAuthenticator>;
 
     constructor() {
         super();
+        this.prefix = "create-password";
         this.authenticator = new Cfg("auth");
-        this.div = X.div("create-password-div");
-        this.form = X.form("create-password-form");
-        this.passwordTxt = X.txt("create-password-txt");
     }
 
     get id(): string {
@@ -45,18 +37,15 @@ export class CreateLoginPanel extends BasePanel implements IPanel {
 
     initialize(): void {
         super.initialize();
-
         this.authenticator.v = RZO.getAuthenticator("auth").service;
-
-        this.form.addEventListener("submit", (evt) => {
+        this.qForm("-form").addEventListener("submit", (evt) => {
             evt.preventDefault();
             this.onSubmit(evt);
         });
     }
 
     private onSubmit(evt: Event): void {
-        const row = new Row(
-            { "password": this.passwordTxt.value });
+        const row = new Row({ "password": this.qInput("-txt").value });
         this.authenticator.v.createLogin(this.logger, CONTEXT.c, row)
         .then(() => {
             CONTEXT.reset();
@@ -69,31 +58,22 @@ export class CreateLoginPanel extends BasePanel implements IPanel {
     }
 
     async show(panelData?: PanelData): Promise<void> {
-        this.passwordTxt.value = "";
-        this.div.hidden = false;
+        this.qInput("-txt").value = "";
+        this.qElement("-div").hidden = false;
     }
 
     hide(): void {
-        this.div.hidden = true;
+        this.qElement("-div").hidden = true;
     }
 }
 
 export class OneTimeLoginPanel extends BasePanel implements IPanel {
-    div: HTMLElement;
-    form: HTMLFormElement;
-    userTxt: HTMLInputElement;
-    emailTxt: HTMLInputElement;
-    codeTxt: HTMLInputElement;
     authenticator: Cfg<IAuthenticator>;
 
     constructor() {
         super();
+        this.prefix = "onetimelogin";
         this.authenticator = new Cfg("auth");
-        this.div = X.div("onetimelogin-div");
-        this.form = X.form("onetimelogin-form");
-        this.emailTxt = X.txt("onetimelogin-email-txt");
-        this.userTxt = X.txt("onetimelogin-user-txt");
-        this.codeTxt = X.txt("onetimelogin-code-txt");
     }
 
     get id(): string {
@@ -103,8 +83,7 @@ export class OneTimeLoginPanel extends BasePanel implements IPanel {
     initialize(): void {
         super.initialize();
         this.authenticator.v = RZO.getAuthenticator("auth").service;
-
-        this.form.addEventListener("submit", (evt) => {
+        this.qForm("-form").addEventListener("submit", (evt) => {
             evt.preventDefault();
             this.onSubmit(evt);
         });
@@ -112,7 +91,11 @@ export class OneTimeLoginPanel extends BasePanel implements IPanel {
 
     private onSubmit(evt: Event): void {
         const row = new Row(
-            { "username": this.userTxt.value, "code": this.codeTxt.value });
+            {
+                "username": this.qInput("-user-txt").value,
+                "code": this.qInput("-code-txt").value
+            }
+        );
         this.authenticator.v.oneTimeLogin(this.logger, row)
         .then((context) => {
             CONTEXT.c = context;
@@ -126,32 +109,25 @@ export class OneTimeLoginPanel extends BasePanel implements IPanel {
 
     async show(panelData?: PanelData): Promise<void> {
         if (panelData) {
-            const row = panelData.row;
-            this.userTxt.value = row.get("user");
-            this.emailTxt.value = row.get("email");
+            const row = PanelData.rowOf(panelData);
+            this.qInput("-user-txt").value = row.get("user");
+            this.qInput("-email-txt").value = row.get("email");
         }
-        this.div.hidden = false;
+        this.qElement("-div").hidden = false;
     }
 
     hide(): void {
-        this.div.hidden = true;
+        this.qElement("-div").hidden = true;
     }
 }
 
 export class PasswordResetPanel extends BasePanel implements IPanel {
-    div: HTMLElement;
-    form: HTMLFormElement;
-    goBackBtn: HTMLButtonElement;
-    userTxt: HTMLInputElement;
     authenticator: Cfg<IAuthenticator>;
 
     constructor() {
         super();
+        this.prefix = "password-reset";
         this.authenticator = new Cfg("auth");
-        this.div = X.div("password-reset-div");
-        this.form = X.form("password-reset-form");
-        this.userTxt = X.txt("password-reset-user-txt");
-        this.goBackBtn = X.btn("password-reset-back-btn");
     }
 
     get id(): string {
@@ -162,12 +138,11 @@ export class PasswordResetPanel extends BasePanel implements IPanel {
         super.initialize();
         this.authenticator.setIf(
             "Authenticator ", RZO.getAuthenticator("auth").service);
-
-        this.form.addEventListener("submit", (evt) => {
+        this.qForm("-form").addEventListener("submit", (evt) => {
             evt.preventDefault();
             this.onSubmit(evt);
         });
-        this.goBackBtn.addEventListener("click", (evt) => {
+        this.qButton("-back-btn").addEventListener("click", (evt) => {
             this.onBack(evt);
         });
     }
@@ -177,7 +152,7 @@ export class PasswordResetPanel extends BasePanel implements IPanel {
     }
 
     private onSubmit(evt: Event): void {
-        const row = new Row({ "user": this.userTxt.value });
+        const row = new Row({ "user": this.qInput("-user-txt").value });
         this.authenticator.v.resetAuthentication(this.logger, row)
         .then((resultRow) => {
             this.controller.v.show(
@@ -190,40 +165,21 @@ export class PasswordResetPanel extends BasePanel implements IPanel {
     }
 
     async show(panelData?: PanelData): Promise<void> {
-        this.userTxt.value = "";
-        this.div.hidden = false;
+        this.qInput("-user-txt").value = "";
+        this.qElement("-div").hidden = false;
     }
 
     hide(): void {
-        this.div.hidden = true;
+        this.qElement("-div").hidden = true;
     }
 }
 
 export class LoginPanel extends BasePanel implements IPanel {
-    form: HTMLFormElement;
-    welcomeHeading: HTMLElement;
-    loginDiv: HTMLElement;
-    userTxt: HTMLInputElement;
-    passwordTxt: HTMLInputElement;
-    personOpenPath: SVGPathElement;
-    personFilledPath: SVGPathElement;
-    personCheckPath: SVGPathElement;
-    passwordResetBtn: HTMLButtonElement;
     authenticator: Cfg<IAuthenticator>;
 
     constructor() {
         super();
-
-        this.form = X.form("login-form");
-        this.welcomeHeading = X.heading("welcome-heading");
-        this.loginDiv = X.div("login-div");
-        this.userTxt = X.txt("login-user-txt");
-        this.passwordTxt = X.txt("login-password-txt");
-        this.personOpenPath = X.path("person-open-path");
-        this.personFilledPath = X.path("person-filled-path");
-        this.personCheckPath = X.path("person-check-path");
-        this.passwordResetBtn = X.btn("login-reset-btn");
-
+        this.prefix = "login";
         this.authenticator = new Cfg("auth");
     }
 
@@ -234,15 +190,14 @@ export class LoginPanel extends BasePanel implements IPanel {
     initialize(): void {
         super.initialize();
         this.authenticator.v = RZO.getAuthenticator("auth").service;
-
-        this.form.addEventListener("submit", (evt) => {
+        this.qForm("-form").addEventListener("submit", (evt) => {
             evt.preventDefault();
             this.onSubmit(evt);
         });
-        this.welcomeHeading.addEventListener("click", (evt) => {
+        this.qElement("welcome-heading").addEventListener("click", (evt) => {
             evt.preventDefault();
         });
-        this.passwordResetBtn.addEventListener("click", (evt) => {
+        this.qButton("-reset-btn").addEventListener("click", (evt) => {
             this.onResetPassword(evt);
         });
     }
@@ -253,8 +208,8 @@ export class LoginPanel extends BasePanel implements IPanel {
 
     private onSubmit(evt: Event): void {
         try {
-            const targetUsername = this.userTxt.value;
-            const targetPassword = this.passwordTxt.value;
+            const targetUsername = this.qInput("-user-txt").value;
+            const targetPassword = this.qInput("-password-txt").value;
             if (!targetUsername || !targetPassword) {
                 TOASTER.error("You must enter a valid User and Password");
                 throw new Error("No User or Password entered");
@@ -264,16 +219,13 @@ export class LoginPanel extends BasePanel implements IPanel {
             this.authenticator.v.login(this.logger, credsRow)
             .then((context) => {
                 CONTEXT.c = context;
-                this.welcomeHeading.innerText = targetUsername;
-
+                this.qElement("welcome-heading").innerText = targetUsername;
                 // Broadcast the "logged-in" message
                 this.controller.v.broadcast("logged-in");
-
                 // Switch the icon on the nav bar
-                this.personOpenPath.classList.toggle("invisible");
-                this.personFilledPath.classList.toggle("invisible");
-                this.personCheckPath.classList.toggle("invisible");
-
+                this.qSVG("person-open-path").classList.toggle("invisible");
+                this.qSVG("person-filled-path").classList.toggle("invisible");
+                this.qSVG("person-check-path").classList.toggle("invisible");
                 // Switch to the main 'Trips' panel
                 this.controller.v.show("trips-panel");
             })
@@ -287,13 +239,13 @@ export class LoginPanel extends BasePanel implements IPanel {
     }
 
     async show(panelData?: PanelData): Promise<void> {
-        this.userTxt.value = "";
-        this.passwordTxt.value = "";
-        this.loginDiv.hidden = false;
+        this.qInput("-user-txt").value = "";
+        this.qInput("-password-txt").value = "";
+        this.qElement("-div").hidden = false;
     }
 
     hide(): void {
-        this.loginDiv.hidden = true;
+        this.qElement("-div").hidden = true;
     }
 }
 

@@ -18,27 +18,18 @@
 */
 
 import { Cfg, IAuthenticator, Logger } from "../base/core.js";
-
 import { RZO, CONTEXT } from "../base/configuration.js";
-
-import * as X from "./common.js";
-
 import { TOASTER } from "./toaster.js";
-
 import {
-    PanelController, IPanel, PanelData, PanelMessage, NavMenuItem
+    PanelController, IPanel, PanelData, PanelMessage, NavMenuItem, BasePanel
 } from "./panel.js";
 
 export class NavigationPanel implements IPanel {
-    navLogout: HTMLAnchorElement;
-
     myTripsMenu: NavMenuItem;
     tripsMenu: NavMenuItem;
     ridersMenu: NavMenuItem;
     driversMenu: NavMenuItem;
     accountsMenu: NavMenuItem;
-
-    welcomeHeading: HTMLElement;
     controller: Cfg<PanelController>;
     authenticator: Cfg<IAuthenticator>;
     loggedIn: boolean;
@@ -47,16 +38,12 @@ export class NavigationPanel implements IPanel {
     constructor() {
         this.logger = new Logger("client");
         this.controller = new Cfg("controller");
-        const navList = X.ul("nav-list-ul");
-        this.myTripsMenu = new NavMenuItem(
-            navList, "nav-my-trips-a", "My Trips");
-        this.tripsMenu = new NavMenuItem(navList, "nav-trips-a", "Open Trips");
-        this.ridersMenu = new NavMenuItem(navList, "nav-riders-a", "Riders");
-        this.driversMenu = new NavMenuItem(navList, "nav-drivers-a", "Drivers");
-        this.accountsMenu = new NavMenuItem(navList, "nav-accounts-a",
-                                            "Accounts");
-        this.navLogout = X.a("nav-logout-a");
-        this.welcomeHeading = X.heading("welcome-heading");
+        const nl = BasePanel.queryElement("nav-list-ul");
+        this.myTripsMenu = new NavMenuItem(nl, "nav-my-trips-a", "My Trips");
+        this.tripsMenu = new NavMenuItem(nl, "nav-trips-a", "Open Trips");
+        this.ridersMenu = new NavMenuItem(nl, "nav-riders-a", "Riders");
+        this.driversMenu = new NavMenuItem(nl, "nav-drivers-a", "Drivers");
+        this.accountsMenu = new NavMenuItem(nl, "nav-accounts-a", "Accounts");
         this.authenticator = new Cfg("auth");
         this.loggedIn = false;
     }
@@ -105,7 +92,7 @@ export class NavigationPanel implements IPanel {
             this.authenticator.v.logout(this.logger, CONTEXT.c)
             .then(() => {
                 CONTEXT.reset();
-                this.welcomeHeading.innerText = "Drive";
+                BasePanel.queryElement("welcome-heading").innerText = "Drive";
                 this.controller.v.broadcast("logged-out");
                 this.controller.v.show("login-panel").then(() => {
                     this.myTripsMenu.hide();
@@ -144,7 +131,6 @@ export class NavigationPanel implements IPanel {
     initialize(): void {
         this.logger.configure(RZO);
         this.authenticator.v = RZO.getAuthenticator("auth").service;
-
         this.myTripsMenu.initialize((evt) => {
             evt.preventDefault();
             this.onMyTrips(evt);
@@ -165,7 +151,8 @@ export class NavigationPanel implements IPanel {
             evt.preventDefault();
             this.onAccounts(evt);
         });
-        this.navLogout.addEventListener("click", (evt) => {
+        BasePanel.queryElement("nav-logout-a")
+        .addEventListener("click", (evt) => {
             evt.preventDefault();
             this.onLogout(evt);
         });

@@ -21,12 +21,9 @@ import {
     Collection, Cfg, Field, Filter, Query, ServiceSource
 } from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
-
-import * as X from "../common.js";
 import { TOASTER } from "../toaster.js";
-
 import {
-    IPanel, BasePanel, PanelMessage, PanelData
+    IPanel, BasePanel, PanelMessage, PanelData, DynElement
 } from "../panel.js";
 import { TripList } from "./triplist.js";
 
@@ -34,44 +31,28 @@ import { TripList } from "./triplist.js";
 export class TripsListPanel extends BasePanel implements IPanel {
     collection: Cfg<Collection>;
     appointmentTsField: Cfg<Field>;
-
-    div: HTMLElement;
-    zones: HTMLSelectElement;
-    timeframes: HTMLSelectElement;
     leftBtn: HTMLButtonElement;
     rightBtn: HTMLButtonElement;
-    refreshBtn: HTMLButtonElement;
-    daterangePre: HTMLPreElement;
-
     tripList: TripList;
     dayOfMonthFormat: Intl.DateTimeFormat;
     monthFormat: Intl.DateTimeFormat;
-
     startDate: Date;
     endDate: Date | null;
 
     constructor() {
         super();
-
+        this.prefix = "trip";
         this.collection = new Cfg("collection");
         this.appointmentTsField = new Cfg("appointmentTsField");
-
-        this.div = X.div("trip-list-div");
-        this.zones = X.sel("trip-search-zone-sel");
-        this.timeframes = X.sel("trip-search-time-sel");
-        this.refreshBtn = X.btn("trip-search-refresh-btn");
-        this.leftBtn = X.btn("trip-search-left-btn");
-        this.rightBtn = X.btn("trip-search-right-btn");
-        this.daterangePre = X.pre("trip-search-daterange-pre");
-
-        this.tripList = new TripList(X.div("trip-list-trips-div"), "tpl");
-
         this.dayOfMonthFormat = new Intl.DateTimeFormat(
             "en", { day: "2-digit", formatMatcher: "basic" });
         this.monthFormat = new Intl.DateTimeFormat(
             "en", { month: "short", formatMatcher: "basic" });
         this.startDate = new Date();
         this.endDate = null;
+        this.leftBtn = this.qButton("-search-left-btn");
+        this.rightBtn = this.qButton("-search-right-btn");
+        this.tripList = new TripList(this.qElement("-list-trips-div"));
     }
 
     get id(): string {
@@ -89,29 +70,22 @@ export class TripsListPanel extends BasePanel implements IPanel {
         this.appointmentTsField.v = RZO.getField("trip.appointmentts");
         this.service.v =
             (<ServiceSource>RZO.getSource("db").ensure(ServiceSource)).service;
-
-        this.zones.addEventListener("change", (evt) => {
+        this.qSelect("-search-zone-sel").addEventListener("change", (evt) => {
             this.queryList(this.startDate, this.endDate);
         });
-
-        this.timeframes.addEventListener("change", (evt) => {
+        this.qElement("-search-time-sel").addEventListener("change", (evt) => {
             this.onTimeframeChange(evt);
         });
-
-        this.refreshBtn.addEventListener("click", (evt) => {
+        this.qButton("-search-refresh-btn").addEventListener("click", (evt) => {
             this.onRefresh();
         });
-
         this.leftBtn.disabled = true;
-
         this.leftBtn.addEventListener("click", (evt) => {
             this.onLeft(evt);
         });
-
         this.rightBtn.addEventListener("click", (evt) => {
             this.onRight(evt);
         });
-
         this.tripList.initialize((evt) => {
             evt.preventDefault();
             this.onAnchorClick(evt);
@@ -133,14 +107,15 @@ export class TripsListPanel extends BasePanel implements IPanel {
         this.service.v.queryCollection(
             this.logger, CONTEXT.c, RZO.getCollection("zones"))
         .then((resultSet) => {
-            while (this.zones.options.length > 1) {
-                this.zones.remove(1);
+            const zones = this.qSelect("-search-zone-sel");
+            while (zones.options.length > 1) {
+                zones.remove(1);
             }
             while (resultSet.next()) {
-                const opt = document.createElement("option");
-                opt.value = resultSet.getString("_id");
-                opt.text = resultSet.getString("zone");
-                this.zones.add(opt);
+                const opt = new DynElement( { tag: "option" })
+                    .addAttribute("value", resultSet.get("_id"))
+                    .addAttribute("text", resultSet.get("zone"));
+                zones.add(opt.asOptionElement());
             }
         })
         .catch((err) => {
@@ -169,7 +144,7 @@ export class TripsListPanel extends BasePanel implements IPanel {
 
     private shiftBy(direction: number): void {
         if (this.startDate && this.endDate) {
-            const selTimeframe = this.timeframes.value;
+            const selTimeframe = this.qSelect("-search-time-sel").value;
             let newDates: Date[] = [];
             switch (selTimeframe) {
                 case "ALL":
@@ -188,7 +163,7 @@ export class TripsListPanel extends BasePanel implements IPanel {
     }
 
     private onTimeframeChange(evt: Event): void {
-        switch (this.timeframes.value) {
+        switch (this.qSelect("-search-time-sel").value) {
             case "ALL":
                 this.leftBtn.disabled = true;
                 this.rightBtn.disabled = true;
@@ -217,17 +192,16 @@ export class TripsListPanel extends BasePanel implements IPanel {
     }
 
     private onAnchorClick(evt: Event): void {
-        const target = evt.currentTarget as Element;
-        if (target && target.id && target.id.length > 4) {
-            // console.log(`clicked: ${target.id}`);
-            const _id = target.id.slice(4);
+        const target = evt.currentTarget as HTMLElement;
+        const id = target.dataset["id"];
+        if (id) {
             this.controller.v.stack(
-                "trip-view-panel", new PanelData("string", _id));
+                "trip-view-panel", new PanelData("string", id));
         }
     }
 
     private applyTimeframe(fromDate: Date): Date | null {
-        const selTimeframe = this.timeframes.value;
+        const selTimeframe = this.qSelect("-search-time-sel").value;
         fromDate.setHours(0, 0, 0, 0);
         const endDate = new Date(fromDate);
         const startDayOfMonth = fromDate.getDate();
@@ -250,7 +224,7 @@ export class TripsListPanel extends BasePanel implements IPanel {
         try {
             const filter = new Filter()
                 .op("appointmentts", ">=", newStartDate.toISOString());
-            const zoneFilter = this.zones.value;
+            const zoneFilter = this.qSelect("-search-zone-sel").value;
             if (zoneFilter) {
                 filter.op("zone_id", "=", zoneFilter);
             }
@@ -260,7 +234,7 @@ export class TripsListPanel extends BasePanel implements IPanel {
             filter.isNull("drivernum_id");
             this.startDate = newStartDate;
             this.endDate = newEndDate;
-            this.daterangePre.innerText = this.shortDates(
+            this.qElement("-search-daterange-pre").innerText = this.shortDates(
                 newStartDate, newEndDate);
             const query = new Query(
                 [],
@@ -280,20 +254,20 @@ export class TripsListPanel extends BasePanel implements IPanel {
     }
 
     async show(panelData?: PanelData): Promise<void> {
-        const nav = X.a("nav-trips-a");
+        const nav = this.qElement("nav-trips-a");
         nav.classList.add("active");
         nav.ariaCurrent = "page";
-        this.div.hidden = false;
+        this.qElement("-list-div").hidden = false;
         if (!PanelData.isParam("NoRefresh", panelData)) {
             this.onRefresh();
         }
     }
 
     hide(): void {
-        const nav = X.a("nav-trips-a");
+        const nav = this.qElement("nav-trips-a");
         nav.classList.remove("active");
         nav.ariaCurrent = "false";
-        this.div.hidden = true;
+        this.qElement("-list-div").hidden = true;
     }
 }
 

@@ -44,7 +44,8 @@
         "apiVersion": "v1",
         "kind": "Worker",
         "metadata": {
-            "name": "balancelog"
+            "name": "balancelog",
+            "voided": true
         },
         "spec": {
             "type": "server.pg-balancelog.BalanceLogWorker",
@@ -310,10 +311,10 @@
                 { "name": "adapter/replicationadapter", "level": "Info" },
                 { "name": "adapter/imreplicationadapter", "level": "Info" },
                 { "name": "adapter/entityadapter", "level": "Info" },
-                { "name": "adapter/bizadapter", "level": "Debug" },
+                { "name": "adapter/bizadapter", "level": "Info" },
                 { "name": "adapter/attachadapter", "level": "Info" },
-                { "name": "balancelogger", "level": "Debug" },
-                { "name": "entity/accsplit", "level": "Debug" },
+                { "name": "balancelogger", "level": "Info" },
+                { "name": "entity/accsplit", "level": "Info" },
                 { "name": "hoover", "level": "Info" }
             ]
         }

@@ -22,11 +22,8 @@ import {
     ServiceSource
 } from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
-
-import * as X from "../common.js";
 import { TOASTER } from "../toaster.js";
-
-import { IPanel, ViewPanel, PanelData } from "../panel.js";
+import { IPanel, ViewPanel, PanelData, DynElement } from "../panel.js";
 import { TripList } from "../trip/triplist.js";
 
 
@@ -36,11 +33,9 @@ export class DriverViewPanel extends ViewPanel implements IPanel {
     tripList: TripList;
 
     constructor() {
-        super("driver-view-div", "driver-view-tsec", "driver-view-status-sm",
-              "driver-view-back-btn", "driver-view-edit-btn",
-              "driver-edit-panel");
-
-        this.tripList = new TripList(X.div("driver-view-trips-div"), "dtl");
+        super("driver", "-view-div", "-view-tsec", "-view-back-btn",
+              "-view-edit-btn", "driver-edit-panel");
+        this.tripList = new TripList(this.qElement("-view-trips-div"));
         this.tripEntity = new Cfg("tripEntity");
         this.tripsCollection = new Cfg("tripsCollection");
     }
@@ -64,11 +59,11 @@ export class DriverViewPanel extends ViewPanel implements IPanel {
     }
 
     private onAnchorClick(evt: Event): void {
-        const target = evt.currentTarget as Element;
-        if (target && target.id && target.id.length > 4) {
-            const _id = target.id.slice(4);
+        const target = evt.currentTarget as HTMLElement;
+        const id = target.dataset["id"];
+        if (id) {
             this.controller.v.stack(
-                "trip-view-panel", new PanelData("string", _id));
+                "trip-view-panel", new PanelData("string", id));
         }
     }
 
@@ -91,34 +86,34 @@ export class DriverViewPanel extends ViewPanel implements IPanel {
                 TOASTER.error(`ERROR: ${err}`);
             });
         } catch (err) {
-            console.error(err);
+            TOASTER.error(`ERROR: ${err}`);
         }
     }
 
     protected stateToUI(state: State): void {
-        this.tableTBody.innerHTML = "";
-
-        X.addRowText(this.tableTBody, "Driver", state.asString("name"));
-        X.addRowText(this.tableTBody, "Driver Num",
+        this.tbody.innerHTML = "";
+        this.addRowText("Driver", state.asString("name"));
+        this.addRowText("Driver Num",
                      state.asString("drivernum"));
-        X.addRowText(this.tableTBody, "Status", state.asString("status"));
-        X.addRowElement(this.tableTBody, "Address",
-                    X.addressMapAnchor(state.asString("address1"),
-                                      state.asString("maplink")));
-        X.addRowText(this.tableTBody, "Address2", state.asString("address2"));
-        X.addRowText(this.tableTBody, "City", state.asString("city"));
-        X.addRowText(this.tableTBody, "Prov/State", state.asString("stateprov"));
-        X.addRowText(this.tableTBody, "Zip", state.asString("postalcode"));
-
-        X.addRowText(this.tableTBody, state.asString("phone1label"),
-                     state.asString("phone1"));
-        X.addRowText(this.tableTBody, state.asString("phone2label"),
-                     state.asString("phone2"));
-        X.addRowText(this.tableTBody, state.asString("phone3label"),
-                     state.asString("phone3"));
-
-        this.statusElement.innerText = `${state.id} / ${state.rev}`;
-
+        this.addRowText("Status", state.asString("status"));
+        this.addTableRowElement(
+            this.tbody, "Address",
+            this.addressMapAnchor(state.asString("address1"),
+                                  state.asString("maplink")));
+        this.addRowText("Address2", state.asString("address2"));
+        this.addRowText("City", state.asString("city"));
+        this.addRowText("Prov/State", state.asString("stateprov"));
+        this.addRowText("Zip", state.asString("postalcode"));
+        this.addRowText(state.asString("phone1label"),
+                        state.asString("phone1"));
+        this.addRowText(state.asString("phone2label"),
+                        state.asString("phone2"));
+        this.addRowText(state.asString("phone3label"),
+                        state.asString("phone3"));
+        this.addTableRowElement(this.tbody, "DB Id",
+            new DynElement({ tag: "samp", text: state.id }).asElement());
+        this.addTableRowElement(this.tbody, "DB Version",
+            new DynElement({ tag: "samp", text: state.rev }).asElement());
         this.queryTrips();
     }
 }

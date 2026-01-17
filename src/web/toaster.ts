@@ -18,42 +18,54 @@
 */
 
 import { Toast } from "bootstrap";
-
 import { Cfg } from "../base/core.js";
-import * as X from "./common.js";
 
 export class Toaster {
     private bsToast: Cfg<Toast>;
-    private toasterMsgDiv: Cfg<HTMLElement>;
-    private toasterTimestamp: Cfg<HTMLElement>;
 
     constructor() {
         this.bsToast = new Cfg("toaster-div");
-        this.toasterMsgDiv = new Cfg("toaster-msg-div");
-        this.toasterTimestamp = new Cfg("toaster-timestamp-sm");
+    }
+
+    qElement(id: string): HTMLElement {
+        const element = document.getElementById(id);
+        if (element) {
+            return element;
+        } else {
+            throw new Error(`No such element: ${id}`);
+        }
     }
 
     initialize(): void {
-        this.bsToast.v = Toast.getOrCreateInstance(X.div(this.bsToast.name));
-        this.toasterMsgDiv.v = X.div(this.toasterMsgDiv.name);
-        this.toasterTimestamp.v = X.htmlElement(this.toasterTimestamp.name);
+        this.bsToast.v = Toast.getOrCreateInstance(
+            this.qElement(this.bsToast.name));
     }
 
-    private timestamp(): void {
-        this.toasterTimestamp.v.innerText = (new Date()).toLocaleTimeString();
+    private setTimestamp(): void {
+        this.qElement("toaster-timestamp-sm").innerText =
+            (new Date()).toLocaleTimeString();
+    }
+
+    private setMsg(msg: string): void {
+        this.qElement("toaster-msg-div").innerText = msg;
     }
 
     info(msg: string): void {
-        this.timestamp();
-        this.toasterMsgDiv.v.innerText = msg;
+        this.setTimestamp();
+        this.setMsg(msg);
         this.bsToast.v.show();
     }
 
     error(msg: string): void {
-        this.timestamp();
+        this.setTimestamp();
         console.error(msg);
-        this.toasterMsgDiv.v.innerText = msg;
+        this.setMsg(msg);
         this.bsToast.v.show();
+    }
+
+    exc(err: any): void {
+        console.error(err);
+        this.error(`ERROR: ${err}`);
     }
 }
 

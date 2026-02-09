@@ -46,8 +46,9 @@ import { AccountViewPanel } from "./web/accting/accountviewpanel.js";
 import { AccountEditPanel } from "./web/accting/accounteditpanel.js";
 import { SplitsListPanel } from "./web/accting/splitslistpanel.js";
 import { LogSplitsListPanel } from "./web/accting/logsplitslistpanel.js";
-import { TransViewPanel } from "./web/accting/transviewpanel.js";
-import { TransCreatePanel } from "./web/accting/transcreatepanel.js";
+import { DocViewPanel } from "./web/accting/transviewpanel.js";
+import { DocCreatePanel } from "./web/accting/transcreatepanel.js";
+import { G_AccountDialog } from "./web/accting/accountlist.js";
 
 const metadataName = "./metadata.js";
 
@@ -84,8 +85,8 @@ panelController.add(new AccountViewPanel());
 panelController.add(new AccountEditPanel());
 panelController.add(new SplitsListPanel());
 panelController.add(new LogSplitsListPanel());
-panelController.add(new TransViewPanel());
-panelController.add(new TransCreatePanel());
+panelController.add(new DocViewPanel());
+panelController.add(new DocCreatePanel());
 
 function locationHashToMap(hash: string): Map<string, string> {
     const result = new Map();
@@ -127,6 +128,7 @@ import(metadataName)
         RZO.bootstrap(METADATA)
         .then(() => {
             panelController.initialize();
+            G_AccountDialog().initialize();
             entryPoint();
         })
         .catch((error) => {

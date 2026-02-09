@@ -32,13 +32,11 @@ import { TripList } from "./triplist.js";
 export class TripsMyListPanel extends BasePanel implements IPanel {
     collection: Cfg<Collection>;
     appointmentTsField: Cfg<Field>;
-    leftBtn: HTMLButtonElement;
-    rightBtn: HTMLButtonElement;
     refreshBtn: HTMLButtonElement;
     tripList: TripList;
     dayOfMonthFormat: Intl.DateTimeFormat;
     monthFormat: Intl.DateTimeFormat;
-    startDate: Date;
+    startDate: Date | null;
     endDate: Date | null;
 
     constructor() {
@@ -47,14 +45,12 @@ export class TripsMyListPanel extends BasePanel implements IPanel {
         this.collection = new Cfg("collection");
         this.appointmentTsField = new Cfg("appointmentTsField");
         this.refreshBtn = this.qButton("-my-search-refresh-btn");
-        this.leftBtn = this.qButton("-my-search-left-btn");
-        this.rightBtn = this.qButton("-my-search-right-btn");
         this.tripList = new TripList(this.qElement("-my-list-trips-div"));
         this.dayOfMonthFormat = new Intl.DateTimeFormat(
             "en", { day: "2-digit", formatMatcher: "basic" });
         this.monthFormat = new Intl.DateTimeFormat(
             "en", { month: "short", formatMatcher: "basic" });
-        this.startDate = new Date();
+        this.startDate = null;
         this.endDate = null;
     }
 
@@ -77,14 +73,6 @@ export class TripsMyListPanel extends BasePanel implements IPanel {
             this.onRefresh();
         });
 
-        this.leftBtn.addEventListener("click", (evt) => {
-            this.onLeft(evt);
-        });
-
-        this.rightBtn.addEventListener("click", (evt) => {
-            this.onRight(evt);
-        });
-
         this.tripList.initialize((evt) => {
             evt.preventDefault();
             this.onAnchorClick(evt);
@@ -93,130 +81,89 @@ export class TripsMyListPanel extends BasePanel implements IPanel {
 
     private shortDates(date1: Date | null, date2: Date | null): string {
         let result = date1 ? `${this.dayOfMonthFormat.format(date1)} ` +
-               `${this.monthFormat.format(date1)} -` : "All";
-        if (date2) {
-            result =
-                `${result} ${this.dayOfMonthFormat.format(date2)} ` +
-               `${this.monthFormat.format(date2)}`;
-        }
+               `${this.monthFormat.format(date1)} -` : "<- ";
+        result =
+            date2 ? `${result} ${this.dayOfMonthFormat.format(date2)} ` +
+           `${this.monthFormat.format(date2)}` : `${result}>`;
         return result;
     }
 
-    private shiftTimeWindow(numDays: number): Date[] {
-        const startDayOfMonth = this.startDate.getDate();
-        let newStartDate = new Date(this.startDate);
-        newStartDate.setDate(startDayOfMonth + numDays);
-        const newEndDate = this.applyTimeframe(newStartDate);
-        if (newEndDate) {
-            return [newStartDate, newEndDate];
-        } else {
-            return [];
-        }
-    }
-
-    private shiftBy(direction: number): void {
-        const selTimeframe = this.qSelect("-my-search-time-sel").value;
-        if (this.endDate && selTimeframe != "ALL") {
-            let newDates: Date[] = [];
-            switch (selTimeframe) {
-                case "DAY":
-                    newDates = this.shiftTimeWindow(direction * 1);
-                    break;
-                case "TWODAYS":
-                    newDates = this.shiftTimeWindow(direction * 2);
-                    break;
-                case "WEEK":
-                    newDates = this.shiftTimeWindow(direction * 7);
-                    break;
-            }
-            if (newDates.length == 2) {
-                this.queryList(newDates[0], newDates[1]);
-            }
-        }
-    }
-
     private onTimeframeChange(evt: Event): void {
-        switch (this.qSelect("-my-search-time-sel").value) {
-            case "ALL":
-                this.leftBtn.disabled = true;
-                this.rightBtn.disabled = true;
-                break;
-            case "DAY":
-            case "TWODAYS":
-            case "WEEK":
-                this.leftBtn.disabled = false;
-                this.rightBtn.disabled = false;
-                break;
-        }
         this.onRefresh();
     }
 
-    private onLeft(evt: Event): void {
-        this.shiftBy(-1);
-    }
-
-    private onRight(evt: Event): void {
-        this.shiftBy(1);
-    }
-
     private onRefresh(): void {
-        const now = new Date();
-        const endDate = this.applyTimeframe(now);
-        this.queryList(endDate ? now : null, endDate);
+        this.queryList(this.qSelect("-my-search-time-sel").value);
     }
 
     private onAnchorClick(evt: Event): void {
-        const target = evt.currentTarget as HTMLElement;
-        const id = target.dataset["id"];
+        const id = (<HTMLElement>(evt.currentTarget)).dataset["id"];
         if (id) {
             this.controller.v.stack(
                 "trip-view-panel", new PanelData("string", id));
         }
     }
 
-    private applyTimeframe(fromDate: Date): Date | null {
-        const selTimeframe = this.qSelect("-my-search-time-sel").value;
-        if (selTimeframe == "ALL") {
-            return null;
-        }
-        fromDate.setHours(0, 0, 0, 0);
-        const endDate = new Date(fromDate);
-        const startDayOfMonth = fromDate.getDate();
-        switch (selTimeframe) {
-            case "DAY":
-                endDate.setDate(startDayOfMonth + 1);
-                endDate.setHours(23, 23, 23, 23);
-                return endDate;
-            case "TWODAYS":
-                endDate.setDate(startDayOfMonth + 2);
-                endDate.setHours(23, 23, 23, 23);
-                return endDate;
-            case "WEEK":
-                endDate.setDate(startDayOfMonth + 6);
-                endDate.setHours(23, 23, 23, 23);
-                return endDate;
-            default:
-                return null;
-        }
+    private midnight(): Date {
+        const result = new Date();
+        result.setHours(0, 0, 0, 0);
+        return result;
     }
 
-    private queryList(newStartDate: Date | null,
-                      newEndDate: Date | null): void {
+    private until(daysAfter: number, from: Date,
+                  boundary: "start" | "end"): Date {
+        const result = new Date(from);
+        result.setDate(result.getDate() + daysAfter);
+        if (boundary == "start") {
+            result.setHours(0, 0, 0, 0);
+        } else {
+            result.setHours(23, 59, 59, 999);
+        }
+        return result;
+    }
+
+    private async queryList(timeFrame: string): Promise<void> {
         try {
-            const filter = new Filter();
-            if (newStartDate) {
-                filter.op("appointmentts", ">=", newStartDate.toISOString());
+            const todayMidnight = this.midnight();
+            switch (timeFrame) {
+                case "ALLPAST":
+                    this.startDate = null;
+                    this.endDate = this.until(-1, todayMidnight, "end");
+                    break;
+                case "PAST30D":
+                    this.startDate = this.until(-30, todayMidnight, "start");
+                    this.endDate = this.until(-1, todayMidnight, "end");
+                    break;
+                case "DAY":
+                    this.startDate = todayMidnight;
+                    this.endDate = this.until(0, todayMidnight, "end");
+                    break;
+                case "TWODAYS":
+                    this.startDate = todayMidnight;
+                    this.endDate = this.until(1, todayMidnight, "end");
+                    break;
+                case "WEEK":
+                    this.startDate = todayMidnight;
+                    this.endDate = this.until(6, todayMidnight, "end");
+                    break;
+                case "ALL":
+                    this.startDate = todayMidnight;
+                    this.endDate = null;
+                    break;
+                default:
+                    this.startDate = todayMidnight;
+                    this.endDate = this.until(0, todayMidnight, "end");
             }
-            if (newEndDate) {
-                filter.op("appointmentts", "<=", newEndDate.toISOString());
+            const filter = new Filter();
+            if (this.startDate) {
+                filter.op("appointmentts", ">=", this.startDate.toISOString());
+            }
+            if (this.endDate) {
+                filter.op("appointmentts", "<=", this.endDate.toISOString());
             }
             filter.op("drivernum_id", "=", CONTEXT.c.getSubject("driver"));
-            if (newStartDate) {
-                this.startDate = newStartDate;
-            }
-            this.endDate = newEndDate;
             this.qElement("-my-search-daterange-pre").innerText =
-                this.shortDates(newStartDate, newEndDate);
+                this.shortDates(this.startDate, this.endDate);
             const query = new Query(
                 [],
                 filter,
@@ -227,11 +174,10 @@ export class TripsMyListPanel extends BasePanel implements IPanel {
                 this.tripList.render(resultSet);
             })
             .catch((err) => {
-                console.error(err);
-                TOASTER.error(`ERROR: ${err}`);
+                TOASTER.exc(err);
             });
         } catch (err) {
-            console.error(err);
+            TOASTER.exc(err);
         }
     }
 

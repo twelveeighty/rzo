@@ -1,7 +1,7 @@
 /*
     RZO - A Business Application Framework
 
-    Copyright (C) 2024 Frank Vanderham
+    Copyright (C) 2024-2026 Frank Vanderham
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -289,6 +289,17 @@ export class BasePanel {
         } else {
             throw new Error(`No such element: ${id}`);
         }
+    }
+
+    static dateTimeLocalString(date: Date): string {
+        const month = `${date.getMonth() + 1}`.padStart(2, "0");
+        const day = `${date.getDate()}`.padStart(2, "0");
+        const hours = `${date.getHours()}`.padStart(2, "0");
+        const minutes = `${date.getMinutes()}`.padStart(2, "0");
+        const seconds = `${date.getSeconds()}`.padStart(2, "0");
+        return `${date.getFullYear()}-${month}-${day}` +
+            `T` +
+            `${hours}:${minutes}:${seconds}`;
     }
 
     constructor() {
@@ -649,6 +660,13 @@ export class DynElement {
 
     addAttribute(key: string, value: string): DynElement {
         this.asElement().setAttribute(key, value);
+        return this;
+    }
+
+    addOptionalAttribute(key: string, value?: string): DynElement {
+        if (value) {
+            this.asElement().setAttribute(key, value);
+        }
         return this;
     }
 

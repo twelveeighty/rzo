@@ -54,13 +54,11 @@ export class SplitsListPanel extends SplitsBasePanel implements IPanel {
         const query = new Query(
             [],
             new Filter().op("account_id", "=", id),
-            [
-                {field: "account_id", order: "asc"},
-                {field: "posted", order: "desc"}
-            ]);
+            [ {field: "posted", order: "desc"} ]
+        );
         this.collection.v.query(CONTEXT.c, query)
-        .then((resultSet) => {
-            this.renderSplits("sct", resultSet);
+        .then((rs) => {
+            this.renderSplits(rs);
         })
         .catch((err) => {
             TOASTER.error(`ERROR: ${err}`);

@@ -17,20 +17,34 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+import { Modal } from "bootstrap";
 import {
-    Entity, State, Filter, Query, Collection, Cfg,
-    ServiceSource
+    Entity, State, Filter, Query, Collection, Cfg, ServiceSource, Row,
+    IResultSet, BizTrans, BigDecimal, SideEffects
 } from "../../base/core.js";
+import { Txn, FinDoc } from "../../accting/acc-core.js";
+import { Driver } from "../../scheduler/trip.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
 import { TOASTER } from "../toaster.js";
-import { IPanel, ViewPanel, PanelData, DynElement } from "../panel.js";
+import {
+    IPanel, ViewPanel, PanelData, DynElement, PanelButton
+} from "../panel.js";
 import { TripList } from "../trip/triplist.js";
 
+const ACC_CHEQ_ACCOUNT = "C100.200.100";
+const ACC_TICKET_PRICE = new BigDecimal("10.00");
 
 export class DriverViewPanel extends ViewPanel implements IPanel {
     tripEntity: Cfg<Entity>;
     tripsCollection: Cfg<Collection>;
     tripList: TripList;
+    owedAccBal: Row | null;
+    expensedAccBal: Row | null;
+    createAcctsBtn: PanelButton;
+    reimburseBtn: PanelButton;
+    reimburseModal: Modal;
+    accBalanceCollection: Cfg<Collection>;
+    findocEntity: Cfg<FinDoc>;
 
     constructor() {
         super("driver", "-view-div", "-view-tsec", "-view-back-btn",
@@ -38,6 +52,16 @@ export class DriverViewPanel extends ViewPanel implements IPanel {
         this.tripList = new TripList(this.qElement("-view-trips-div"));
         this.tripEntity = new Cfg("tripEntity");
         this.tripsCollection = new Cfg("tripsCollection");
+        const btnDiv = this.qElement("-acct-buttons-div");
+        this.createAcctsBtn = new PanelButton(
+            btnDiv, this.fqId("-view-createaccts-btn"), "Create Accounts");
+        this.reimburseBtn = new PanelButton(
+            btnDiv, this.fqId("-view-reimburse-btn"), "Reimburse Mileage...");
+        this.accBalanceCollection = new Cfg("accountbalances");
+        this.findocEntity = new Cfg("acctrans");
+        this.reimburseModal = new Modal(this.qElement("-reimburse-div"));
+        this.owedAccBal = null;
+        this.expensedAccBal = null;
     }
 
     get id(): string {
@@ -51,10 +75,193 @@ export class DriverViewPanel extends ViewPanel implements IPanel {
             (<ServiceSource>RZO.getSource("db").ensure(ServiceSource)).service;
         this.tripEntity.v = RZO.getEntity("trip");
         this.tripsCollection.v = RZO.getCollection("trips");
-
+        this.accBalanceCollection.v =
+            RZO.getCollection(this.accBalanceCollection.name);
+        this.findocEntity.setIfCast("driverviewpanel",
+            RZO.entities.get(this.findocEntity.name), FinDoc);
+        this.createAcctsBtn.initialize((evt) => {
+            this.onCreateAccts(evt);
+        });
         this.tripList.initialize((evt) => {
             evt.preventDefault();
             this.onAnchorClick(evt);
+        });
+        this.reimburseBtn.initialize((evt) => {
+            this.onReimbursement(evt);
+        });
+        this.qInput("-reimburse-qty-txt").addEventListener("blur", (evt) => {
+            this.onQtyBlur(evt);
+        });
+        this.qButton("-reimburse-confirm-btn")
+        .addEventListener("click", (evt) => {
+            this.onReimbursementOk(evt);
+        });
+    }
+
+    private async createAllAccounts(state: State): Promise<void> {
+        const driver = this.entity.v.stateToRow(state);
+        const bt = new BizTrans();
+        await (<Driver>(this.entity.v)).createAccounts(
+            bt, this.service.v, CONTEXT.c, driver);
+        await this.service.v.processBizTrans(this.logger, bt);
+    }
+
+    private onQtyBlur(evt: Event): void {
+        const input = this.qInput("-reimburse-qty-txt");
+        input.setCustomValidity("");
+        try {
+            this.setQuantity();
+        } catch (err) {
+            input.reportValidity();
+        }
+    }
+
+    private calculateReimbursedTotal(): BigDecimal {
+        const qtyStr = this.qInput("-reimburse-qty-txt").value;
+        if (qtyStr) {
+            const qty = new BigDecimal(qtyStr);
+            const price = new BigDecimal(
+                this.qInput("-reimburse-price-txt").value);
+            const amount = qty.multiply(price);
+            this.qInput("-reimburse-total-txt").value =
+                amount.toNumeric(12,2);
+            return amount;
+        } else {
+            this.qInput("-reimburse-total-txt").value = "0.00";
+            return BigDecimal.zero();
+        }
+    }
+
+    private setQuantity(): void {
+        try {
+            if (this.calculateReimbursedTotal().lte(BigDecimal.ZERO)) {
+                throw new Error("Total amount must be larger than zero");
+            }
+        } catch (err) {
+            this.qInput("-reimburse-qty-txt").setCustomValidity(`${err}`);
+            throw err;
+        }
+    }
+
+    private async processReimbursement(driverId: string, driverNum: string,
+                                       owedAcct: string, posted: Date,
+                                       qty: BigDecimal, price: BigDecimal,
+                                       amount: BigDecimal): Promise<void> {
+        const now = new Date();
+        const bt = new BizTrans();
+        const dr = owedAcct;
+        const cr = ACC_CHEQ_ACCOUNT;
+        const memo = `Driver reimbursement for ${driverNum}`;
+        // TRANSACTION
+        const entity = this.findocEntity.v;
+        const state = await entity.create(CONTEXT.c, this.service.v);
+        let se: Promise<SideEffects>[] = [];
+        entity.cpSetValue(state, "account", owedAcct, CONTEXT.c, se);
+        entity.cpSetValue(state, "entityid", driverId, CONTEXT.c, se);
+        entity.cpSetValue(state, "memo", memo, CONTEXT.c, se);
+        entity.cpSetValue(state, "posted", posted, CONTEXT.c, se);
+        entity.cpSetValue(state, "created", now, CONTEXT.c, se);
+        await Promise.all(se);
+        const docNum = state.field("docnum").value;
+        const txn = new Txn(entity, state);
+        // DR SPLIT
+        const split = this.findocEntity.v.splitEntity.v;
+        const drSplit = await split.create(CONTEXT.c, this.service.v);
+        se = [];
+        // Set acctrans without validation, since it doesn't exist yet.
+        drSplit.field("acctrans").value = docNum;
+        split.cpSetValue(drSplit, "account", dr, CONTEXT.c, se);
+        split.cpSetValue(drSplit, "change", "Dr", CONTEXT.c, se);
+        split.cpSetValue(drSplit, "quantity", qty, CONTEXT.c, se);
+        split.cpSetValue(drSplit, "price", price, CONTEXT.c, se);
+        split.cpSetValue(drSplit, "amount", amount, CONTEXT.c, se);
+        split.cpSetValue(drSplit, "created", now, CONTEXT.c, se);
+        split.cpSetValue(drSplit, "posted", posted, CONTEXT.c, se);
+        split.cpSetValue(drSplit, "memo", memo, CONTEXT.c, se);
+        await Promise.all(se);
+        txn.splits.push(drSplit);
+        // CR SPLIT
+        const crSplit = await split.create(CONTEXT.c, this.service.v);
+        se = [];
+        // Set acctrans without validation, since it doesn't exist yet.
+        crSplit.field("acctrans").value = docNum;
+        split.cpSetValue(crSplit, "account", cr, CONTEXT.c, se);
+        split.cpSetValue(crSplit, "change", "Cr", CONTEXT.c, se);
+        split.cpSetValue(crSplit, "quantity", qty, CONTEXT.c, se);
+        split.cpSetValue(crSplit, "price", price, CONTEXT.c, se);
+        split.cpSetValue(crSplit, "amount", amount, CONTEXT.c, se);
+        split.cpSetValue(crSplit, "created", now, CONTEXT.c, se);
+        split.cpSetValue(crSplit, "posted", posted, CONTEXT.c, se);
+        split.cpSetValue(crSplit, "memo", memo, CONTEXT.c, se);
+        await Promise.all(se);
+        txn.splits.push(crSplit);
+        await txn.toBizTrans(bt, this.logger, CONTEXT.c, this.service.v);
+        await this.service.v.processBizTrans(this.logger, bt);
+    }
+
+    private onReimbursementOk(evt: Event): void {
+        if (this.closeDialog() && this.state && this.owedAccBal) {
+            const posted = new Date(this.qInput("-reimburse-posted-txt").value);
+            const qty = new BigDecimal(this.qInput("-reimburse-qty-txt").value);
+            const amount = qty.multiply(ACC_TICKET_PRICE);
+            if (amount.gt(BigDecimal.ZERO)) {
+                this.processReimbursement(
+                    this.state.id, this.state.asString("drivernum"),
+                    this.owedAccBal.get("account"), posted, qty,
+                    ACC_TICKET_PRICE, amount)
+                .then(() => {
+                    this.queryAccting();
+                })
+                .catch((err) => {
+                    TOASTER.exc(`ERROR: ${err}`);
+                });
+            } else {
+                TOASTER.error("Total reimbursement must be larger than zero");
+            }
+        }
+    }
+
+    private closeDialog(): boolean {
+        try {
+            this.setQuantity();
+            this.reimburseModal.hide();
+            return true;
+        } catch (err) {
+            this.qForm("-reimburse-form").reportValidity();
+        }
+        return false;
+    }
+
+    private onReimbursement(evt: Event): void {
+        if (this.owedAccBal) {
+            // Re-query AP accountbalance for current balance
+            const filter = new Filter()
+                .op("_id", "=", this.owedAccBal.get("_id"));
+            this.accBalanceCollection.v.query(CONTEXT.c, new Query([], filter))
+            .then((rs) => {
+                this.qInput("-reimburse-price-txt").value =
+                    ACC_TICKET_PRICE.toNumeric(12, 2);
+                this.qInput("-reimburse-posted-txt").value =
+                    (new Date()).toISOString().slice(0, 10);
+                rs.next();
+                this.qInput("-reimburse-qty-txt").value = rs.get("balance");
+                this.reimburseModal.show();
+                this.calculateReimbursedTotal();
+            })
+            .catch((err) => {
+                TOASTER.error(`ERROR: ${err}`);
+            });
+        }
+    }
+
+    private onCreateAccts(evt: Event): void {
+        this.createAcctsBtn.enabled = false;
+        this.createAllAccounts(State.must(this.state))
+        .then(() => {
+            this.queryAccting();
+        })
+        .catch((err) => {
+            TOASTER.error(`ERROR: ${err}`);
         });
     }
 
@@ -65,6 +272,52 @@ export class DriverViewPanel extends ViewPanel implements IPanel {
             this.controller.v.stack(
                 "trip-view-panel", new PanelData("string", id));
         }
+    }
+
+    private handleAccData(rs: IResultSet): void {
+        const tbody = this.qElement("-view-acct-tsec");
+        tbody.innerHTML = "";
+        // We expect two account balances to be returned
+        if (rs.rowCount == 2) {
+            this.owedAccBal = rs.find(
+                (row) => "OWED" == row.get("entitytag")) || null;
+            this.expensedAccBal = rs.find(
+                (row) => "EXPENSED" == row.get("entitytag")) || null;
+            if (this.owedAccBal && this.expensedAccBal) {
+                this.addTableRowText(
+                    tbody, "Owed Mileage",
+                    this.owedAccBal.get("balance"), "asText", "text-end");
+                this.addTableRowText(
+                    tbody, "Expensed Mileage",
+                    this.expensedAccBal.get("balance"), "asText", "text-end");
+                this.createAcctsBtn.hide();
+                this.reimburseBtn.show();
+            } else {
+                TOASTER.error(
+                    "ERROR: Missing one of the expected account balances");
+            }
+        } else {
+            this.addTableRowText(
+                tbody, "NOTE", "Accounts not yet set up for this driver");
+            this.createAcctsBtn.show();
+            this.createAcctsBtn.enabled = true;
+            this.reimburseBtn.hide();
+        }
+    }
+
+    private queryAccting(): void {
+        this.owedAccBal = null;
+        this.expensedAccBal = null;
+        // Query all account balances for this rider
+        const filter = new Filter()
+            .op("entityid", "=", State.must(this.state).id);
+        this.accBalanceCollection.v.query(CONTEXT.c, new Query([], filter))
+        .then((rs) => {
+            this.handleAccData(rs);
+        })
+        .catch((err) => {
+            TOASTER.error(`ERROR: ${err}`);
+        });
     }
 
     private queryTrips(): void {
@@ -115,6 +368,7 @@ export class DriverViewPanel extends ViewPanel implements IPanel {
         this.addTableRowElement(this.tbody, "DB Version",
             new DynElement({ tag: "samp", text: state.rev }).asElement());
         this.queryTrips();
+        this.queryAccting();
     }
 }
 

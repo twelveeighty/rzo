@@ -17,7 +17,6 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { Modal } from "bootstrap";
 import {
     Entity, Field, Cfg, Row, ServiceSource
 } from "../../base/core.js";
@@ -27,7 +26,7 @@ import { TOASTER } from "../toaster.js";
 import {
     IPanel, BasePanel, PanelMessage, PanelData, DynElement, PanelButton
 } from "../panel.js";
-
+import { OkCancelDialog } from "../dialogs.js";
 
 export class TripViewPanel extends BasePanel implements IPanel {
     appointmentTsField: Cfg<Field>;
@@ -37,8 +36,8 @@ export class TripViewPanel extends BasePanel implements IPanel {
     editButton: PanelButton;
     cloneButton: PanelButton;
     splitButton: PanelButton;
-    confirmModal: Modal;
-    splitModal: Modal;
+    acceptConfirmDlg: OkCancelDialog;
+    splitConfirmDlg: OkCancelDialog;
     driverEntity: Cfg<Entity>;
     driver: Row | null;
     row: Row | null;
@@ -68,17 +67,32 @@ export class TripViewPanel extends BasePanel implements IPanel {
         this.div = this.qElement("-view-div");
         const parentDiv = this.qElement("-view-buttons-div");
         this.acceptButton = new PanelButton(
-            parentDiv, this.fqId("-view-accept-btn"), "Accept ride...");
+            parentDiv, this.fqId("-view-accept-btn"), "Accept ride...",
+            "btn btn-primary me-2");
         this.assignButton = new PanelButton(
-            parentDiv, this.fqId("-view-assign-btn"), "Assign Driver...");
+            parentDiv, this.fqId("-view-assign-btn"), "Assign Driver...",
+            "btn btn-primary me-2");
         this.editButton = new PanelButton(
-            parentDiv, this.fqId("-view-edit-btn"), "Edit Trip...");
+            parentDiv, this.fqId("-view-edit-btn"), "Edit Trip...",
+            "btn btn-primary me-2");
         this.splitButton = new PanelButton(
-            parentDiv, this.fqId("-view-split-btn"), "Split Return Trip");
+            parentDiv, this.fqId("-view-split-btn"), "Split Return Trip",
+            "btn btn-primary me-2");
         this.cloneButton = new PanelButton(
-            parentDiv, this.fqId("-view-clone-btn"), "Create Similar...");
-        this.confirmModal = new Modal(this.qElement("-confirm-accept-div"));
-        this.splitModal = new Modal(this.qElement("-confirm-split-div"));
+            parentDiv, this.fqId("-view-clone-btn"), "Create Similar...",
+            "btn btn-primary me-2");
+        this.acceptConfirmDlg = new OkCancelDialog(
+            "Accept this trip?",
+            "This ride will be added to your trips.",
+            "Yes, accept", "No",
+            (evt) => { this.onAcceptConfirm(evt); }
+        );
+        this.splitConfirmDlg = new OkCancelDialog(
+            "Split Return to One-Ways?",
+            "This return trip will be split into two one-ways.",
+            "Yes, split", "No",
+            (evt) => { this.onSplitConfirm(evt); }
+        );
         this.dirty = false;
         this.driverAbortController = null;
         this.driverClickedListener = (evt) => { this.onDriverClicked(evt); };
@@ -164,16 +178,9 @@ export class TripViewPanel extends BasePanel implements IPanel {
         this.qButton("-view-back-btn").addEventListener("click", (evt) => {
             this.onBack(evt);
         });
-        this.qButton("-split-confirm-btn").addEventListener("click", (evt) => {
-            this.onSplitConfirm(evt);
-        });
-        this.qButton("-accept-confirm-btn").addEventListener("click", (evt) => {
-            this.onAcceptConfirm(evt);
-        });
     }
 
     private onSplitConfirm(evt: Event): void {
-        this.splitModal.hide();
         if (this.row) {
             (<Trip>this.entity.v).splitReturnTrip(
                 CONTEXT.c, this.service.v, this.row)
@@ -199,7 +206,6 @@ export class TripViewPanel extends BasePanel implements IPanel {
     }
 
     private onAcceptConfirm(evt: Event): void {
-        this.confirmModal.hide();
         if (this.row && this.driver) {
             const state = this.entity.v.rowToState(this.row);
             this.entity.v.setValue(
@@ -225,13 +231,13 @@ export class TripViewPanel extends BasePanel implements IPanel {
 
     private onSplit(evt: Event): void {
         if (this.row) {
-            this.splitModal.show();
+            this.splitConfirmDlg.show();
         }
     }
 
     private onAccept(evt: Event): void {
         if (this.row) {
-            this.confirmModal.show();
+            this.acceptConfirmDlg.show();
         }
     }
 

@@ -20,11 +20,8 @@
 import { Collection, Cfg, Filter, Query, Row } from "../../base/core.js";
 import { LocalDay } from "../../accting/acc-core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
-
 import { TOASTER } from "../toaster.js";
-
 import { IPanel, PanelData } from "../panel.js";
-
 import { SplitsBasePanel } from "./splitsbasepanel.js";
 
 export class LogSplitsListPanel extends SplitsBasePanel implements IPanel {
@@ -37,7 +34,7 @@ export class LogSplitsListPanel extends SplitsBasePanel implements IPanel {
         super();
         this.prefix = "logsplits";
         this.div = this.qElement("-list-div");
-        this.splitsColl = new Cfg("accsplits");
+        this.splitsColl = new Cfg("splits");
         this.balanceLogsColl = new Cfg("balancelogs");
         this.account = null;
     }
@@ -110,7 +107,7 @@ export class LogSplitsListPanel extends SplitsBasePanel implements IPanel {
         );
         this.splitsColl.v.query(CONTEXT.c, query)
         .then((resultSet) => {
-            this.renderSplits("lct", resultSet);
+            this.renderSplits(resultSet);
         })
         .catch((err) => {
             TOASTER.error(`ERROR: ${err}`);
@@ -120,7 +117,7 @@ export class LogSplitsListPanel extends SplitsBasePanel implements IPanel {
     private onCreate(evt: Event): void {
         if (this.account) {
             this.controller.v.stack(
-                "transcreate-panel", new PanelData("Row", this.account));
+                "doccreate-panel", new PanelData("Row", this.account));
         }
     }
 

@@ -18,13 +18,13 @@
 */
 
 import { Modal } from "bootstrap";
-
 import {
     Entity, Field, State, Filter, Query, Collection, Cfg, ServiceSource,
     IResultSet, SideEffects, BigDecimal, Row, BizTrans
 } from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
-import { Txn, AccTrans } from "../../accting/acc-core.js";
+import { Txn, FinDoc } from "../../accting/acc-core.js";
+import { Rider } from "../../scheduler/trip.js";
 import { TOASTER } from "../toaster.js";
 import {
     IPanel, ViewPanel, PanelData, PanelButton, DynElement
@@ -32,13 +32,6 @@ import {
 import { TripList } from "../trip/triplist.js";
 
 
-const ACC_LEDGER = "CAN";
-const ACC_STATUS = "ACTIVE";
-const ACC_CUR_HOLDING = "CAN.CAD";
-const ACC_TICKET_HOLDING = "TICKET";
-const ACC_AR_PREFIX = "C100.100.";
-const ACC_TICKET_PREFIX = "C300.100.";
-const ACC_RTICKET_PREFIX = "C300.200.";
 const ACC_CHEQ_ACCOUNT = "C100.200.100";
 const ACC_TICKET_PRICE = new BigDecimal("10.00");
 
@@ -46,13 +39,11 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
     tripEntity: Cfg<Entity>;
     accountEntity: Cfg<Entity>;
     accBalanceEntity: Cfg<Entity>;
-    acctransEntity: Cfg<AccTrans>;
-    accsplitEntity: Cfg<Entity>;
+    findocEntity: Cfg<FinDoc>;
     tripRidernumField: Cfg<Field>;
     tripsCollection: Cfg<Collection>;
     accBalanceCollection: Cfg<Collection>;
     tripList: TripList;
-    acctbody: HTMLElement;
     createAcctsBtn: PanelButton;
     orderBtn: PanelButton;
     orderModal: Modal;
@@ -69,12 +60,10 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
         this.tripEntity = new Cfg("trip");
         this.accountEntity = new Cfg("account");
         this.accBalanceEntity = new Cfg("accountbalance");
-        this.acctransEntity = new Cfg("acctrans");
-        this.accsplitEntity = new Cfg("accsplit");
+        this.findocEntity = new Cfg("acctrans");
         this.tripRidernumField = new Cfg("tripRidernumField");
         this.tripsCollection = new Cfg("trips");
         this.accBalanceCollection = new Cfg("accountbalances");
-        this.acctbody = this.qElement("-view-acct-tsec");
         const btnDiv = this.qElement("-acct-buttons-div");
         this.createAcctsBtn = new PanelButton(
             btnDiv, this.fqId("-view-createaccts-btn"), "Create Accounts");
@@ -95,17 +84,15 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
 
     initialize(): void {
         super.initialize();
-        this.entity.v = RZO.getEntity("rider");
+        this.entity.setIfCast(
+            `'configuration error: 'Rider'`, RZO.entities.get("rider"), Rider);
         this.service.v =
             (<ServiceSource>RZO.getSource("db").ensure(ServiceSource)).service;
         this.tripEntity.v = RZO.getEntity(this.tripEntity.name);
         this.accountEntity.v = RZO.getEntity(this.accountEntity.name);
         this.accBalanceEntity.v = RZO.getEntity(this.accBalanceEntity.name);
-        this.acctransEntity.setIfCast(
-            "riderviewpanel",
-            RZO.entities.get(this.acctransEntity.name),
-            AccTrans);
-        this.accsplitEntity.v = RZO.getEntity(this.accsplitEntity.name);
+        this.findocEntity.setIfCast("riderviewpanel",
+            RZO.entities.get(this.findocEntity.name), FinDoc);
         this.tripRidernumField.v = this.tripEntity.v.getField("ridernum");
         this.tripsCollection.v = RZO.getCollection(this.tripsCollection.name);
         this.accBalanceCollection.v =
@@ -163,69 +150,17 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
         }
     }
 
-    private async createAccount(entityId: string, name: string,
-                                elementType: string, description: string,
-                                holding: string)
-                                    : Promise<State> {
-        const state = await this.accountEntity.v.create(
-            CONTEXT.c, this.service.v);
-        const validations: Promise<SideEffects>[] = [];
-        validations.push(this.accountEntity.v.setValue(
-            state, "entityid", entityId, CONTEXT.c));
-        validations.push(this.accountEntity.v.setValue(
-            state, "ledger", ACC_LEDGER, CONTEXT.c));
-        validations.push(this.accountEntity.v.setValue(
-            state, "name", name, CONTEXT.c));
-        validations.push(this.accountEntity.v.setValue(
-            state, "elementtype", elementType, CONTEXT.c));
-        validations.push(this.accountEntity.v.setValue(
-            state, "description", description, CONTEXT.c));
-        validations.push(this.accountEntity.v.setValue(
-            state, "holding", holding, CONTEXT.c));
-        validations.push(this.accountEntity.v.setValue(
-            state, "status", ACC_STATUS, CONTEXT.c));
-        await Promise.all(validations);
-        await this.accountEntity.v.post(this.service.v, state, CONTEXT.c);
-        return state;
-    }
-
-    private async createAccountBalance(name: string): Promise<State> {
-        const state = await this.accBalanceEntity.v.create(
-            CONTEXT.c, this.service.v);
-        await this.accBalanceEntity.v.setValue(
-            state, "account", name, CONTEXT.c);
-        await this.accBalanceEntity.v.post(this.service.v, state, CONTEXT.c);
-        return state;
-    }
-
-    private async createAccountWithBalance(entityId: string, name: string,
-                                           elementType: string,
-                                           description: string, holding: string)
-                                               : Promise<void> {
-        await this.createAccount(
-            entityId, name, elementType, description, holding);
-        await this.createAccountBalance(name);
-    }
-
-
-    private async createAllAccounts(entityId: string,
-                                    ridernum: string): Promise<void> {
-        const name = ridernum.replaceAll(".", "_");
-        await this.createAccountWithBalance(
-            entityId, ACC_AR_PREFIX + name, "ASSET",
-            `${ridernum} Accounts Receivable`, ACC_CUR_HOLDING);
-        await this.createAccountWithBalance(
-            entityId, ACC_TICKET_PREFIX + name, "LIABILITY",
-            `${ridernum} Available Tickets`, ACC_TICKET_HOLDING);
-        await this.createAccountWithBalance(
-            entityId, ACC_RTICKET_PREFIX + name, "LIABILITY",
-            `${ridernum} Reserved Tickets`, ACC_TICKET_HOLDING);
+    private async createAllAccounts(state: State): Promise<void> {
+        const rider = this.entity.v.stateToRow(state);
+        const bt = new BizTrans();
+        await (<Rider>(this.entity.v)).createAccounts(
+            bt, this.service.v, CONTEXT.c, rider);
+        await this.service.v.processBizTrans(this.logger, bt);
     }
 
     private onCreateAccts(evt: Event): void {
-        const rider = State.must(this.state);
         this.createAcctsBtn.enabled = false;
-        this.createAllAccounts(rider.id, rider.asString("ridernum"))
+        this.createAllAccounts(State.must(this.state))
         .then(() => {
             this.queryAccting();
         })
@@ -238,55 +173,43 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
         this.orderModal.show();
     }
 
-    private async createSplit(change: string, transnum: string,
+    private async createSplit(change: string, docnum: string,
                               account: string, quantity: BigDecimal | null,
-                              amount: BigDecimal, posted: Date,
-                              created: Date, memo?: string): Promise<State> {
-        const split = await this.accsplitEntity.v.create(
-            CONTEXT.c, this.service.v);
-        const validations: Promise<SideEffects>[] = [];
+                              amount: BigDecimal, now: Date,
+                              memo?: string): Promise<State> {
+        const entity = this.findocEntity.v.splitEntity.v;
+        const split = await entity.create(CONTEXT.c, this.service.v);
+        const se: Promise<SideEffects>[] = [];
         // Set acctrans without validation, since it doesn't exist yet.
-        split.field("acctrans").value = transnum;
-        validations.push(this.accsplitEntity.v.setValue(
-            split, "account", account, CONTEXT.c));
-        validations.push(this.accsplitEntity.v.setValue(
-            split, "change", change, CONTEXT.c));
+        split.field("findoc").value = docnum;
+        entity.cpSetValue(split, "account", account, CONTEXT.c, se);
+        entity.cpSetValue(split, "change", change, CONTEXT.c, se);
         if (quantity !== null) {
-            validations.push(this.accsplitEntity.v.setValue(
-                split, "quantity", quantity, CONTEXT.c));
-            validations.push(this.accsplitEntity.v.setValue(
-                split, "price", ACC_TICKET_PRICE, CONTEXT.c));
+            entity.cpSetValue(split, "quantity", quantity, CONTEXT.c, se);
+            entity.cpSetValue(split, "price", ACC_TICKET_PRICE, CONTEXT.c, se);
         }
-        validations.push(this.accsplitEntity.v.setValue(
-            split, "amount", amount, CONTEXT.c));
-        validations.push(this.accsplitEntity.v.setValue(
-            split, "created", created, CONTEXT.c));
-        validations.push(this.accsplitEntity.v.setValue(
-            split, "posted", posted, CONTEXT.c));
+        entity.cpSetValue(split, "amount", amount, CONTEXT.c, se);
+        entity.cpSetValue(split, "created", now, CONTEXT.c, se);
+        entity.cpSetValue(split, "posted", now, CONTEXT.c, se);
         if (memo) {
-            validations.push(this.accsplitEntity.v.setValue(
-                split, "memo", memo, CONTEXT.c));
+            entity.cpSetValue(split, "memo", memo, CONTEXT.c, se);
         }
-        await Promise.all(validations);
+        await Promise.all(se);
         return split;
     }
 
-    private async createTransaction(account: string, memo: string, posted: Date,
-                                    created: Date): Promise<State> {
-        const state = await this.acctransEntity.v.create(
-            CONTEXT.c, this.service.v);
-        const validations: Promise<SideEffects>[] = [];
-        validations.push(this.acctransEntity.v.setValue(
-            state, "account", account, CONTEXT.c));
-        validations.push(this.acctransEntity.v.setValue(
-            state, "entityid", State.must(this.state).id, CONTEXT.c));
-        validations.push(this.acctransEntity.v.setValue(
-            state, "memo", memo, CONTEXT.c));
-        validations.push(this.acctransEntity.v.setValue(
-            state, "posted", posted, CONTEXT.c));
-        validations.push(this.acctransEntity.v.setValue(
-            state, "created", created, CONTEXT.c));
-        await Promise.all(validations);
+    private async createFinDoc(account: string, memo: string,
+                               now: Date): Promise<State> {
+        const entity = this.findocEntity.v;
+        const state = await entity.create(CONTEXT.c, this.service.v);
+        const se: Promise<SideEffects>[] = [];
+        entity.cpSetValue(state, "account", account, CONTEXT.c, se);
+        entity.cpSetValue(
+            state, "entityid", State.must(this.state).id, CONTEXT.c, se);
+        entity.cpSetValue(state, "memo", memo, CONTEXT.c, se);
+        entity.cpSetValue(state, "posted", now, CONTEXT.c, se);
+        entity.cpSetValue(state, "created", now, CONTEXT.c, se);
+        await Promise.all(se);
         return state;
     }
 
@@ -301,16 +224,15 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
                 this.arAccBal.getString("account");
             const memo =
                 `Ticket purchase for ${this.state.asString("ridernum")}`;
-            const transaction = await this.createTransaction(
-                creditAccName, memo, now, now);
-            const transnum = transaction.field("transnum").value;
-            const txn = new Txn(this.acctransEntity.v, transaction);
+            const findoc = await this.createFinDoc(
+                creditAccName, memo, now);
+            const docnum = findoc.field("docnum").value;
+            const txn = new Txn(this.findocEntity.v, findoc);
             const crSplit = await this.createSplit(
-                "Cr", transnum, creditAccName, quantity, amount, now, now,
-                memo);
+                "Cr", docnum, creditAccName, quantity, amount, now, memo);
             txn.splits.push(crSplit);
             const drSplit = await this.createSplit(
-                "Dr", transnum, debitAccName, null, amount, now, now, memo);
+                "Dr", docnum, debitAccName, null, amount, now, memo);
             txn.splits.push(drSplit);
             const bizTrans = new BizTrans();
             await txn.toBizTrans(
@@ -323,8 +245,8 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
         this.orderModal.hide();
         const qty = this.qInput("-order-qty-txt").value;
         if (qty) {
-            this.processTicketOrder(qty,
-                                    this.qInput("-order-paid-cbox").checked)
+            this.processTicketOrder(
+                qty, this.qInput("-order-paid-cbox").checked)
             .then(() => {
                 this.queryAccting();
             })
@@ -343,15 +265,15 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
         const creditAccName = accountBalance.getString("account");
         const debitAccName = ACC_CHEQ_ACCOUNT;
         const memo = `Payment received for ${ridernum}`;
-        const transaction = await this.createTransaction(
-            creditAccName, memo, posted, now);
-        const transnum = transaction.field("transnum").value;
-        const txn = new Txn(this.acctransEntity.v, transaction);
+        const findoc = await this.createFinDoc(
+            creditAccName, memo, now);
+        const docnum = findoc.field("docnum").value;
+        const txn = new Txn(this.findocEntity.v, findoc);
         const crSplit = await this.createSplit(
-            "Cr", transnum, creditAccName, null, amount, posted, now, memo);
+            "Cr", docnum, creditAccName, null, amount, now, memo);
         txn.splits.push(crSplit);
         const drSplit = await this.createSplit(
-            "Dr", transnum, debitAccName, null, amount, posted, now, memo);
+            "Dr", docnum, debitAccName, null, amount, now, memo);
         txn.splits.push(drSplit);
         const bizTrans = new BizTrans();
         await txn.toBizTrans(
@@ -427,27 +349,26 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
         }
     }
 
-    private handleAccData(resultSet: IResultSet): void {
+    private handleAccData(rs: IResultSet): void {
+        const tbody = this.qElement("-view-acct-tsec");
+        tbody.innerHTML = "";
         // We expect three account balances to be returned
-        if (resultSet.rowCount == 3) {
-            this.arAccBal = resultSet.find(
-                (row) => row.getString("account").startsWith(
-                    ACC_AR_PREFIX)) || null;
-            this.ticketAccBal = resultSet.find(
-                (row) => row.getString("account").startsWith(
-                    ACC_TICKET_PREFIX)) || null;
-            this.rTicketAccBal = resultSet.find(
-                (row) => row.getString("account").startsWith(
-                    ACC_RTICKET_PREFIX)) || null;
+        if (rs.rowCount == 3) {
+            this.arAccBal = rs.find(
+                (row) => "AR" == row.get("entitytag")) || null;
+            this.ticketAccBal = rs.find(
+                (row) => "AVAILABLE" == row.get("entitytag")) || null;
+            this.rTicketAccBal = rs.find(
+                (row) => "RESERVED" == row.get("entitytag")) || null;
             if (this.arAccBal && this.ticketAccBal && this.rTicketAccBal) {
                 this.addTableRowText(
-                    this.acctbody, "Available Tickets",
+                    tbody, "Available Tickets",
                     this.ticketAccBal.get("balance"), "asText", "text-end");
                 this.addTableRowText(
-                    this.acctbody, "Reserved Tickets",
+                    tbody, "Reserved Tickets",
                     this.rTicketAccBal.get("balance"), "asText", "text-end");
                 this.addTableRowText(
-                    this.acctbody, "Balance owing",
+                    tbody, "Balance owing",
                     this.arAccBal.get("balance"), "asText", "text-end");
                 this.createAcctsBtn.hide();
                 this.orderBtn.show();
@@ -458,8 +379,7 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
             }
         } else {
             this.addTableRowText(
-                this.acctbody, "NOTE",
-                "Accounts not yet set up for this rider");
+                tbody, "NOTE", "Accounts not yet set up for this rider");
             this.createAcctsBtn.show();
             this.createAcctsBtn.enabled = true;
             this.orderBtn.hide();
@@ -468,7 +388,6 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
     }
 
     private queryAccting(): void {
-        this.acctbody.innerHTML = "";
         this.arAccBal = null;
         this.ticketAccBal = null;
         this.rTicketAccBal = null;
@@ -476,8 +395,8 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
         const filter = new Filter()
             .op("entityid", "=", State.must(this.state).id);
         this.accBalanceCollection.v.query(CONTEXT.c, new Query([], filter))
-        .then((resultSet) => {
-            this.handleAccData(resultSet);
+        .then((rs) => {
+            this.handleAccData(rs);
         })
         .catch((err) => {
             TOASTER.error(`ERROR: ${err}`);

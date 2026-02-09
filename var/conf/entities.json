@@ -91,9 +91,16 @@
             "name": "rider"
         },
         "spec": {
-            "type": "scheduler.trip.SubjectEntity",
+            "type": "scheduler.trip.Rider",
             "table": "rider",
             "retention": { "style": "delete" },
+            "ledger": "CAN",
+            "currencyHolding": "CAN.CAD",
+            "ticketHolding": "TICKET",
+            "accountsReceivablePrefix": "C100.100.",
+            "ticketPrefix": "C300.100.",
+            "reservedPrefix": "C300.200.",
+            "revenueAccount": "C200.100.100",
             "keyFields": [
                 { "name": "ridernum", "type": "StringField", "required": true,
                       "maxlength": 32
@@ -165,9 +172,13 @@
             "name": "driver"
         },
         "spec": {
-            "type": "scheduler.trip.SubjectEntity",
+            "type": "scheduler.trip.Driver",
             "table": "driver",
             "retention": { "style": "delete" },
+            "ledger": "CAN",
+            "ticketHolding": "TICKET",
+            "mileageOwedPrefix": "C300.700.100.",
+            "mileageExpensedPrefix": "C500.600.",
             "keyFields": [
                 { "name": "drivernum", "type": "StringField", "required": true,
                     "maxlength": 32
@@ -234,8 +245,6 @@
             "type": "scheduler.trip.Trip",
             "table": "trip",
             "retention": { "style": "delete" },
-            "ticketPrefix": "C300.100.",
-            "reservedPrefix": "C300.200.",
             "keyFields": [
                 { "name": "tripnum", "type": "GeneratorField", "required": true,
                       "maxlength": 32,
@@ -342,7 +351,7 @@
                     "precision": 15, "scale": 2,
                     "default": "1.00"
                 },
-                { "name": "status", "type": "AliasValueList",
+                { "name": "status", "type": "scheduler.trip.StatusField",
                       "required": true,
                       "maxlength": 32,
                       "default": "SCHED",

@@ -23,6 +23,7 @@ import {
 import { RZO, CONTEXT } from "../../base/configuration.js";
 import { TOASTER } from "../toaster.js";
 import { IPanel, BasePanel, PanelData } from "../panel.js";
+import { OkCancelDialog } from "../dialogs.js";
 import { EntityList } from "../list.js";
 
 export class TripAssignPanel extends BasePanel implements IPanel {
@@ -33,6 +34,8 @@ export class TripAssignPanel extends BasePanel implements IPanel {
     state: State | null;
     dateTimeFormat: Intl.DateTimeFormat;
     list: EntityList;
+    assignConfirmDlg: OkCancelDialog;
+    unAssignConfirmDlg: OkCancelDialog;
 
     constructor() {
         super();
@@ -53,6 +56,16 @@ export class TripAssignPanel extends BasePanel implements IPanel {
             "drivernum",
             "phone1",
             ["drivernum"]
+        );
+        this.assignConfirmDlg = new OkCancelDialog(
+            "Assign Driver?", "Are you sure you want to assign driver X",
+            "Yes, assign", "No",
+            (evt) => { this.onAssignConfirm(evt); }
+        );
+        this.unAssignConfirmDlg = new OkCancelDialog(
+            "Remove Driver?", "Are you sure you want to unassign the driver?",
+            "Yes, unassign", "No",
+            (evt) => { this.onUnAssignConfirm(evt); }
         );
     }
 
@@ -83,7 +96,7 @@ export class TripAssignPanel extends BasePanel implements IPanel {
         this.controller.v.pop();
     }
 
-    private onUnassign(evt: Event): void {
+    private onUnAssignConfirm(evt: Event): void {
         if (this.state && this.row) {
             const trip_id = this.row.getString("_id");
             this.drivernumField.v.setValue(this.state, null, CONTEXT.c)
@@ -102,11 +115,16 @@ export class TripAssignPanel extends BasePanel implements IPanel {
         }
     }
 
-    private onAnchorClick(evt: Event): void {
+    private onUnassign(evt: Event): void {
+        if (this.state && this.row) {
+            this.unAssignConfirmDlg.show();
+        }
+    }
+
+    private onAssignConfirm(evt: Event): void {
         if (this.state && this.row) {
             const tripId = this.row.get("_id");
-            const target = evt.currentTarget as HTMLElement;
-            const driverNum = target.dataset["drivernum"];
+            const driverNum = this.assignConfirmDlg.row.get("drivernum");
             if (driverNum) {
                 this.drivernumField.v.setValue(
                     this.state, driverNum, CONTEXT.c)
@@ -124,6 +142,22 @@ export class TripAssignPanel extends BasePanel implements IPanel {
                     TOASTER.error(`ERROR: ${err}`);
                 });
             }
+        }
+    }
+
+    private onAnchorClick(evt: Event): void {
+        const target = evt.currentTarget as HTMLElement;
+        const newDriverNum = target.dataset["drivernum"];
+        if (newDriverNum) {
+            if (this.state && this.state.value("drivernum")) {
+                this.assignConfirmDlg.prompt =
+                    `Are you sure you want to reassign this trip from driver ` +
+                    `${this.state.value("drivernum")} to ${newDriverNum}?`;
+            } else {
+                this.assignConfirmDlg.prompt =
+                    `Are you sure you want to assign driver ${newDriverNum}?`;
+            }
+            this.assignConfirmDlg.show(new Row({drivernum: newDriverNum}));
         }
     }
 
@@ -171,8 +205,7 @@ export class TripAssignPanel extends BasePanel implements IPanel {
             this.row = PanelData.rowOf(panelData);
         }
         if (this.row) {
-            this.state = new State(this.entity.v, this.row.core);
-            this.entity.v.loadState(this.row, this.state);
+            this.state = this.entity.v.rowToState(this.row);
             this.rowToUI(this.row);
             this.queryDrivers();
             this.qElement("-div").hidden = false;

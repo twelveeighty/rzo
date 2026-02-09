@@ -20,16 +20,13 @@
 import pg from "pg";
 import Pool from "pg-pool";
 import Cursor from "pg-cursor";
-
 import {
-    Entity, IResultSet, IConfiguration, DaemonWorker, MemResultSet, Row,
-    TypeCfg, ClassSpec, _IError, Nobody, Cfg, Logger, IntegerField, BigDecimal
+         Entity, IResultSet, IConfiguration, DaemonWorker, MemResultSet, Row,
+         TypeCfg, ClassSpec, _IError, Nobody, Cfg, Logger, IntegerField,
+         BigDecimal
 } from "../base/core.js";
-
-import { LocalDay, AccSplit } from "../accting/acc-core.js";
-
+import { LocalDay, Split } from "../accting/acc-core.js";
 import { LeaderElector } from "./election.js";
-
 import { PgConnection } from "./pg-client.js";
 
 class BalanceLogError extends _IError {
@@ -43,11 +40,11 @@ type BalanceLogWorkerSpec = ClassSpec & {
     leaderElector: string;
     /* Set extraMinutes to the number of minutes we wait after midnight of
      * the new day to close out the previous day.
-     * Use this value to set a grace period where you expect transactions to
+     * Use this value to set a grace period where you expect findocs to
      * be posted after midnight for the previous day.
      * We use UTC elapsed time to determine action, which should work for
-     * virtually all automated systems that create or replicate transactions,
-     * but be aware that if transactions are linked to Daylight Savings
+     * virtually all automated systems that create or replicate findocs,
+     * but be aware that if findocs are linked to Daylight Savings
      * changes, then this parameter may have to be set longer to compensate.
      */
     extraMinutes: number;
@@ -337,11 +334,11 @@ export class BalanceLogWorker extends DaemonWorker {
          */
         const endUtc = LocalDay.fromPeriod(dayPeriod).utc;
         const statement = startUtc != null ?
-            `select * from accsplit where ` +
+            `select * from split where ` +
             `account_id = \$1 and ` +
             `posted >= \$2 and posted < \$3 ` +
             `order by posted` :
-            `select * from accsplit where ` +
+            `select * from split where ` +
             `account_id = \$1 and ` +
             `posted < \$2 ` +
             `order by posted`;
@@ -403,7 +400,7 @@ export class BalanceLogWorker extends DaemonWorker {
                             lastBalance.get("balance"));
                         const curVal = BigDecimal.ensure(
                             lastBalance.get("presentvalue"));;
-                        if (AccSplit.balanceOperator(splitRow) == "+=") {
+                        if (Split.balanceOperator(splitRow) == "+=") {
                             lastBalance.put("balance", curBal.add(quantity));
                             lastBalance.put(
                                 "presentvalue", curVal.add(amount));

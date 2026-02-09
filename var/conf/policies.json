@@ -239,14 +239,14 @@
                 { "resource": "entity/balancelog", "action": "post", "effect": "allow" },
                 { "resource": "entity/balancelog", "action": "put", "effect": "allow" },
                 { "resource": "entity/balancelog", "action": "delete", "effect": "allow" },
-                { "resource": "entity/acctrans", "action": "get", "effect": "allow" },
-                { "resource": "entity/acctrans", "action": "post", "effect": "allow" },
-                { "resource": "entity/acctrans", "action": "put", "effect": "allow" },
-                { "resource": "entity/acctrans", "action": "delete", "effect": "allow" },
-                { "resource": "entity/accsplit", "action": "get", "effect": "allow" },
-                { "resource": "entity/accsplit", "action": "post", "effect": "allow" },
-                { "resource": "entity/accsplit", "action": "put", "effect": "allow" },
-                { "resource": "entity/accsplit", "action": "delete", "effect": "allow" }
+                { "resource": "entity/findoc", "action": "get", "effect": "allow" },
+                { "resource": "entity/findoc", "action": "post", "effect": "allow" },
+                { "resource": "entity/findoc", "action": "put", "effect": "allow" },
+                { "resource": "entity/findoc", "action": "delete", "effect": "allow" },
+                { "resource": "entity/split", "action": "get", "effect": "allow" },
+                { "resource": "entity/split", "action": "post", "effect": "allow" },
+                { "resource": "entity/split", "action": "put", "effect": "allow" },
+                { "resource": "entity/split", "action": "delete", "effect": "allow" }
             ]
         }
     }

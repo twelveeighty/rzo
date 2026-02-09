@@ -43,6 +43,17 @@ export class AccountViewPanel extends ViewPanel implements IPanel {
         this.qButton("-view-txns-btn").addEventListener("click", (evt) => {
             this.onTransactions(evt);
         });
+        this.qButton("-create-txn-btn").addEventListener("click", (evt) => {
+            this.onCreateTransaction(evt);
+        });
+    }
+
+    private onCreateTransaction(evt: Event): void {
+        if (this.state) {
+            const row = this.entity.v.stateToRow(this.state);
+            this.controller.v.stack(
+                "transcreate-panel", new PanelData("Row", row));
+        }
     }
 
     private onSplits(evt: Event): void {

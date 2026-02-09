@@ -231,7 +231,7 @@ export class TripsListPanel extends BasePanel implements IPanel {
             if (newEndDate) {
                 filter.op("appointmentts", "<=", newEndDate.toISOString());
             }
-            filter.isNull("drivernum_id");
+            filter.op("status", "=", "SCHED");
             this.startDate = newStartDate;
             this.endDate = newEndDate;
             this.qElement("-search-daterange-pre").innerText = this.shortDates(

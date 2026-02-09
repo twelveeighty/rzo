@@ -117,13 +117,13 @@ export class LocalDay {
 }
 
 export class Txn {
-    acctrans: AccTrans;
-    transaction: State;
+    finDocEntity: FinDoc;
+    findoc: State;
     splits: State[];
 
-    constructor(entity: AccTrans, state: State) {
-        this.acctrans = entity;
-        this.transaction = state;
+    constructor(entity: FinDoc, state: State) {
+        this.finDocEntity = entity;
+        this.findoc = state;
         this.splits = [];
     }
 
@@ -139,30 +139,30 @@ export class Txn {
     }
 
     private setCreated(now: Date): void {
-        this.transaction.field("created").value = now;
+        this.findoc.field("created").value = now;
         for (const split of this.splits) {
             split.field("created").value = now;
         }
     }
 
     private async validate(context: IContext): Promise<void> {
-        const accsplit = this.acctrans.accsplitEntity.v;
+        const splitEntity = this.finDocEntity.splitEntity.v;
         const validations: Promise<void>[] = [];
-        validations.push(this.acctrans.validate(
-            "create", this.transaction, context));
+        validations.push(this.finDocEntity.validate(
+            "create", this.findoc, context));
         for (const split of this.splits) {
-            validations.push(accsplit.validate("create", split, context));
+            validations.push(splitEntity.validate("create", split, context));
         }
         await Promise.all(validations);
     }
 
     private async activate(context: IContext): Promise<void> {
-        const accsplit = this.acctrans.accsplitEntity.v;
+        const splitEntity = this.finDocEntity.splitEntity.v;
         const activations: Promise<SideEffects[]>[] = [];
-        activations.push(this.acctrans.activate(
-            "create", this.transaction, context));
+        activations.push(this.finDocEntity.activate(
+            "create", this.findoc, context));
         for (const split of this.splits) {
-            activations.push(accsplit.activate("create", split, context));
+            activations.push(splitEntity.activate("create", split, context));
         }
         await Promise.all(activations);
     }
@@ -175,51 +175,51 @@ export class Txn {
                 `Splits total debits ${drTotal.toString()} does not equal ` +
                 `credits ${crTotal.toString()}`);
         }
-        this.transaction.field("amount").value = drTotal;
+        this.findoc.field("amount").value = drTotal;
     }
 
     checkOrSetIds(): void {
         /* Check _id is specified. If so, the
-         * corresponding acctrans_id, as well as all accsplit's _id
+         * corresponding findoc_id, as well as all split's _id
          * must also be specified.
          * If _id is not specified, all id's will get created.
          */
-        if (this.transaction.hasId()) {
-            const acctransId = this.transaction.id;
+        if (this.findoc.hasId()) {
+            const findocId = this.findoc.id;
             for (const split of this.splits) {
                 if (!split.hasId() ||
-                    split.field("acctrans_id").value != acctransId) {
+                    split.field("findoc_id").value != findocId) {
                 } else {
                     throw new AcctingError(
                         "Invalid Txn split: missing or mismatched _id " +
-                        "and/or acctrans_id");
+                        "and/or findoc_id");
                 }
             }
         } else {
-            const acctransId = Entity.generateId();
-            this.transaction.core = new CoreColumns(acctransId, null);
+            const findocId = Entity.generateId();
+            this.findoc.core = new CoreColumns(findocId, null);
             for (const split of this.splits) {
                 split.core = new CoreColumns(Entity.generateId(), null);
-                split.field("acctrans_id").value = acctransId;
+                split.field("findoc_id").value = findocId;
             }
         }
     }
 
     checkNums(): boolean {
-        /* Check if transaction has transnum specified. If so, all splits'
-         * corresponding acctrans, as well as all splitnum's must also be
+        /* Check if transaction has docnum specified. If so, all splits'
+         * corresponding findoc, as well as all splitnum's must also be
          * specified.
          */
-        const transnumField = this.transaction.field("transnum");
-        if (transnumField.isNotNull) {
-            const transnum = transnumField.value;
+        const docnumField = this.findoc.field("docnum");
+        if (docnumField.isNotNull) {
+            const docnum = docnumField.value;
             for (const split of this.splits) {
-                const acctransField = split.field("acctrans");
-                if (acctransField.isNull || split.field("splitnum").isNull ||
-                        acctransField.value != transnum) {
+                const findocField = split.field("findoc");
+                if (findocField.isNull || split.field("splitnum").isNull ||
+                        findocField.value != docnum) {
                     throw new AcctingError(
                         "Invalid Txn split: missing or mismatched splitnum " +
-                        "and/or transnum");
+                        "and/or docnum");
                 }
             }
             return true;
@@ -229,21 +229,21 @@ export class Txn {
     }
 
     async createNums(context: IContext, service: IService): Promise<void> {
-        const transnum = await this.acctrans.transnumField.v.generate(
+        const docnum = await this.finDocEntity.docnumField.v.generate(
             service, context);
-        this.transaction.field("transnum").value = transnum;
-        const splitnumField = this.acctrans.splitnumField.v;
+        this.findoc.field("docnum").value = docnum;
+        const splitnumField = this.finDocEntity.splitnumField.v;
         for (const split of this.splits) {
-            split.field("acctrans").value = transnum;
+            split.field("findoc").value = docnum;
             const splitnum = await splitnumField.generate(service, context);
             split.field("splitnum").value = splitnum;
         }
     }
 
     processPostedDT(): void {
-        const posted = this.transaction.field("posted").value;
+        const posted = this.findoc.field("posted").value;
         if (!posted) {
-            throw new AcctingError("Transaction is missing 'posted' date");
+            throw new AcctingError("FinDoc is missing 'posted' date");
         }
         for (const split of this.splits) {
             split.field("posted").value = posted;
@@ -263,40 +263,39 @@ export class Txn {
         await this.activate(context);
         bizTrans.post(
             logger, context,
-            this.acctrans, this.acctrans.stateToRow(this.transaction));
-        const accsplit = this.acctrans.accsplitEntity.v;
+            this.finDocEntity, this.finDocEntity.stateToRow(this.findoc));
+        const splitEntity = this.finDocEntity.splitEntity.v;
         for (const split of this.splits) {
             bizTrans.post(
-                logger, context,
-                accsplit, accsplit.stateToRow(split));
+                logger, context, splitEntity, splitEntity.stateToRow(split));
         }
     }
 }
 
 export type TxnRaw = {
-    transaction: JsonObject;
+    findoc: JsonObject;
     splits: JsonObject[];
 }
 
-export class AccTrans extends ImmutableEntity {
-    accsplitEntity: Cfg<Entity>;
-    transnumField: Cfg<GeneratorField>;
+export class FinDoc extends ImmutableEntity {
+    splitEntity: Cfg<Entity>;
+    docnumField: Cfg<GeneratorField>;
     splitnumField: Cfg<GeneratorField>;
 
     constructor(config: TypeCfg<EntitySpec>, blueprints: Map<string, any>) {
         super(config, blueprints);
-        this.accsplitEntity = new Cfg("accsplit");
-        this.transnumField = new Cfg("acctrans.transnum");
-        this.splitnumField = new Cfg("accsplit.splitnum");
+        this.splitEntity = new Cfg("split");
+        this.docnumField = new Cfg("findoc.docnum");
+        this.splitnumField = new Cfg("split.splitnum");
     }
 
     configure(configuration: IConfiguration) {
         super.configure(configuration);
-        this.accsplitEntity.v =
-            configuration.getEntity(this.accsplitEntity.name);
-        this.transnumField.setIfCast(
-            `${this.name}: configuration error: 'transnum' `,
-            configuration.getField(this.transnumField.name),
+        this.splitEntity.v =
+            configuration.getEntity(this.splitEntity.name);
+        this.docnumField.setIfCast(
+            `${this.name}: configuration error: 'docnum' `,
+            configuration.getField(this.docnumField.name),
             GeneratorField);
         this.splitnumField.setIfCast(
             `${this.name}: configuration error: 'splitnum' `,
@@ -305,7 +304,7 @@ export class AccTrans extends ImmutableEntity {
     }
 }
 
-export class AccSplit extends ImmutableEntity {
+export class Split extends ImmutableEntity {
     accountBalEntity: Cfg<Entity>;
     holdingEntity: Cfg<Entity>;
     balanceLogEntity: Cfg<Entity>;
@@ -378,7 +377,7 @@ export class AccSplit extends ImmutableEntity {
 
     epilogue(row: Row, service?: IReadOnlyService,
              context?: IContext): Epilogue[] {
-        /* Inbound: row => accsplit,
+        /* Inbound: row => split,
          * Outbound:
          *           balancelog delete (if account is 'islogged' and 'posted'
          *                              before the accounting day period's
@@ -388,13 +387,13 @@ export class AccSplit extends ImmutableEntity {
          *                                  midnight)
          *           accountbalance update (always)
          *           balancelog post (always)
-         *           holding update (if 'price' was specified in the accsplit)
+         *           holding update (if 'price' was specified in the split)
          */
         const updatedby = context ? context.userAccountId : (
             row.has("updatedby") ? row.get("updatedby") : Nobody.ID);
         const updated = row.has("updated") ? row.get("updated") : new Date();
         const cols: EpilogueColumn[] = [];
-        const operator = AccSplit.balanceOperator(row);
+        const operator = Split.balanceOperator(row);
         const amount = row.get("amount");
         cols.push({
             column: "presentvalue",

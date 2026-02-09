@@ -17,7 +17,8 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { ServiceSource } from "../../base/core.js";
+import { ServiceSource, Row, BizTrans } from "../../base/core.js";
+import { Rider } from "../../scheduler/trip.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
 import { TOASTER } from "../toaster.js";
 import {
@@ -76,6 +77,25 @@ export class RiderEditPanel extends FormPanel implements IPanel {
         .catch((err) => {
             TOASTER.error(`ERROR: ${err}`);
         });
+    }
+
+    protected async save(): Promise<Row> {
+        if (this.state) {
+            if (this.state.hasId()) {
+                return this.entity.v.put(this.service.v, this.state, CONTEXT.c);
+            } else {
+                const bt = new BizTrans();
+                const bte = await this.entity.v.postBizTrans(
+                    bt, this.service.v, this.state, CONTEXT.c);
+                await (<Rider>(this.entity.v)).createAccounts(
+                    bt, this.service.v, CONTEXT.c, bte.row);
+                const result = await this.service.v.processBizTrans(
+                    this.logger, bt);
+                return result.fish(this.entity.v.name, bte.row.get("_id"));
+            }
+        } else {
+            throw new Error("this.state must be defined at this point");
+        }
     }
 
     protected initUI(): void {

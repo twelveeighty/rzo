@@ -21,7 +21,7 @@ import {
     Cfg, ServiceSource, IResultSet, Field, Collection, Query, Filter
 } from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
-import { BasePanel, PanelData } from "../panel.js";
+import { BasePanel, PanelData, DynElement } from "../panel.js";
 
 const DATELEN =  "XXXX-XX-XX".length;
 
@@ -33,7 +33,7 @@ export class SplitsBasePanel extends BasePanel {
     constructor() {
         super();
         this.abortController = null;
-        this.postedField = new Cfg("accsplit.posted");
+        this.postedField = new Cfg("split.posted");
         this.accbalances = new Cfg("accountbalances");
     }
 
@@ -80,34 +80,37 @@ export class SplitsBasePanel extends BasePanel {
 
     addTd(tr: HTMLElement, rs: IResultSet, field: string,
                   tdClass?: string): void {
-        const td = document.createElement("td");
-        if (tdClass) {
-            td.className = tdClass;
-        }
-        if (!rs.isNull(field)) {
-            td.innerText = rs.getString(field);
-        }
-        tr.appendChild(td);
+        const td = new DynElement(
+        {
+            tag: "td",
+            text: rs.getString(field)
+        })
+        .addOptionalAttribute("class", tdClass);
+        tr.appendChild(td.asElement());
     }
 
-    addAnchor(tr: HTMLElement, rs: IResultSet, idPrefix: string,
-              idField: string, valueField: string, listener: EventListener,
+    addAnchor(tr: HTMLElement, rs: IResultSet, idField: string,
+              valueField: string, listener: EventListener,
               abortController: AbortController): void {
-        const anchor = document.createElement("a");
-        anchor.href = "#";
-        anchor.addEventListener(
-            "click",
-            listener,
-            { signal: abortController.signal }
+        const td = new DynElement({ tag: "td" })
+        .append(
+            new DynElement(
+            {
+                tag: "a",
+                href: "#",
+                text: rs.get(valueField),
+                data: {
+                    id: rs.get(idField)
+                }
+            })
+            .addListener(
+                "click", listener, abortController
+            )
         );
-        anchor.id = `${idPrefix}-${rs.get(idField)}`;
-        anchor.innerText = rs.get(valueField);
-        const td = document.createElement("td");
-        td.appendChild(anchor);
-        tr.appendChild(td);
+        tr.appendChild(td.asElement());
     }
 
-    renderSplits(idPrefix: string, resultSet: IResultSet): void {
+    renderSplits(resultSet: IResultSet): void {
         if (this.abortController != null) {
             this.abortController.abort();
         }
@@ -119,7 +122,7 @@ export class SplitsBasePanel extends BasePanel {
             this.addTd(tr, resultSet, "splitnum");
             this.addDateTd(tr, resultSet, "posted");
             this.addAnchor(
-                tr, resultSet, idPrefix, "acctrans_id", "acctrans",
+                tr, resultSet, "findoc_id", "findoc",
                 (evt) => {
                     evt.preventDefault();
                     this.onAccountClick(evt);
@@ -140,11 +143,11 @@ export class SplitsBasePanel extends BasePanel {
     }
 
     onAccountClick(evt: Event): void {
-        const target = evt.currentTarget as Element;
-        if (target && target.id && target.id.length > 4) {
-            const _id = target.id.slice(4);
+        const target = evt.currentTarget as HTMLElement;
+        const id = target.dataset["id"];
+        if (id) {
             this.controller.v.stack(
-                "transview-panel", new PanelData("string", _id));
+                "transview-panel", new PanelData("string", id));
         }
     }
 

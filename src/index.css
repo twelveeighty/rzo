@@ -57,7 +57,7 @@
 }
 
 .text-small {
-    font-size: 85%;
+    font-size: 12px;
 }
 
 .dropdown-toggle:not(:focus) {

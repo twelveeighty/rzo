@@ -25,7 +25,7 @@ import {
     Row, Logger, ServiceSource, Nobody, BizTrans
 } from "./base/core.js";
 
-import { TxnRaw, Txn, AccTrans } from "./accting/acc-core.js";
+import { TxnRaw, Txn, FinDoc } from "./accting/acc-core.js";
 
 import { RZO } from "./base/configuration.js";
 
@@ -82,8 +82,8 @@ try {
         const service = (<ServiceSource>source.ensure(ServiceSource)).service;
         const authenticator = RZO.getAuthenticator("auth").service;
         // const accountEntity = RZO.getEntity("account");
-        const transEntity = RZO.getEntity("acctrans") as AccTrans;
-        const splitEntity = RZO.getEntity("accsplit");
+        const findocEntity = RZO.getEntity("findoc") as FinDoc;
+        const splitEntity = RZO.getEntity("split");
         const context = await authenticator.login(logger, credsRow);
         logger.log(`Session: ${JSON.stringify(context)}`);
         try {
@@ -92,25 +92,26 @@ try {
                 if (!txnRaw) {
                     break;
                 }
-                const transState = await transEntity.create(context, service);
-                const transInputRow = Row.dataToRow(txnRaw.transaction);
-                for (const column of transInputRow.columns) {
-                    await transEntity.setValue(
-                        transState, column, transInputRow.get(column),
+                const findocState = await findocEntity.create(context, service);
+                const findocInputRow = Row.dataToRow(txnRaw.findoc);
+                for (const column of findocInputRow.columns) {
+                    await findocEntity.setValue(
+                        findocState, column, findocInputRow.get(column),
                         context);
                 }
-                await transEntity.setValue(transState, "created", now, context);
-                const posted = transState.field("posted").value;
-                const acctrans = transState.field("transnum").value;
-                const memo = transState.field("memo").value;
-                const acctrans_id = Nobody.ID;
-                const txn = new Txn(transEntity, transState);
+                await findocEntity.setValue(findocState, "created",
+                                            now, context);
+                const posted = findocState.field("posted").value;
+                const findoc = findocState.field("docnum").value;
+                const memo = findocState.field("memo").value;
+                const findoc_id = Nobody.ID;
+                const txn = new Txn(findocEntity, findocState);
                 for (const splitObj of txnRaw.splits) {
                     const splitInputRow = Row.dataToRow(splitObj);
                     const splitState = await splitEntity.create(
                         context, service);
-                    splitState.field("acctrans").value = acctrans;
-                    splitState.field("acctrans_id").value = acctrans_id;
+                    splitState.field("findoc").value = findoc;
+                    splitState.field("findoc_id").value = findoc_id;
                     for (const column of splitInputRow.columns) {
                         await splitEntity.setValue(
                             splitState, column, splitInputRow.get(column),

@@ -44,8 +44,22 @@
         "apiVersion": "v1",
         "kind": "Worker",
         "metadata": {
-            "name": "balancelog",
-            "voided": true
+            "name": "tripmgr"
+        },
+        "spec": {
+            "type": "server.scheduler.tripmanager.TripMgrWorker",
+            "source": "db",
+            "leaderElector": "leaderelector",
+            "extraMinutes": 1,
+            "checkFrequency": 30000
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Worker",
+        "metadata": {
+            "voided": true,
+            "name": "balancelog"
         },
         "spec": {
             "type": "server.pg-balancelog.BalanceLogWorker",
@@ -59,8 +73,8 @@
         "apiVersion": "v1",
         "kind": "Worker",
         "metadata": {
-            "name": "hoover",
-            "voided": true
+            "voided": true,
+            "name": "hoover"
         },
         "spec": {
             "type": "server.hoover.HooverWorker",
@@ -315,7 +329,8 @@
                 { "name": "adapter/attachadapter", "level": "Info" },
                 { "name": "balancelogger", "level": "Info" },
                 { "name": "entity/accsplit", "level": "Info" },
-                { "name": "hoover", "level": "Info" }
+                { "name": "hoover", "level": "Info" },
+                { "name": "tripmgr", "level": "Info" }
             ]
         }
     }

@@ -18,7 +18,7 @@
 */
 
 import {
-    Collection, Cfg, ServiceSource, Filter, Query, IResultSet, Field
+         Collection, Cfg, ServiceSource, Filter, Query, IResultSet, Field
 } from "../../base/core.js";
 import { MaterializedCollection } from "../../base/collection.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
@@ -27,18 +27,18 @@ import { IPanel, BasePanel, PanelData } from "../panel.js";
 
 const DATELEN =  "XXXX-XX-XX".length;
 
-export class TransViewPanel extends BasePanel implements IPanel {
+export class DocViewPanel extends BasePanel implements IPanel {
     splits: Cfg<Collection>;
-    transactions: Cfg<Collection>;
+    findocs: Cfg<Collection>;
     accounts: Cfg<MaterializedCollection>;
     postedField: Cfg<Field>;
 
     constructor() {
         super();
         this.prefix = "docview";
-        this.splits = new Cfg("accsplits");
-        this.transactions = new Cfg("acctransactions");
-        this.postedField = new Cfg("accsplit.posted");
+        this.splits = new Cfg("splits");
+        this.findocs = new Cfg("findocs");
+        this.postedField = new Cfg("split.posted");
         this.accounts = new Cfg("accountscache");
     }
 
@@ -48,9 +48,9 @@ export class TransViewPanel extends BasePanel implements IPanel {
 
     initialize(): void {
         this.splits.v = RZO.getCollection(this.splits.name);
-        this.transactions.v = RZO.getCollection(this.transactions.name);
+        this.findocs.v = RZO.getCollection(this.findocs.name);
         this.accounts.setIfCast(
-            `TransViewPanel: invalid collection: '${this.accounts.name}' `,
+            `DocViewPanel: invalid collection: '${this.accounts.name}' `,
             RZO.getCollection(this.accounts.name),
             MaterializedCollection);
         this.service.v =
@@ -86,7 +86,7 @@ export class TransViewPanel extends BasePanel implements IPanel {
         tr.appendChild(td);
     }
 
-    private async renderTransaction(resultSet: IResultSet): Promise<void> {
+    private async renderFinDoc(resultSet: IResultSet): Promise<void> {
         const tbody = this.qElement("-details");
         tbody.innerHTML = "";
         if (resultSet.next()) {
@@ -131,7 +131,7 @@ export class TransViewPanel extends BasePanel implements IPanel {
     }
 
     private loadSplits(id: string): void {
-        const query = new Query([], new Filter().op("acctrans_id", "=", id));
+        const query = new Query([], new Filter().op("findoc_id", "=", id));
         this.splits.v.query(CONTEXT.c, query)
         .then((resultSet) => {
             this.renderSplits(resultSet);
@@ -147,8 +147,8 @@ export class TransViewPanel extends BasePanel implements IPanel {
                 await this.accounts.v.build(CONTEXT.c);
             }
             const query = new Query([], new Filter().op("_id", "=", id));
-            const rs = await this.transactions.v.query(CONTEXT.c, query);
-            this.renderTransaction(rs);
+            const rs = await this.findocs.v.query(CONTEXT.c, query);
+            this.renderFinDoc(rs);
             this.loadSplits(id);
         } catch (err: any) {
             TOASTER.error(`ERROR: ${err}`);

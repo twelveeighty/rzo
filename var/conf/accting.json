@@ -133,6 +133,7 @@
                   "default": "false"
                 },
                 { "name": "entityid", "type": "UuidField" },
+                { "name": "entitytag", "type": "StringField" },
                 { "name": "description", "type": "StringField" },
                 { "name": "status", "type": "AliasValueList",
                       "required": true,
@@ -172,13 +173,14 @@
             "canUpdate": true,
             "canDelete": false,
             "keyFields": [
-                { "name": "account", "type": "CrossoverForeignKey",
+                { "name": "account", "type": "StateAwareCrossoverKey",
                       "required": true,
                       "target": "account",
                       "value": "name",
                       "collection": "accounts",
                       "copies": [
-                          { "from": "entityid", "to": "entityid" }
+                          { "from": "entityid", "to": "entityid" },
+                          { "from": "entitytag", "to": "entitytag" }
                       ]
                 }
             ],
@@ -191,7 +193,8 @@
                     "precision": 15, "scale": 2,
                     "default": "0.00"
                 },
-                { "name": "entityid", "type": "UuidField" }
+                { "name": "entityid", "type": "UuidField" },
+                { "name": "entitytag", "type": "StringField" }
             ],
             "indexes": [
                 { "name": "entityid",
@@ -204,15 +207,15 @@
         "apiVersion": "v1",
         "kind": "Entity",
         "metadata": {
-            "name": "acctrans"
+            "name": "findoc"
         },
         "spec": {
-            "type": "accting.acc-core.AccTrans",
-            "table": "acctrans",
+            "type": "accting.acc-core.FinDoc",
+            "table": "findoc",
             "keyFields": [
-                { "name": "transnum", "type": "GeneratorField", "required": true,
+                { "name": "docnum", "type": "GeneratorField", "required": true,
                       "maxlength": 32,
-                      "format": "T$YY-$NEXT",
+                      "format": "D$YY-$NEXT",
                       "min": 100000,
                       "max": 999999
                 }
@@ -243,11 +246,11 @@
         "apiVersion": "v1",
         "kind": "Entity",
         "metadata": {
-            "name": "accsplit"
+            "name": "split"
         },
         "spec": {
-            "type": "accting.acc-core.AccSplit",
-            "table": "accsplit",
+            "type": "accting.acc-core.Split",
+            "table": "split",
             "keyFields": [
                 { "name": "splitnum", "type": "GeneratorField", "required": true,
                       "maxlength": 32,
@@ -257,11 +260,11 @@
                 }
             ],
             "coreFields": [
-                { "name": "acctrans", "type": "ForeignKey",
+                { "name": "findoc", "type": "ForeignKey",
                       "required": true,
-                      "target": "acctrans",
-                      "value": "transnum",
-                      "collection": "acctransactions"
+                      "target": "findoc",
+                      "value": "docnum",
+                      "collection": "findocs"
                 },
                 { "name": "account", "type": "CrossoverForeignKey",
                       "required": true,

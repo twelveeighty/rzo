@@ -190,8 +190,17 @@ export class Filter {
     static ComparisonRegex = /^([\w\.]+)([<>=!@?~]+)(.+)/;
     static QueryAnd      = "q=a&w=";
     static QueryOr       = "q=o&w=";
-
     static AS_IS = true;
+
+    static copy(source: Filter): Filter {
+        const result = new Filter(source.combinedAs);
+        if (source.sealed) {
+            result.seal(source.where);
+        } else {
+            result.chunks = source.chunks;
+        }
+        return result;
+    }
 
     constructor(combinedAs?: FilterLogical) {
         this.combinedAs = combinedAs || "and";
@@ -280,10 +289,22 @@ export class Filter {
     }
 
     op(leftHand: string, operator: FilterOperator, rightHand: string,
-                         asIs?: boolean): Filter {
+       asIs?: boolean): Filter {
         const finalRight = !asIs ? `'${rightHand}'` : rightHand.trim();
         this.chunks.push(`${leftHand.trim()}${operator.trim()}` + finalRight);
         return this;
+    }
+
+    and(operand: Filter): Filter {
+        const result = new Filter();
+        result.seal(`(${this.where}) and (${operand.where})`);
+        return result;
+    }
+
+    or(operand: Filter): Filter {
+        const result = new Filter();
+        result.seal(`(${this.where}) or (${operand.where})`);
+        return result;
     }
 
     get where(): string {
@@ -430,7 +451,7 @@ export class Row {
         return row.raw();
     }
 
-    static must(row?: Row, error?: string): Row {
+    static must(row?: Row | null, error?: string): Row {
         if (row) {
             return row;
         }
@@ -1012,6 +1033,18 @@ export class BizTrans {
         return this._logger;
     }
 
+    fish(entity: string, id: string): Row {
+        const bte = this.entries.find(
+            (entry) => entry.entity.name == entity &&
+                entry.row.get("_id") == id);
+        if (bte) {
+            return bte.row;
+        } else {
+            throw new CoreError(
+                `Cannot locate entity ${entity} ${id} from BizTrans`);
+        }
+    }
+
     put(logger: Logger, context: IContext, entity: Entity, id: string,
           row: Row): BizTransEntry {
         if (!this._context) {
@@ -1396,8 +1429,13 @@ export class BigDecimal {
     static DECIMALS = 18; // number of decimals on all instances
     static ROUNDED = true; // numbers are truncated (false) or rounded (true)
     static SHIFT = BigInt("1" + "0".repeat(BigDecimal.DECIMALS));
+    static ZERO = BigDecimal.zero();
 
     private _n: bigint;
+
+    static zero(): BigDecimal {
+        return new BigDecimal("0");
+    }
 
     constructor(value: any) {
         if (value === undefined || value === null) {
@@ -1488,6 +1526,26 @@ export class BigDecimal {
         );
     }
 
+    gt(other: BigDecimal): boolean {
+        return this._n > other._n;
+    }
+
+    lt(other: BigDecimal): boolean {
+        return this._n < other._n;
+    }
+
+    gte(other: BigDecimal): boolean {
+        return this._n >= other._n;
+    }
+
+    lte(other: BigDecimal): boolean {
+        return this._n <= other._n;
+    }
+
+    notEquals(other: BigDecimal): boolean {
+        return this._n != other._n;
+    }
+
     equals(other: BigDecimal): boolean {
         return this._n == other._n;
     }
@@ -1541,6 +1599,7 @@ export class State {
     private fields: Map<string, FieldState>;
     entity: Entity;
     core?: CoreColumns;
+    bizTrans?: BizTrans;
 
     static must(state?: State | null, error?: string): State {
         if (state) {
@@ -1599,6 +1658,12 @@ export class State {
 
     asString(name: string): string {
         return this.field(name).asString;
+    }
+
+    setAll(names: string[], source: Row) {
+        for (const name of names) {
+            this.field(name).value = source.get(name);
+        }
     }
 }
 
@@ -2584,6 +2649,31 @@ export class CrossoverForeignKey extends ForeignKey {
     }
 }
 
+export class StateAwareCrossoverKey extends CrossoverForeignKey {
+
+    async validate(phase: Phase, state: State, fieldState: FieldState,
+                   context: IContext): Promise<void> {
+        if (phase == "set" && fieldState.dirtyNotNull && state.bizTrans &&
+            !this.entity.regionalizedBy) {
+            //TODO: add support for Regionalized StateAwareCrossovers
+            const targetValue = fieldState.value;
+            const bte = state.bizTrans.entries.find(
+                (entry) => entry.entity.name == this.targetEntity.name &&
+                    entry.row.get(this.targetField.name) == targetValue
+            );
+            if (bte) {
+                const rs = MemResultSet.fromRow(bte.row);
+                rs.next();
+                fieldState.cachedResultSet = rs;
+            } else {
+                return super.validate(phase, state, fieldState, context);
+            }
+        } else {
+            return super.validate(phase, state, fieldState, context);
+        }
+    }
+}
+
 type SequenceCfg = {
     field: string;
     increment: number;
@@ -2880,17 +2970,13 @@ export class Entity {
     stateToRow(state: State): Row {
         const columns: string[] = [];
         const fields = this.allFields;
-
         for (const field of fields) {
             field.toColumnName(columns);
         }
-
         const row = Row.emptyRow(columns, state.core);
-
         for (const field of fields) {
             field.save(row, state);
         }
-
         return row;
     }
 
@@ -3003,6 +3089,11 @@ export class Entity {
             return field;
         }
         throw new CoreError(`Entity ${this.name} has no field called ${name}`);
+    }
+
+    cpSetValue(state: State, name: string, value: any, context: IContext,
+               sideEffects: Promise<SideEffects>[]): void {
+        sideEffects.push(this.setValue(state, name, value, context));
     }
 
     async setValue(state: State, name: string, value: any,

@@ -1,7 +1,7 @@
 /*
     RZO - A Business Application Framework
 
-    Copyright (C) 2024-2025 Frank Vanderham
+    Copyright (C) 2024-2026 Frank Vanderham
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -17,16 +17,16 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { Cfg, Entity, ServiceSource, BizTrans } from "../../base/core.js";
+import {
+    Cfg, Entity, ServiceSource, BizTrans, State, BigDecimal
+} from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
-
 import { Trip } from "../../scheduler/trip.js";
-
 import { TOASTER } from "../toaster.js";
 import {
     IPanel, FormPanel, Control, LocalDateControl, PanelMessage, PanelData
 } from "../panel.js";
-
+import { OkCancelDialog } from "../dialogs.js";
 
 export class TripEditPanel extends FormPanel implements IPanel {
     ooverrideCheckbox: HTMLInputElement;
@@ -34,13 +34,15 @@ export class TripEditPanel extends FormPanel implements IPanel {
     omaplinkManual: HTMLInputElement;
     dmaplinkManual: HTMLInputElement;
     riderEntity: Cfg<Entity>;
+    completeConfirmDlg: OkCancelDialog;
+    cancelConfirmDlg: OkCancelDialog;
 
     constructor() {
         super("trip", "-edit-div", "-edit-form",
               "-edit-btn", "-edit-cancel-btn", [
                   new Control("trip-tripnum-txt", "tripnum", false),
                   new Control("trip-zone-sel", "zone", true),
-                  new Control("trip-status-sel", "status", true),
+                  new Control("trip-status-txt", "status", true),
                   new Control("trip-price-sel", "price", true),
                   new Control("trip-triptype-sel", "triptype", true),
                   new LocalDateControl("trip-appointmentts-txt",
@@ -72,6 +74,20 @@ export class TripEditPanel extends FormPanel implements IPanel {
         this.omaplinkManual = this.getInput("-omaplinkmanual-txt");
         this.dmaplinkManual = this.getInput("-dmaplinkmanual-txt");
         this.riderEntity = new Cfg("riderEntity");
+        this.completeConfirmDlg = new OkCancelDialog(
+            "Complete this trip?",
+            "Completing this trip will commit all financial transactions " +
+               "and remove it from view",
+            "Yes, complete trip", "No",
+            (evt) => { this.onCompleteTripConfirm(evt); }
+        );
+        this.cancelConfirmDlg = new OkCancelDialog(
+            "Cancel this trip?",
+            "Canceling the trip will remove it from view. All financial " +
+               "transactions will be reversed accordingly.",
+            "Yes, cancel trip", "No",
+            (evt) => { this.onCancelTripConfirm(evt); }
+        );
     }
 
     get id(): string {
@@ -107,8 +123,19 @@ export class TripEditPanel extends FormPanel implements IPanel {
         this.doverrideCheckbox.addEventListener("change", (evt) => {
             this.toggleDestOverride();
         });
-        this.qButton("-edit-reverse-btn").addEventListener("click", (evt) => {
+        this.qElement("-edit-reverse-btn").addEventListener("click", (evt) => {
+            evt.preventDefault();
             this.onReverse(evt);
+        });
+        this.qElement("-edit-canceltrip-btn")
+        .addEventListener("click", (evt) => {
+            evt.preventDefault();
+            this.onCancelTrip(evt);
+        });
+        this.qElement("-edit-completetrip-btn")
+        .addEventListener("click", (evt) => {
+            evt.preventDefault();
+            this.onCompleteTrip(evt);
         });
     }
 
@@ -161,6 +188,52 @@ export class TripEditPanel extends FormPanel implements IPanel {
             this.omaplinkManual, !this.ooverrideCheckbox.checked);
     }
 
+    private onCompleteTripConfirm(evt: Event): void {
+        if (this.state && this.state.hasId()) {
+            (<Trip>this.entity.v).completeTrip(CONTEXT.c, this.service.v,
+                this.state, "Completed by user")
+            .then((row) => {
+                this.controller.v.show(
+                    "trip-view-panel", new PanelData("Row", row));
+            })
+            .catch((err) => {
+                TOASTER.error(err);
+            });
+        } else {
+            TOASTER.error(
+                "You must first save this trip before you can complete it");
+        }
+    }
+
+    private onCancelTripConfirm(evt: Event): void {
+        if (this.state && this.state.hasId()) {
+            (<Trip>this.entity.v).cancelTrip(CONTEXT.c, this.service.v,
+                this.state, "Cancelled by user")
+            .then((row) => {
+                this.controller.v.show(
+                    "trip-view-panel", new PanelData("Row", row));
+            })
+            .catch((err) => {
+                TOASTER.error(err);
+            });
+        } else {
+            TOASTER.error(
+                "This trip has not been saved yet, no need to cancel");
+        }
+    }
+
+    private onCompleteTrip(evt: Event): void {
+        if (this.state) {
+            this.completeConfirmDlg.show();
+        }
+    }
+
+    private onCancelTrip(evt: Event): void {
+        if (this.state) {
+            this.cancelConfirmDlg.show();
+        }
+    }
+
     private onReverse(evt: Event): void {
         if (this.state) {
             (<Trip>this.entity.v).reverseTrip(this.state);
@@ -188,29 +261,52 @@ export class TripEditPanel extends FormPanel implements IPanel {
         }
     }
 
-    private async processSubmit(evt: Event): Promise<void> {
-        if (this.state) {
-            const bizTrans = new BizTrans();
-            if (this.state.hasId()) {
-                await this.entity.v.putBizTrans(
-                    bizTrans, this.service.v, this.state, CONTEXT.c);
-            } else {
-                await this.entity.v.postBizTrans(
-                    bizTrans, this.service.v, this.state, CONTEXT.c);
-            }
-            await this.service.v.processBizTrans(this.logger, bizTrans);
-            this.controller.v.show(
-                "rider-view-panel",
-                new PanelData("string", this.state.asString("ridernum_id")));
-            // this.controller.v.pop(new PanelData("Row", entry.row));
+    private async postTrip(state: State, returnPanelId: string,
+                           returnPanelData: PanelData): Promise<void> {
+        const bt = new BizTrans();
+        const bte = await this.entity.v.postBizTrans(
+            bt, this.service.v, state, CONTEXT.c);
+        if (!bte.row.has("_id")) {
+            bte.row.add("_id", Entity.generateId());
         }
+        await (<Trip>this.entity.v).createReservation(
+            bt, this.service.v, CONTEXT.c, bte.row, new Date(),
+            BigDecimal.ensure(state.value("price")));
+        await this.service.v.processBizTrans(this.logger, bt);
+        this.controller.v.show(returnPanelId, returnPanelData);
+    }
+
+
+    private async saveTrip(state: State, returnPanelId: string,
+                           returnPanelData: PanelData): Promise<void> {
+        if (state.hasId()) {
+            const price = state.field("price");
+            if (price.dirty) {
+                const oldPrice = BigDecimal.ensure(price.oldValue);
+                const newPrice = BigDecimal.ensure(price.value);
+                if (oldPrice.notEquals(newPrice)) {
+                    await (<Trip>this.entity.v).applyPriceChange(
+                        CONTEXT.c, this.service.v, state, oldPrice, newPrice);
+                } else {
+                    await this.entity.v.put(this.service.v, state, CONTEXT.c);
+                }
+            } else {
+                await this.entity.v.put(this.service.v, state, CONTEXT.c);
+            }
+        } else {
+            await this.postTrip(state, returnPanelId, returnPanelData);
+        }
+        this.controller.v.show(returnPanelId, returnPanelData);
     }
 
     protected onSubmit(evt: Event): void {
         if (this.state) {
+            const state = this.state;
+            const riderId = state.asString("ridernum_id");
             this.validate()
             .then(() => {
-                this.processSubmit(evt)
+                this.saveTrip(state, "rider-view-panel",
+                              new PanelData("string", riderId))
                 .catch((err) => {
                     TOASTER.error(`ERROR: ${err}`);
                 });

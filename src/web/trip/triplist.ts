@@ -53,7 +53,10 @@ export class TripList {
 
     colorCoding(startOfToday: Date, endOfToday: Date, appointmentts: Date,
                 resultSet: IResultSet): string {
-        let result: string = "ist-group-item-light";
+        if ("CANCEL" == resultSet.get("status")) {
+            return "list-group-item-dark";
+        }
+        let result: string = "list-group-item-light";
         const assigned = !resultSet.isNull("drivernum_id");
         if (assigned) {
             if (appointmentts > startOfToday) {

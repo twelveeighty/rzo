@@ -87,7 +87,7 @@ export class Policy {
     }
 
     guardResource(context: IContext, resource: string,
-                  action: PolicyAction): void {
+                  action: PolicyAction, silent?: boolean): void {
         let allowed = false;
         for (const statement of this.statements) {
             if (statement.resource == resource &&
@@ -98,14 +98,16 @@ export class Policy {
             }
         }
         if (!allowed) {
-            console.log(
-                `Policy violation: guard ` +
-                `policy: [${this.name}] ` +
-                `resource: [${resource}] ` +
-                `userAccountId: [${context.userAccountId}] ` +
-                `persona: [${context.persona.name}] ` +
-                `action: [${action}] ` +
-                `reason: No [allow] rules found for resource`);
+            if (!silent) {
+                console.log(
+                    `Policy violation: guard ` +
+                    `policy: [${this.name}] ` +
+                    `resource: [${resource}] ` +
+                    `userAccountId: [${context.userAccountId}] ` +
+                    `persona: [${context.persona.name}] ` +
+                    `action: [${action}] ` +
+                    `reason: No [allow] rules found for resource`);
+            }
             throw new PolicyError();
         }
         for (const statement of this.statements) {
@@ -114,14 +116,16 @@ export class Policy {
                     statement.effect == "deny" &&
                     (!statement.where ||
                      statement.where.conditions.length == 0)) {
-                console.log(
-                    `Policy violation: guard ` +
-                    `policy: [${this.name}] ` +
-                    `resource: [${resource}] ` +
-                    `userAccountId: [${context.userAccountId}] ` +
-                    `persona: [${context.persona.name}] ` +
-                    `action: [${action}] ` +
-                    `reason: A specific [deny] rule prohibits access`);
+                if (!silent) {
+                    console.log(
+                        `Policy violation: guard ` +
+                        `policy: [${this.name}] ` +
+                        `resource: [${resource}] ` +
+                        `userAccountId: [${context.userAccountId}] ` +
+                        `persona: [${context.persona.name}] ` +
+                        `action: [${action}] ` +
+                        `reason: A specific [deny] rule prohibits access`);
+                }
                 throw new PolicyError();
             }
         }
@@ -498,9 +502,9 @@ export class PolicyConfiguration implements IPolicyConfiguration {
     }
 
     guardResource(context: IContext, resource: string,
-                  action: PolicyAction): void {
+                  action: PolicyAction, silent?: boolean): void {
         this.getPolicy(context, resource, action).guardResource(
-            context, resource, action);
+            context, resource, action, silent);
     }
 
     guardRow(context: IContext, resource: string, action: PolicyAction,

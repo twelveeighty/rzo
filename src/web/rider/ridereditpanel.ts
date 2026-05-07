@@ -75,7 +75,7 @@ export class RiderEditPanel extends FormPanel implements IPanel {
             }
         })
         .catch((err) => {
-            TOASTER.error(`ERROR: ${err}`);
+            TOASTER.exc(err);
         });
     }
 

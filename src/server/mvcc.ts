@@ -140,10 +140,10 @@ export class MvccResult {
     }
 
     setLeafActionPut(row: Row, oldRev: string) {
-        if (!row.hasAll(["_id", "_rev", "_att"])) {
+        if (!row.hasAll(["_id", "_rev", "att_"])) {
             this.logger.error("C 078 - EXC");
             throw new MvccError(
-                "Row must have _id, _rev and _att to set LeafAction to 'put'");
+                "Row must have _id, _rev and att_ to set LeafAction to 'put'");
         }
         if (row.get("_rev") == oldRev) {
             this.logger.error("C 079 - EXC");

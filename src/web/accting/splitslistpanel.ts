@@ -19,11 +19,8 @@
 
 import { Collection, Cfg, Filter, Query, Row } from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
-
 import { TOASTER } from "../toaster.js";
-
 import { IPanel, PanelData } from "../panel.js";
-
 import { SplitsBasePanel } from "./splitsbasepanel.js";
 
 export class SplitsListPanel extends SplitsBasePanel implements IPanel {
@@ -34,7 +31,7 @@ export class SplitsListPanel extends SplitsBasePanel implements IPanel {
         super();
         this.prefix = "splits";
         this.div = this.qElement("-list-div");
-        this.collection = new Cfg("accsplits");
+        this.collection = new Cfg("splits");
     }
 
     get id(): string {
@@ -61,7 +58,7 @@ export class SplitsListPanel extends SplitsBasePanel implements IPanel {
             this.renderSplits(rs);
         })
         .catch((err) => {
-            TOASTER.error(`ERROR: ${err}`);
+            TOASTER.exc(err);
         });
     }
 

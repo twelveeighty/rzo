@@ -9,6 +9,10 @@
             "type": "server.policy.Policy",
             "appliesTo": "drivers",
             "statements": [
+                { "resource": "app/mytrips", "action": "get", "effect": "allow" },
+                { "resource": "app/trips", "action": "get", "effect": "allow" },
+                { "resource": "app/trips/accept", "action": "get", "effect": "allow" },
+
                 { "resource": "entity/login", "action": "delete",
                   "effect": "allow",
                   "where": {
@@ -78,6 +82,8 @@
             "type": "server.policy.Policy",
             "appliesTo": "riders",
             "statements": [
+                { "resource": "app/mytrips", "action": "get", "effect": "allow" },
+
                 { "resource": "entity/login", "action": "delete",
                   "effect": "allow",
                   "where": {
@@ -246,7 +252,29 @@
                 { "resource": "entity/split", "action": "get", "effect": "allow" },
                 { "resource": "entity/split", "action": "post", "effect": "allow" },
                 { "resource": "entity/split", "action": "put", "effect": "allow" },
-                { "resource": "entity/split", "action": "delete", "effect": "allow" }
+                { "resource": "entity/split", "action": "delete", "effect": "allow" },
+                { "resource": "entity/testversioned", "action": "get", "effect": "allow" },
+                { "resource": "entity/testversioned", "action": "post", "effect": "allow" },
+                { "resource": "entity/testversioned", "action": "put", "effect": "allow" },
+                { "resource": "entity/testversioned", "action": "delete", "effect": "allow" },
+                { "resource": "entity/testimmutable", "action": "get", "effect": "allow" },
+                { "resource": "entity/testimmutable", "action": "post", "effect": "allow" },
+                { "resource": "entity/testimmutable", "action": "put", "effect": "allow" },
+                { "resource": "entity/testimmutable", "action": "delete", "effect": "allow" },
+                { "resource": "entity/testlocal", "action": "get", "effect": "allow" },
+                { "resource": "entity/testlocal", "action": "post", "effect": "allow" },
+                { "resource": "entity/testlocal", "action": "put", "effect": "allow" },
+                { "resource": "entity/testlocal", "action": "delete", "effect": "allow" },
+
+                { "resource": "app/mytrips", "action": "get", "effect": "allow" },
+                { "resource": "app/trips", "action": "get", "effect": "allow" },
+                { "resource": "app/trips", "action": "put", "effect": "allow" },
+                { "resource": "app/trips", "action": "post", "effect": "allow" },
+                { "resource": "app/trips/assign", "action": "get", "effect": "allow" },
+                { "resource": "app/riders", "action": "get", "effect": "allow" },
+                { "resource": "app/drivers", "action": "get", "effect": "allow" },
+                { "resource": "app/accounts", "action": "get", "effect": "allow" },
+                { "resource": "app/tests", "action": "get", "effect": "allow" }
             ]
         }
     }

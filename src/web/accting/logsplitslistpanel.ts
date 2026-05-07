@@ -17,8 +17,9 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { Collection, Cfg, Filter, Query, Row } from "../../base/core.js";
-import { LocalDay } from "../../accting/acc-core.js";
+import {
+         LocalDay, Collection, Cfg, Filter, Query, Row
+} from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
 import { TOASTER } from "../toaster.js";
 import { IPanel, PanelData } from "../panel.js";
@@ -78,7 +79,7 @@ export class LogSplitsListPanel extends SplitsBasePanel implements IPanel {
             }
         })
         .catch((err) => {
-            TOASTER.error(`ERROR: ${err}`);
+            TOASTER.exc(err);
         });
     }
 
@@ -88,7 +89,7 @@ export class LogSplitsListPanel extends SplitsBasePanel implements IPanel {
         const startDt = this.qInput("-start-txt").valueAsDate;
         let day: LocalDay;
         if (startDt) {
-            day = LocalDay.fromUtc(startDt);
+            day = LocalDay.fromDateInputValueAsDate(startDt);
         } else {
             day = LocalDay.fromDate(new Date());
         }
@@ -110,7 +111,7 @@ export class LogSplitsListPanel extends SplitsBasePanel implements IPanel {
             this.renderSplits(resultSet);
         })
         .catch((err) => {
-            TOASTER.error(`ERROR: ${err}`);
+            TOASTER.exc(err);
         });
     }
 

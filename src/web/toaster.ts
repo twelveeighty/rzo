@@ -64,8 +64,18 @@ export class Toaster {
     }
 
     exc(err: any): void {
+        this.setTimestamp();
         console.error(err);
-        this.error(`ERROR: ${err}`);
+        if (typeof err == "string") {
+            this.setMsg(err);
+        } else if (err instanceof Error) {
+            this.setMsg(err.toString());
+        } else if (typeof err == "object") {
+            this.setMsg(JSON.stringify(err));
+        } else {
+            this.setMsg(`${err}`);
+        }
+        this.bsToast.v.show();
     }
 }
 

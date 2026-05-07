@@ -16,10 +16,10 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 import {
-         ServiceSource, Entity, BigDecimal, Row, Cfg, BizTrans, SideEffects
+         ServiceSource, Entity, BigDecimal, Row, Cfg, BizTrans
 } from "../../base/core.js";
 import { MaterializedCollection } from "../../base/collection.js";
-import { Txn, FinDoc } from "../../accting/acc-core.js";
+import { DocumentBuilder, FinDoc } from "../../accting/acc-core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
 import { IPanel, BasePanel, PanelData, DynElement } from "../panel.js";
 import { G_AccountDialog, RowListener } from "./accountlist.js";
@@ -482,109 +482,71 @@ export class DocCreatePanel extends BasePanel implements IPanel {
 
     private async save(): Promise<void> {
         try {
-            const targetAccount = Row.must(this.account);
             const now = new Date();
-            // FinDoc
-            const fnt = this.findocEntity.v;
-            let state = await fnt.create(CONTEXT.c, this.service.v);
-            let se: Promise<SideEffects>[] = [];
-            const targetAccountName = targetAccount.get("name");
-            fnt.cpSetValue(state, "account", targetAccountName, CONTEXT.c, se);
-            //TODO: Add a doc specific memo field
-            fnt.cpSetValue(state, "memo", this.required("-memo-txt"),
-                          CONTEXT.c, se);
-            fnt.cpSetValue(state, "posted", now, CONTEXT.c, se);
-            fnt.cpSetValue(state, "created", now, CONTEXT.c, se);
-            await Promise.all(se);
-            const docnum = state.field("docnum").value;
-            // Txn
-            const txn = new Txn(fnt, state);
-            // First AccSplit
+            const targetAccount = Row.must(this.account);
+            const bt = new BizTrans();
+            const builder = new DocumentBuilder(
+                this.findocEntity.v, bt, CONTEXT.c, this.service.v);
+            let scaffold = new Row(
+                {
+                    account: targetAccount.get("name"),
+                    entityid: null,
+                    memo: this.required("-memo-txt"),
+                    posted: now,
+                    created: now
+                }
+            );
+            await builder.document(scaffold);
+            // First Split
             let chargeRow = this.amountCharged("-dr-txt", "-cr-txt");
-            const snt = fnt.splitEntity.v;
-            state = await snt.create(CONTEXT.c, this.service.v);
-            se = [];
-            // Set findoc without validation, since it doesn't exist yet.
-            state.field("findoc").value = docnum;
-            snt.cpSetValue(state, "account", targetAccountName, CONTEXT.c, se);
-            snt.cpSetValue(state, "change", chargeRow.get("change"),
-                           CONTEXT.c, se);
             let qpRow = this.quantPrice("-qty-txt", "-price-txt",
                 BigDecimal.ensure(chargeRow.get("amount")));
-            if (!qpRow.empty) {
-                snt.cpSetValue(state, "quantity", qpRow.get("quantity"),
-                               CONTEXT.c, se);
-                snt.cpSetValue(state, "price", qpRow.get("price"),
-                               CONTEXT.c, se);
-            }
-            snt.cpSetValue(state, "amount", chargeRow.get("amount"),
-                           CONTEXT.c, se);
-            snt.cpSetValue(state, "created", now, CONTEXT.c, se);
-            snt.cpSetValue(state, "posted", now, CONTEXT.c, se);
-            snt.cpSetValue(state, "memo", this.required("-memo-txt"),
-                           CONTEXT.c, se);
-            await Promise.all(se);
-            txn.splits.push(state);
-            // Second AccSplit
+            scaffold = new Row(
+                {
+                    account: targetAccount.get("name"),
+                    change: chargeRow.get("change"),
+                    quantity: qpRow.empty ? null : qpRow.get("quantity"),
+                    price: qpRow.empty ? null : qpRow.get("price"),
+                    amount: chargeRow.get("amount"),
+                    memo: this.required("-memo-txt")
+                }
+            );
+            await builder.split(scaffold);
+            // Second Split
             chargeRow = this.amountCharged("-cdr-txt", "-ccr-txt");
-            state = await snt.create(CONTEXT.c, this.service.v);
-            se = [];
-            // Set findoc without validation, since it doesn't exist yet.
-            state.field("findoc").value = docnum;
-            snt.cpSetValue(state, "account", this.required("acct-caccount"),
-                           CONTEXT.c, se);
-            snt.cpSetValue(state, "change", chargeRow.get("change"),
-                           CONTEXT.c, se);
             qpRow = this.quantPrice("-cqty-txt", "-cprice-txt",
                 BigDecimal.ensure(chargeRow.get("amount")));
-            if (!qpRow.empty) {
-                snt.cpSetValue(state, "quantity", qpRow.get("quantity"),
-                               CONTEXT.c, se);
-                snt.cpSetValue(state, "price", qpRow.get("price"),
-                               CONTEXT.c, se);
-            }
-            snt.cpSetValue(state, "amount", chargeRow.get("amount"),
-                           CONTEXT.c, se);
-            snt.cpSetValue(state, "created", now, CONTEXT.c, se);
-            snt.cpSetValue(state, "posted", now, CONTEXT.c, se);
-            snt.cpSetValue(state, "memo", this.required("-cmemo-txt"),
-                           CONTEXT.c, se);
-            await Promise.all(se);
-            txn.splits.push(state);
+            scaffold = new Row(
+                {
+                    account: this.required("acct-caccount"),
+                    change: chargeRow.get("change"),
+                    quantity: qpRow.empty ? null : qpRow.get("quantity"),
+                    price: qpRow.empty ? null : qpRow.get("price"),
+                    amount: chargeRow.get("amount"),
+                    memo: this.required("-cmemo-txt")
+                }
+            );
+            await builder.split(scaffold);
             for (const uuid of this.rowControllers.keys()) {
                 chargeRow = this.amountCharged(
                     `${DR_PREFIX}-${uuid}`, `${CR_PREFIX}-${uuid}`);
-                state = await snt.create(CONTEXT.c, this.service.v);
-                se = [];
-                // Set findoc without validation, since it doesn't exist yet.
-                state.field("findoc").value = docnum;
-                snt.cpSetValue(state, "account",
-                               this.required(`${ACCT_PREFIX}-${uuid}`),
-                               CONTEXT.c, se);
-                snt.cpSetValue(state, "change", chargeRow.get("change"),
-                               CONTEXT.c, se);
                 qpRow = this.quantPrice(
                     `${QTY_PREFIX}-${uuid}`,
                     `${PRICE_PREFIX}-${uuid}`,
                     BigDecimal.ensure(chargeRow.get("amount")));
-                if (!qpRow.empty) {
-                    snt.cpSetValue(state, "quantity", qpRow.get("quantity"),
-                                   CONTEXT.c, se);
-                    snt.cpSetValue(state, "price", qpRow.get("price"),
-                                   CONTEXT.c, se);
-                }
-                snt.cpSetValue(state, "amount", chargeRow.get("amount"),
-                               CONTEXT.c, se);
-                snt.cpSetValue(state, "created", now, CONTEXT.c, se);
-                snt.cpSetValue(state, "posted", now, CONTEXT.c, se);
-                snt.cpSetValue(state, "memo",
-                               this.required(`${MEMO_PREFIX}-${uuid}`),
-                               CONTEXT.c, se);
-                await Promise.all(se);
-                txn.splits.push(state);
+                scaffold = new Row(
+                    {
+                        account: this.required(`${ACCT_PREFIX}-${uuid}`),
+                        change: chargeRow.get("change"),
+                        quantity: qpRow.empty ? null : qpRow.get("quantity"),
+                        price: qpRow.empty ? null : qpRow.get("price"),
+                        amount: chargeRow.get("amount"),
+                        memo: this.required(`${MEMO_PREFIX}-${uuid}`)
+                    }
+                );
+                await builder.split(scaffold);
             }
-            const bt = new BizTrans();
-            await txn.toBizTrans(bt, this.logger, CONTEXT.c, this.service.v);
+            await builder.postBizTrans();
             await this.service.v.processBizTrans(this.logger, bt);
             this.controller.v.show(
                 "account-view-panel",
@@ -595,7 +557,7 @@ export class DocCreatePanel extends BasePanel implements IPanel {
                 input.setCustomValidity(`${err}`);
                 input.reportValidity();
             } else {
-                TOASTER.error(`ERROR: ${err}`);
+                TOASTER.exc(err);
             }
         }
     }

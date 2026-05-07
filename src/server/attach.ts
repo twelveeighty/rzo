@@ -203,7 +203,7 @@ export class AttachAdapter extends SessionAwareAdapter {
                 const row = await this.getOne(context, entity, id, rev);
                 if (!row.empty) {
                     const attname = uriElements[3];
-                    const atts = row.get("_att") as Attachments;
+                    const atts = row.get("att_") as Attachments;
                     if (atts) {
                         const attObj = atts.att.find((att) => att.n == attname);
                         if (attObj) {

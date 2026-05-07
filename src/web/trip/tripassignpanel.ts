@@ -106,11 +106,11 @@ export class TripAssignPanel extends BasePanel implements IPanel {
                     this.controller.v.pop(new PanelData("string", trip_id));
                 })
                 .catch((err) => {
-                    TOASTER.error(`ERROR: ${err}`);
+                    TOASTER.exc(err);
                 });
             })
             .catch((err) => {
-                TOASTER.error(`ERROR: ${err}`);
+                TOASTER.exc(err);
             });
         }
     }
@@ -135,11 +135,11 @@ export class TripAssignPanel extends BasePanel implements IPanel {
                         this.controller.v.pop(new PanelData("string", tripId));
                     })
                     .catch((err) => {
-                        TOASTER.error(`ERROR: ${err}`);
+                        TOASTER.exc(err);
                     });
                 })
                 .catch((err) => {
-                    TOASTER.error(`ERROR: ${err}`);
+                    TOASTER.exc(err);
                 });
             }
         }

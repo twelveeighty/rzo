@@ -84,6 +84,8 @@ class RestServer {
             response.setHeader("Access-Control-Allow-Headers",
                                "rzo-sessionid, Content-Type");
             response.setHeader("Access-Control-Max-Age", "86400");
+            // PouchDB requires Access-Control-Allow-Credentials = true
+            response.setHeader("Access-Control-Allow-Credentials", "true");
             response.statusCode = 204;
             response.end();
         } else {

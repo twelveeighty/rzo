@@ -17,7 +17,7 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { Cfg, IAuthenticator, Row } from "../base/core.js";
+import { Cfg, IAuthenticator, IPolicyAuthorizer, Row } from "../base/core.js";
 import { RZO, CONTEXT } from "../base/configuration.js";
 import { TOASTER } from "./toaster.js";
 import { IPanel, BasePanel, PanelData } from "./panel.js";
@@ -52,8 +52,7 @@ export class CreateLoginPanel extends BasePanel implements IPanel {
             this.controller.v.show("login-panel");
         })
         .catch((err) => {
-            console.error(err);
-            TOASTER.error(`ERROR: ${err}`);
+            TOASTER.exc(err);
         });
     }
 
@@ -102,8 +101,7 @@ export class OneTimeLoginPanel extends BasePanel implements IPanel {
             this.controller.v.show("create-password-panel");
         })
         .catch((err) => {
-            console.error(err);
-            TOASTER.error(`ERROR: ${err}`);
+            TOASTER.exc(err);
         });
     }
 
@@ -159,8 +157,7 @@ export class PasswordResetPanel extends BasePanel implements IPanel {
                 "onetimelogin-panel", new PanelData("Row", resultRow));
         })
         .catch((err) => {
-            console.error(err);
-            TOASTER.error(`ERROR: ${err}`);
+            TOASTER.exc(err);
         });
     }
 
@@ -176,11 +173,13 @@ export class PasswordResetPanel extends BasePanel implements IPanel {
 
 export class LoginPanel extends BasePanel implements IPanel {
     authenticator: Cfg<IAuthenticator>;
+    policyAuthorizer: Cfg<IPolicyAuthorizer>;
 
     constructor() {
         super();
         this.prefix = "login";
         this.authenticator = new Cfg("auth");
+        this.policyAuthorizer = new Cfg("policyquery");
     }
 
     get id(): string {
@@ -189,7 +188,10 @@ export class LoginPanel extends BasePanel implements IPanel {
 
     initialize(): void {
         super.initialize();
-        this.authenticator.v = RZO.getAuthenticator("auth").service;
+        this.authenticator.v =
+            RZO.getAuthenticator(this.authenticator.name).service;
+        this.policyAuthorizer.v =
+            RZO.getPolicyAuthorizer(this.policyAuthorizer.name).service;
         this.qForm("-form").addEventListener("submit", (evt) => {
             evt.preventDefault();
             this.onSubmit(evt);
@@ -206,6 +208,15 @@ export class LoginPanel extends BasePanel implements IPanel {
         this.controller.v.show("password-reset-panel");
     }
 
+    private async fullLogin(creds: Row): Promise<Set<string>> {
+        const context = await this.authenticator.v.login(this.logger, creds);
+        const queries = this.controller.v.collectPolicyQueries();
+        const policies = await this.policyAuthorizer.v.queryPolicies(
+            this.logger, context, queries);
+        CONTEXT.c = context;
+        return policies;
+    }
+
     private onSubmit(evt: Event): void {
         try {
             const targetUsername = this.qInput("-user-txt").value;
@@ -216,12 +227,13 @@ export class LoginPanel extends BasePanel implements IPanel {
             }
             const credsRow = new Row(
                 { "username": targetUsername, "password": targetPassword });
-            this.authenticator.v.login(this.logger, credsRow)
-            .then((context) => {
-                CONTEXT.c = context;
+            this.fullLogin(credsRow)
+            .then((policies) => {
                 this.qElement("welcome-heading").innerText = targetUsername;
                 // Broadcast the "logged-in" message
                 this.controller.v.broadcast("logged-in");
+                // Apply the policies
+                this.controller.v.applyPolicies(policies);
                 // Switch the icon on the nav bar
                 this.qSVG("person-open-path").classList.toggle("invisible");
                 this.qSVG("person-filled-path").classList.toggle("invisible");
@@ -230,11 +242,10 @@ export class LoginPanel extends BasePanel implements IPanel {
                 this.controller.v.show("trips-panel");
             })
             .catch((err) => {
-                console.error(err);
-                TOASTER.error(`ERROR: ${err}`);
+                TOASTER.exc(err);
             });
         } catch (err) {
-            console.error(err);
+            TOASTER.exc(err);
         }
     }
 

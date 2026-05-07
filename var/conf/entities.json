@@ -18,7 +18,7 @@
                     "required": true,
                     "maxlength": 255,
                     "indexed": "asc",
-                    "source": "db"
+                    "collection": "useraccounts"
                 },
                 { "name": "persona", "type": "StringField", "required": true },
                 { "name": "otherpersonas", "type": "StringField" },

@@ -66,12 +66,12 @@ export class PgAttach extends PgBaseClient implements IAttachService {
             l: data.length,
             r: this.mvccController.versionDepth(row.get("_rev")) + 1
         };
-        const atts: Attachments = row.get("_att") || { att: [] };
+        const atts: Attachments = row.get("att_") || { att: [] };
         // Filter out existing attachment(s) with the same name.
         const newAtt = atts.att.filter((rec) => rec.n != name);
         newAtt.push(attObj);
         atts.att = newAtt;
-        row.put("_att", atts);
+        row.put("att_", atts);
         /* Check the attachment table by hash, since this attachment could
          * already exist. In that case, we do not add another with the same
          * hash.

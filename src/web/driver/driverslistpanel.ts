@@ -75,7 +75,7 @@ export class DriversListPanel extends BasePanel implements IPanel {
             this.list.render(resultSet);
         })
         .catch((err) => {
-            TOASTER.error(`ERROR: ${err}`);
+            TOASTER.exc(err);
         });
     }
 

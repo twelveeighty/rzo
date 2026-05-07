@@ -41,7 +41,7 @@ export type PolicyAction = "get" | "put" | "post" | "delete";
 
 export interface IPolicyConfiguration {
     guardResource(context: IContext, resource: string,
-                  action: PolicyAction): void;
+                  action: PolicyAction, silent?: boolean): void;
     guardRow(context: IContext, resource: string, action: PolicyAction,
              row: Row): Row;
     guardResultSet(context: IContext, resource: string,
@@ -52,6 +52,7 @@ export interface IConfiguration {
     entities: Map<string, Entity>;
     sources: Map<string, Source>;
     authenticators: Map<string, Authenticator>;
+    policyAuthorizers: Map<string, PolicyAuthorizer>;
     personas: Map<string, Persona>;
     collections: Map<string, Collection>;
     workers: Map<string, DaemonWorker>;
@@ -62,6 +63,7 @@ export interface IConfiguration {
     getField(fqName: string): Field;
     getSource(name: string): Source;
     getAuthenticator(name: string): Authenticator;
+    getPolicyAuthorizer(name: string): PolicyAuthorizer;
     getPersona(name: string): Persona;
     getArtifact<T>(fqName: string, targetType: Function): T;
     getArtifacts<T>(kind: string, targetType: Function): Map<string, T>;
@@ -186,7 +188,7 @@ export class Filter {
     combinedAs: FilterLogical;
     private _sealedWhere?: string;
 
-    static NullNotNullRegex = /^(\w+)([~!])$/;
+    static NullNotNullRegex = /^(\w+)([~!]|!!)$/;
     static ComparisonRegex = /^([\w\.]+)([<>=!@?~]+)(.+)/;
     static QueryAnd      = "q=a&w=";
     static QueryOr       = "q=o&w=";
@@ -200,6 +202,20 @@ export class Filter {
             result.chunks = source.chunks;
         }
         return result;
+    }
+
+    static unquoted(input: any): any {
+        if (typeof input == "string") {
+            const len = input.length;
+            if (len > 2) {
+                const first = input[0];
+                const last = input[len - 1];
+                if (first == last && first == "'") {
+                    return input.slice(1, len - 1);
+                }
+            }
+        }
+        return input;
     }
 
     constructor(combinedAs?: FilterLogical) {
@@ -288,6 +304,11 @@ export class Filter {
         return this;
     }
 
+    fieldExists(operand: string): Filter {
+        this.chunks.push(`${operand.trim()}!!`);
+        return this;
+    }
+
     op(leftHand: string, operator: FilterOperator, rightHand: string,
        asIs?: boolean): Filter {
         const finalRight = !asIs ? `'${rightHand}'` : rightHand.trim();
@@ -318,6 +339,156 @@ export class Filter {
             return this.createWhere();
         }
         return "";
+    }
+
+    get selector(): Row {
+        if (this._sealedWhere) {
+            throw new CoreError("Cannot use sealed Filter as selector");
+        }
+        if (!this.chunks.length) {
+            throw new CoreError("Cannot build selector from empty Filter");
+        }
+        return this.createSelector();
+    }
+
+    get selectorFields(): Set<string> {
+        const result: Set<string> = new Set();
+        if (this._sealedWhere) {
+            throw new CoreError("Cannot use sealed Filter as selector");
+        }
+        if (!this.chunks.length) {
+            return result;
+        }
+        for (const chunk of this.chunks) {
+            let matched = chunk.match(Filter.NullNotNullRegex);
+            if (matched) {
+                result.add(matched[1]);
+                continue;
+            }
+            matched = chunk.match(Filter.ComparisonRegex);
+            if (matched) {
+                result.add(matched[1]);
+                continue;
+            } else {
+                throw new CoreError(`Invalid filter: '${chunk}'`);
+            }
+        }
+        return result;
+    }
+
+    private selectorOperator(matched: RegExpMatchArray,
+                             operations: JsonObject[]): void {
+        const matchedRow = new Row();
+        if (matched[2] == "=") {
+            matchedRow.add(matched[1], Filter.unquoted(matched[3]));
+            operations.push(matchedRow.raw());
+        } else {
+            let operandKey: string;
+            switch(matched[2]) {
+                case "!=":
+                case "<>":
+                    operandKey = "$ne";
+                    break;
+                case ">":
+                    operandKey = "$gt";
+                    break;
+                case "<":
+                    operandKey = "$lt";
+                    break;
+                case ">=":
+                    operandKey = "$gte";
+                    break;
+                case "<=":
+                    operandKey = "$lte";
+                    break;
+                default:
+                    throw new CoreError(
+                        `Unrecognized selector operator: ${matched[2]}`);
+            }
+            const operandRow = new Row();
+            operandRow.add(operandKey, Filter.unquoted(matched[3]));
+            matchedRow.add(matched[1], operandRow.raw());
+            operations.push(matchedRow.raw());
+        }
+    }
+
+    private compoundSelectorOperator(matched: RegExpMatchArray,
+                                     operations: JsonObject[]): boolean {
+        if (!(["?=", "?<", "?>"].includes(matched[2]))) {
+            return false;
+        }
+        const isNullRow = new Row();
+        isNullRow.add(matched[2], null);
+        const subArray: JsonObject[] = [isNullRow.raw()];
+        const operator = {"$or": subArray};
+        operations.push(operator);
+        /*
+         * |- operator
+         * {
+         *         |- subArray
+         *    $or: [
+         *             { xyz: null },               // isNullRow
+         *      ?=     { xyz: value }               // matchedRow
+         *      ?<     { xyz: { $lt: value } }      // matchedRow <- operandRow
+         *      ?>     { xyz: { $gt: value } }      // matchedRow <- operandRow
+         *    ]
+         * }
+         */
+        const matchedRow = new Row();
+        if (matched[2] == "?=") {
+            matchedRow.add(matched[1], Filter.unquoted(matched[3]));
+            subArray.push(matchedRow.raw());
+        } else if (matched[2] == "?<") {
+            const operandRow = new Row();
+            operandRow.add("$lt", Filter.unquoted(matched[3]));
+            matchedRow.add(matched[1], operandRow.raw());
+            subArray.push(matchedRow.raw());
+        } else if (matched[2] == "?>") {
+            const operandRow = new Row();
+            operandRow.add("$gt", Filter.unquoted(matched[3]));
+            matchedRow.add(matched[1], operandRow.raw());
+            subArray.push(matchedRow.raw());
+        } else {
+            return false;
+        }
+        return true;
+    }
+
+    private createSelector(): Row {
+        const operations: JsonObject[] = [];
+        for (const chunk of this.chunks) {
+            const operation = new Row();
+            let matched = chunk.match(Filter.NullNotNullRegex);
+            if (matched) {
+                switch(matched[2]) {
+                    case "~":
+                        operation.add(matched[1], null);
+                        break;
+                    case "!":
+                        operation.add(matched[1], {"$ne": null});
+                        break;
+                    case "!!":
+                        operation.add(matched[1], {"$exists": true});
+                        break;
+                    default:
+                        throw new CoreError(`Invalid filter: '${chunk}'`);
+                }
+                operations.push(operation.raw());
+                continue;
+            }
+            matched = chunk.match(Filter.ComparisonRegex);
+            if (matched) {
+                if (!this.compoundSelectorOperator(matched, operations)) {
+                    this.selectorOperator(matched, operations);
+                }
+            } else {
+                throw new CoreError(`Invalid filter: '${chunk}'`);
+            }
+        }
+        const selector = new Row();
+        const key = this.combinedAs == "and" ? "$and" : "$or";
+        selector.add(key, operations);
+        return selector;
     }
 
     private lookAhead(input: string, pos: number, searchStr: string): boolean {
@@ -383,8 +554,9 @@ export class Filter {
             switch (nextChar) {
                 case ",":
                     if (!chunk) {
-                        throw new CoreError(`Empty component found in ` +
-                                            `clause '${input}', pos: ${pos}`);
+                        throw new CoreError(
+                            `Empty component found in clause '${input}', ` +
+                            `pos: ${pos}`);
                     }
                     this.chunks.push(chunk);
                     chunk = "";
@@ -392,8 +564,9 @@ export class Filter {
                     break;
                 case "\\":
                     if (!this.lookAhead(input, pos, "\\',")) {
-                        throw new CoreError(`Unmatched escape found in ` +
-                                            `clause '${input}', pos: ${pos}`);
+                        throw new CoreError(
+                            `Unmatched escape found in clause '${input}', ` +
+                            `pos: ${pos}`);
                     }
                     pos++;
                     chunk += input[pos];
@@ -417,6 +590,10 @@ export class Filter {
  */
 export class Row {
     protected _row: JsonObject;
+
+    static PrimitiveTypeOf: Set<string> = new Set(
+        ["string", "number", "bigint"]
+    );
 
     static dataToRow(data: any, entity?: Entity): Row {
         if (data && typeof data == "object") {
@@ -456,6 +633,38 @@ export class Row {
             return row;
         }
         throw new CoreError(error || "Row is unexpectedly null or undefined");
+    }
+
+    static transport(value: any): any {
+        if (value === undefined) {
+            throw new CoreError("Transport values must never be undefined");
+        }
+        // Primitives
+        if (value === null || value === true || value === false ||
+               Row.PrimitiveTypeOf.has(typeof value)) {
+            return value;
+        }
+        if (value instanceof Object && value.constructor == Object) {
+            // Recursive call
+            for (const key of Object.keys(value)) {
+                value[key] = Row.transport(value[key]);
+            }
+            return value;
+        }
+        if (Array.isArray(value)) {
+            for (let index = 0; index < value.length; index++) {
+                // Recursive call
+                value[index] = Row.transport(value.at(index));
+            }
+            return value;
+        }
+        if (value instanceof Date) {
+            return value;
+        }
+        if (value instanceof BigDecimal) {
+            return `${value}`;
+        }
+        throw new CoreError(`Cannot convert value ${value} for transport`);
     }
 
     constructor(object?: JsonObject) {
@@ -592,6 +801,11 @@ export class Row {
         return this._row;
     }
 
+    transport(): Row {
+        Row.transport(this._row);
+        return this;
+    }
+
     values(): any[] {
         return Object.values(this._row);
     }
@@ -600,12 +814,12 @@ export class Row {
         if (this.has("_rev")) {
             return new CoreColumns(
                 this.get("_id"),
-                this.has("_att") ? this.get("_att") : null,
+                this.has("att_") ? this.get("att_") : null,
                 this.get("_rev"));
         } else {
             return new CoreColumns(
                 this.get("_id"),
-                this.has("_att") ? this.get("_att") : null);
+                this.has("att_") ? this.get("att_") : null);
         }
     }
 
@@ -914,10 +1128,12 @@ export class BizTransEntry {
         const bizEntry = new BizTransEntry(<BizTransType>action, entity);
         switch (action) {
             case "post":
-                bizEntry.row = Row.dataToRow(raw.get("row"), entity);
+                bizEntry.row =
+                    Row.dataToRow(raw.get("row"), entity).transport();
                 break;
             case "put":
-                bizEntry.row = Row.dataToRow(raw.get("row"), entity);
+                bizEntry.row =
+                    Row.dataToRow(raw.get("row"), entity).transport();
                 bizEntry.id = raw.getString("id");
                 break;
             case "delete":
@@ -968,10 +1184,10 @@ export class BizTransEntry {
         });
         switch (this.action) {
             case "post":
-                result.add("row", this.row.raw());
+                result.add("row", this.row.transport().raw());
                 break;
             case "put":
-                result.add("row", this.row.raw());
+                result.add("row", this.row.transport().raw());
                 result.add("id", this.id);
                 break;
             case "delete":
@@ -1092,6 +1308,17 @@ export class BizTrans {
     }
 }
 
+/*
+ * The "DATA" rules:
+ * 1) Row.transport() has already been called BEFORE the Service level methods
+ *    are invoked.
+ * 2) All Service level operations assume Row.transport() has been called on
+ *    all data.
+ * 3) Since Epilogues are triggered during Service operations, the Epilogues
+ *    themselves are responsible for calling Row.transport() because
+ *    Services do not call transport() when applying Epilogues to disk.
+ */
+
 export interface IReadOnlyService {
     getDBInfo(logger: Logger, context: IContext): Promise<Row>;
     getQueryOne(logger: Logger, context: IContext, entity: Entity,
@@ -1125,6 +1352,12 @@ export interface IAuthenticator {
     logout(logger: Logger, context: IContext): Promise<void>;
 }
 
+export interface IPolicyAuthorizer {
+    get isPolicyAuthorizer(): boolean;
+    queryPolicies(logger: Logger, context: IContext,
+                  policyQueries: Set<string>): Promise<Set<string>>;
+}
+
 type Metadata = {
     name: string;
     description?: string;
@@ -1140,6 +1373,12 @@ export type TypeCfg<SpecType extends ClassSpec> = {
     kind: string;
     metadata: Metadata;
     spec: SpecType;
+}
+
+export type ConfigBundleSpec = ClassSpec & {
+    home: string;
+    configurations: string[];
+    policies: string[];
 }
 
 export type IndexType = "none" | "asc" | "desc";
@@ -1391,10 +1630,10 @@ export type Attachments = { att: Attachment[] };
 export class CoreColumns {
     _id: string;
     _rev?: string;
-    _att: Attachments | null;
+    att_: Attachments | null;
 
-    static V_NAMES = ["_id", "_rev", "_att"];
-    static L_NAMES = ["_id", "_att"];
+    static V_NAMES = ["_id", "_rev", "att_"];
+    static L_NAMES = ["_id", "att_"];
 
     static addTo(entity: Entity, columns: string[]): string[] {
         const includeList = !entity.local ? CoreColumns.V_NAMES
@@ -1410,13 +1649,13 @@ export class CoreColumns {
         if (rev !== undefined) {
             this._rev = rev;
         }
-        this._att = att;
+        this.att_ = att;
     }
 
     addToJsonObject(data: JsonObject) {
         data["_id"] = this._id;
         data["_rev"] = this._rev;
-        data["_att"] = this._att;
+        data["att_"] = this.att_;
     }
 }
 
@@ -1442,6 +1681,10 @@ export class BigDecimal {
             throw new CoreError("Cannot create BigDecimal from null/undefined");
         }
         this._n = BigDecimal._toN(value);
+    }
+
+    static canConvertObject(target: any): boolean {
+        return (Object.hasOwn(target, "_n") && typeof target["_n"] == "bigint");
     }
 
     private static _toN(value: any): bigint {
@@ -1691,6 +1934,18 @@ export class Field {
     logger: Logger;
 
     constructor(entity: Entity, config: FieldCfg) {
+        // Postgresql default max column length is 63
+        if (config.name.length > 63) {
+            throw new CoreError("Field names must be less than 64 characters");
+        }
+        /* Fields must not start or end with an underscore. PouchDB fails with
+         * attributes that start with an underscore and we therefore use a
+         * trailing underscore for system attributes such as attachments.
+         */
+        if (config.name.startsWith("_") || config.name.endsWith("_")) {
+            throw new CoreError(
+                "Field names must not start or end with an underscore");
+        }
         this.entity = entity;
         this.required = config.required ?? false;
         this.significance = "core";
@@ -2022,7 +2277,7 @@ export class IntegerField extends Field {
     transformDataForRow(data: JsonObject): void {
         if (this.name in data) {
             const val = data[this.name];
-            if (val !== undefined && !(typeof val === "number")) {
+            if (val !== undefined) {
                 data[this.name] = this.transform(val);
             }
         }
@@ -2050,7 +2305,7 @@ export class NumberField extends Field {
                 throw new CoreError(`Cannot set ${this.fqName} to ${value}`,
                                     { cause: error });
             }
-            if (isNaN(result)) {
+            if (Number.isNaN(result)) {
                 throw new CoreError(
                     `${this.fqName}: value ${value} resolves to NaN`);
             }
@@ -2226,15 +2481,11 @@ export class Cfg<T> {
     }
 }
 
-type PathFieldCfg = FieldCfg & {
-    separator: string;
-}
-
 export class UuidField extends StringField {
     static VALIDPATTERN =
         /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 
-    constructor(entity: Entity, config: PathFieldCfg) {
+    constructor(entity: Entity, config: FieldCfg) {
         super(entity, config);
     }
 
@@ -2250,6 +2501,10 @@ export class UuidField extends StringField {
     get ddlCreatorClass(): string {
         return "base.core-ddl.UuidFieldDDL";
     }
+}
+
+type PathFieldCfg = FieldCfg & {
+    separator: string;
 }
 
 export class PathField extends StringField {
@@ -2994,14 +3249,15 @@ export class Entity {
     async putBizTrans(bizTrans: BizTrans, service: IService, state: State,
                       context: IContext): Promise<BizTransEntry> {
         const row = await this.activatePut(state, context);
-        return bizTrans.put(this.logger, context, this, state.id, row);
+        return bizTrans.put(
+            this.logger, context, this, state.id, row.transport());
     }
 
     async put(service: IService, state: State,
               context: IContext): Promise<Row> {
         const row = await this.activatePut(state, context);
         return await service.put(
-            this.logger, context, this, state.id, row);
+            this.logger, context, this, state.id, row.transport());
     }
 
     protected async activatePost(state: State,
@@ -3014,13 +3270,13 @@ export class Entity {
     async postBizTrans(bizTrans: BizTrans, service: IService, state: State,
                        context: IContext): Promise<BizTransEntry> {
         const row = await this.activatePost(state, context);
-        return bizTrans.post(this.logger, context, this, row);
+        return bizTrans.post(this.logger, context, this, row.transport());
     }
 
     async post(service: IService, state: State,
                context: IContext): Promise<Row> {
         const row = await this.activatePost(state, context);
-        return await service.post(this.logger, context, this, row);
+        return await service.post(this.logger, context, this, row.transport());
     }
 
     protected async activateDelete(state: State,
@@ -3522,37 +3778,56 @@ export class GeneratorField extends StringField {
     }
 }
 
+/* ManualGeneratorField doesn't auto-create the number on create().
+ * This is useful for parent/child related entities that get created as a group,
+ * so that the parent's GeneratorField cannot be validated by the children since
+ * it doesn't exist yet.
+ */
+export class ManualGeneratorField extends GeneratorField {
+
+    async createValue(state: State, context: IContext,
+                      service: IService): Promise<string> {
+        const nextVal = await this.generate(service, context);
+        state.field(this.name).value = nextVal;
+        return nextVal;
+    }
+
+    async create(state: State, context: IContext,
+                 service?: IService): Promise<void> {
+    }
+}
+
 type UniqueFieldCfg = FieldCfg & {
-    source: string;
+    collection: string;
 }
 
 export class UniqueField extends StringField {
-    source: Cfg<ServiceSource>;
+    collection: Cfg<Collection>;
 
     constructor(entity: Entity, config: UniqueFieldCfg) {
         super(entity, config);
-        this.source = new Cfg(config.source);
+        this.collection = new Cfg(config.collection);
     }
 
     configure(configuration: IConfiguration) {
-        this.source.v = configuration.getSource(this.source.name).ensure(
-            ServiceSource) as ServiceSource;
+        this.collection.setIf(
+            `UniqueField ${this.fqName}: collection does not exist: `,
+            configuration.collections.get(this.collection.name)
+        );
     }
 
     async validate(phase: Phase, state: State, fieldState: FieldState,
                    context: IContext): Promise<void> {
         await super.validate(phase, state, fieldState, context);
         if (phase == "set" && fieldState.dirtyNotNull) {
-            const service = this.source.v.service;
             const filter = new Filter()
                 .op(this.name, "=", fieldState.asString);
             if (state.hasId()) {
                 filter.op("_id", "!=", state.id);
             }
-            const query = new Query(["COUNT(*)"], filter);
-            const resultSet = await service.getQuery(
-                this.logger, context, this.entity, query);
-            if (!resultSet.next() || resultSet.get("count") > 0) {
+            const rs = await this.collection.v.query(
+                context, new Query([], filter));
+            if (rs.next()) {
                 throw new CoreError(
                     `${this.fqName}: value '${fieldState.value}' is already ` +
                     `used by another ${this.entity.name}`);
@@ -3825,6 +4100,22 @@ export class Authenticator {
     }
 }
 
+export class PolicyAuthorizer {
+    readonly name: String;
+
+    constructor(config: TypeCfg<ClassSpec>, blueprints: Map<string, any>) {
+        this.name = config.metadata.name;
+    }
+
+    configure(configuration: IConfiguration) {
+    }
+
+    get service(): IPolicyAuthorizer {
+        throw new CoreError(
+            `PolicyAuthorizer ${this.name} has an undefined service`);
+    }
+}
+
 type Membership = {
     entity: Entity;
     through: string;
@@ -3963,6 +4254,97 @@ export class ReplicationFilter extends Artifact {
             throw new CoreError(
                 `ReplicationFilter ${this.name} has no sourceFilter`);
         }
+    }
+}
+
+/* LocalDay is used to capture a *local* day, which can be 23, 24 or 25 hours,
+ * depending on Daylight Savings.
+ */
+export class LocalDay {
+    // The local day's midnight in utc.
+    utc: Date;
+
+    static fromPeriodString(period: string): LocalDay {
+        return new LocalDay(
+            Number.parseInt(period.slice(0, 4)),
+            Number.parseInt(period.slice(4, -2)),
+            Number.parseInt(period.slice(-2))
+        );
+    }
+
+    static fromPeriod(period: number): LocalDay {
+        return LocalDay.fromPeriodString(`${period}`);
+    }
+
+    static toPostgresDate(period: number): string {
+        const asStr = "" + period;
+        if (asStr.length != "YYYYMMDD".length) {
+            throw new CoreError(
+                `Invalid period number: ${period}`);
+        }
+        return `${asStr.slice(0, 4)}-${asStr.slice(4, 6)}-${asStr.slice(6)}`;
+    }
+
+    static fromDate(ts: Date): LocalDay {
+        const cpy = new Date(ts);
+        cpy.setHours(0, 0, 0, 0);
+        return new LocalDay(cpy.getFullYear(), cpy.getMonth()+1, cpy.getDate());
+    }
+
+    /* This converts from the confusing <input type="date" ../> valueAsDate()
+     * return value. That element's valueAsDate() returns the selected date to
+     * midnight *in UTC* for the selected month/day/year.
+     */
+    static fromDateInputValueAsDate(ts: Date): LocalDay {
+        const cpy = new Date(ts);
+        cpy.setUTCHours(0, 0, 0, 0);
+        return new LocalDay(
+            cpy.getUTCFullYear(), cpy.getUTCMonth()+1, cpy.getUTCDate());
+    }
+
+    /* Calculates <input type="date" ../> value from a given Date object as
+     * "yyyy-mm-dd"
+     */
+    static toDateInputValue(ts: Date): string {
+        const ld = LocalDay.fromDate(ts);
+        return LocalDay.toPostgresDate(ld.getPeriod());
+    }
+
+    constructor(year: number, month12: number, day: number) {
+        if (!Number.isSafeInteger(year) || year > 2100 || year < 1971) {
+            throw new CoreError(`'${year}' is not a valid year`);
+        }
+        if (!Number.isSafeInteger(month12) || month12 > 12 || month12 < 1) {
+            throw new CoreError(`'${month12}' is not a valid month`);
+        }
+        if (!Number.isSafeInteger(day) || day > 31 || day < 1) {
+            throw new CoreError(`'${day}' is not a valid day`);
+        }
+        this.utc = new Date(year, month12-1, day);
+    }
+
+    increment(by: number): LocalDay {
+        const inUtc = new Date(this.utc);
+        inUtc.setDate(this.utc.getDate() + by);
+        return new LocalDay(
+            inUtc.getFullYear(), inUtc.getMonth()+1, inUtc.getDate());
+    }
+
+    previous(): LocalDay {
+        return this.increment(-1);
+    }
+
+    next(): LocalDay {
+        return this.increment(1);
+    }
+
+    getPeriod(): number {
+        return this.utc.getFullYear()*10000 + (this.utc.getMonth()+1)*100 +
+            this.utc.getDate();
+    }
+
+    getPeriodString(): string {
+        return `${this.getPeriod()}`;
     }
 }
 

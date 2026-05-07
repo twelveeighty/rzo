@@ -21,7 +21,7 @@ import {
     Entity, IService, IResultSet, Query, MemResultSet, EmptyResultSet,
     Filter, Collection, IContext, Row, TypeCfg, ServiceSource,
     ClassSpec, IConfiguration, Cfg, Authenticator, IAuthenticator, Logger,
-    BizTrans, JsonObject
+    BizTrans, JsonObject, PolicyAuthorizer, IPolicyAuthorizer
 } from "./core.js";
 
 import { SessionContext } from "./session.js";
@@ -40,7 +40,7 @@ class RestClientError extends Error {
     }
 }
 
-export class RestClient implements IService, IAuthenticator {
+export class RestClient implements IService, IAuthenticator, IPolicyAuthorizer {
 
     readonly url: string;
     configuration: Cfg<IConfiguration>;
@@ -120,7 +120,6 @@ export class RestClient implements IService, IAuthenticator {
         }
         const targetUrl = `${this.url}/o/${entity.name}` +
             `${filter.toParameters(true)}`;
-
         logger.info(`fetch GET - ${targetUrl}`);
         const response = await fetch(
             targetUrl, { headers: { "rzo-sessionid": context!.sessionId } });
@@ -145,7 +144,7 @@ export class RestClient implements IService, IAuthenticator {
         }
         logger.info(`fetch GET - ${targetUrl}`);
         const response = await fetch(
-            targetUrl, { headers: { "rzo-sessionid": context!.sessionId } });
+            targetUrl, { headers: { "rzo-sessionid": context.sessionId } });
         if (!response.ok) {
             const body = await response.text();
             throw RestClientError.fromResponse(response, body);
@@ -240,7 +239,7 @@ export class RestClient implements IService, IAuthenticator {
             "?" + this.queryParams(query);
         logger.info(`fetch GET - ${targetUrl}`);
         const response = await fetch(
-            targetUrl, { headers: { "rzo-sessionid": context!.sessionId } });
+            targetUrl, { headers: { "rzo-sessionid": context.sessionId } });
         if (!response.ok) {
             if (response.status == 404) {
                 return new EmptyResultSet();
@@ -547,6 +546,68 @@ export class RestClient implements IService, IAuthenticator {
             throw RestClientError.fromResponse(response, body);
         }
     }
+
+    get isPolicyAuthorizer(): boolean {
+        return true;
+    }
+
+    private encodePolicyQuery(query: string): string {
+        /* Policy query:
+         *     resource: entity/person
+         *     action:   get
+         * Result:
+         *     entity-person=get
+         *
+         * We also support additional sections (/) in the resource:
+         *      resource: app/trip/reimburse
+         *      action:   get
+         * Result:
+         *      app-trip-reimburse=get
+         */
+        const equalsPos = query.indexOf("=");
+        const equalsPosLast = query.lastIndexOf("=");
+        if (query.includes("-") || equalsPos == -1 ||
+            equalsPos != equalsPosLast || equalsPos >= (query.length - 1)) {
+            throw new RestClientError(`Invalid policy query: ${query}`);
+        }
+        const splitQuery = query.split("=");
+        const resource = splitQuery[0];
+        const action = splitQuery[1];
+        const resourceEnc = encodeURIComponent(resource.replaceAll("/", "-"));
+        const actionEnc = encodeURIComponent(action);
+        return `${resourceEnc}=${actionEnc}`;
+    }
+
+    async queryPolicies(logger: Logger, context: IContext,
+                        policyQueries: Set<string>): Promise<Set<string>> {
+        if (!context.sessionId) {
+            throw new RestClientError("Session ID missing");
+        }
+        const encQueries: string[] = [];
+        for (const policyQuery of policyQueries.values()) {
+            encQueries.push(this.encodePolicyQuery(policyQuery));
+        }
+        const targetUrl = this.url + "/p?" + encQueries.join("&");
+        logger.info(`fetch GET - ${targetUrl}`);
+        const policies: Set<string> = new Set();
+        const response = await fetch(
+            targetUrl, { headers: { "rzo-sessionid": context!.sessionId } });
+        if (!response.ok) {
+            if (response.status == 404) {
+                return policies;
+            }
+            throw new RestClientError(
+                `fetch returned status code ${response.status}`);
+        }
+        const responseData = await response.json();
+        // return empty if the result is not an array
+        if (Array.isArray(responseData)) {
+            for (const policy of <string[]>responseData) {
+                policies.add(policy);
+            }
+        }
+        return policies;
+    }
 }
 
 type RestClientSourceSpec = ClassSpec & {
@@ -599,6 +660,32 @@ export class RestClientAuthenticator extends Authenticator {
     }
 
     get service(): IAuthenticator {
+        return this.source.v;
+    }
+}
+
+export class RestClientPolicyAuthorizer extends PolicyAuthorizer {
+    source: Cfg<IPolicyAuthorizer>;
+
+    constructor(config: TypeCfg<RestClientAuthenticatorSpec>,
+                blueprints: Map<string, any>) {
+        super(config, blueprints);
+        this.source = new Cfg(config.spec.source);
+    }
+
+    configure(configuration: IConfiguration) {
+        super.configure(configuration);
+        const target = (<ServiceSource>configuration.getSource(
+            this.source.name).ensure(ServiceSource)).service;
+        if (!((<any>target).isPolicyAuthorizer)) {
+            throw new RestClientError(
+                `Invalid PolicyAuthorizer ${this.name}, source ` +
+                `'${this.source.name}' is not an IPolicyAuthorizer`);
+        }
+        this.source.v = target as unknown as IPolicyAuthorizer;
+    }
+
+    get service(): IPolicyAuthorizer {
         return this.source.v;
     }
 }

@@ -21,7 +21,8 @@ import { Cfg, IAuthenticator, Logger } from "../base/core.js";
 import { RZO, CONTEXT } from "../base/configuration.js";
 import { TOASTER } from "./toaster.js";
 import {
-    PanelController, IPanel, PanelData, PanelMessage, NavMenuItem, BasePanel
+         PanelController, IPanel, PanelData, PanelMessage, NavMenuItem,
+         BasePanel
 } from "./panel.js";
 
 export class NavigationPanel implements IPanel {
@@ -30,6 +31,7 @@ export class NavigationPanel implements IPanel {
     ridersMenu: NavMenuItem;
     driversMenu: NavMenuItem;
     accountsMenu: NavMenuItem;
+    testsMenu: NavMenuItem;
     controller: Cfg<PanelController>;
     authenticator: Cfg<IAuthenticator>;
     loggedIn: boolean;
@@ -44,6 +46,7 @@ export class NavigationPanel implements IPanel {
         this.ridersMenu = new NavMenuItem(nl, "nav-riders-a", "Riders");
         this.driversMenu = new NavMenuItem(nl, "nav-drivers-a", "Drivers");
         this.accountsMenu = new NavMenuItem(nl, "nav-accounts-a", "Accounts");
+        this.testsMenu = new NavMenuItem(nl, "nav-tests-a", "Tests");
         this.authenticator = new Cfg("auth");
         this.loggedIn = false;
     }
@@ -87,6 +90,12 @@ export class NavigationPanel implements IPanel {
         }
     }
 
+    private onTests(evt: Event): void {
+        if (this.checkLogin()) {
+            this.controller.v.show("tests-panel");
+        }
+    }
+
     private onLogout(evt: Event): void {
         if (this.checkLogin()) {
             this.authenticator.v.logout(this.logger, CONTEXT.c)
@@ -100,28 +109,47 @@ export class NavigationPanel implements IPanel {
                     this.ridersMenu.hide();
                     this.driversMenu.hide();
                     this.accountsMenu.hide();
+                    this.testsMenu.hide();
                 });
             })
             .catch((err) => {
-                console.error(err);
-                TOASTER.error(`ERROR: ${err}`);
+                TOASTER.exc(err);
             });
         }
     }
 
+    showIfGranted(menu: NavMenuItem, policy: string,
+                  policies: Set<string>): void {
+        if (policies.has(policy)) {
+            menu.show();
+        } else {
+            menu.hide();
+        }
+    }
+
+    collectPolicyQueries(policyQueries: Set<string>): void {
+        const queries = [
+            "app/mytrips=get",
+            "app/trips=get",
+            "app/riders=get",
+            "app/drivers=get",
+            "app/accounts=get",
+            "app/tests=get"
+        ];
+        queries.forEach((q) => policyQueries.add(q));
+    }
+
+    async applyPolicies(policies: Set<string>) : Promise<void> {
+        this.showIfGranted(this.myTripsMenu, "app/mytrips=get", policies);
+        this.showIfGranted(this.tripsMenu, "app/trips=get", policies);
+        this.showIfGranted(this.ridersMenu, "app/riders=get", policies);
+        this.showIfGranted(this.driversMenu, "app/drivers=get", policies);
+        this.showIfGranted(this.accountsMenu, "app/accounts=get", policies);
+        this.showIfGranted(this.testsMenu, "app/tests=get", policies);
+    }
+
     private onLogin(): void {
         this.loggedIn = true;
-        const persona = CONTEXT.c.persona.name;
-        if (persona == "drivers") {
-            this.myTripsMenu.show();
-            this.tripsMenu.show();
-        }
-        if (persona == "planners" || persona == "admins") {
-            this.tripsMenu.show();
-            this.ridersMenu.show();
-            this.driversMenu.show();
-            this.accountsMenu.show();
-        }
     }
 
     get id(): string {
@@ -151,6 +179,10 @@ export class NavigationPanel implements IPanel {
             evt.preventDefault();
             this.onAccounts(evt);
         });
+        this.testsMenu.initialize((evt) => {
+            evt.preventDefault();
+            this.onTests(evt);
+        });
         BasePanel.queryElement("nav-logout-a")
         .addEventListener("click", (evt) => {
             evt.preventDefault();
@@ -174,7 +206,7 @@ export class NavigationPanel implements IPanel {
         // no-op
     }
 
-    async onMessage(message: PanelMessage): Promise<void> {
+    async onMessage(message: PanelMessage, data?: PanelData): Promise<void> {
         if (message == "logged-in") {
             this.onLogin();
         } else if (message == "logged-out") {

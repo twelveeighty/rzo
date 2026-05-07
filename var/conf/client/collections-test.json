@@ -1,0 +1,78 @@
+[
+    {
+        "apiVersion": "v1",
+        "kind": "Collection",
+        "metadata": {
+            "name": "testversioneds"
+        },
+        "spec": {
+            "type": "mobile.pouch-collection.MobileCollection",
+            "entity": "testversioned",
+            "source": "pouchdb",
+            "via": "collection",
+            "fields": [ "*" ],
+            "orderBy": [ { "field": "keyfield", "order": "asc" } ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Collection",
+        "metadata": {
+            "name": "testversioneduniques"
+        },
+        "spec": {
+            "type": "mobile.pouch-collection.MobileCollection",
+            "entity": "testversioned",
+            "source": "pouchdb",
+            "via": "collection",
+            "fields": [ "*" ],
+            "filteredBy": [ "uniquefield" ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Collection",
+        "metadata": {
+            "name": "testimmutables"
+        },
+        "spec": {
+            "type": "mobile.pouch-collection.MobileCollection",
+            "entity": "testimmutable",
+            "source": "pouchdb",
+            "via": "collection",
+            "fields": [ "*" ],
+            "orderBy": [ { "field": "keyfield", "order": "asc" } ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Collection",
+        "metadata": {
+            "name": "testimmutableuniques"
+        },
+        "spec": {
+            "type": "mobile.pouch-collection.MobileCollection",
+            "entity": "testimmutable",
+            "source": "pouchdb",
+            "via": "collection",
+            "fields": [ "*" ],
+            "filteredBy": [ "uniquefield" ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Collection",
+        "metadata": {
+            "name": "testlocals"
+        },
+        "spec": {
+            "type": "Collection",
+            "entity": "testlocal",
+            "source": "db",
+            "via": "query",
+            "fields": [ "*" ],
+            "orderBy": [ { "field": "keyfield", "order": "asc" } ]
+        }
+    }
+]
+

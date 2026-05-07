@@ -1,0 +1,162 @@
+[
+    {
+        "apiVersion": "v1",
+        "kind": "Entity",
+        "metadata": {
+            "name": "testversioned"
+        },
+        "spec": {
+            "type": "Entity",
+            "table": "testversioned",
+            "retention": { "style": "keep" },
+            "keyFields": [
+                { "name": "keyfield", "type": "StringField", "required": true }
+            ],
+            "coreFields": [
+                { "name": "stringfield", "type": "StringField",
+                    "required": true,
+                    "default": "String Value"
+                },
+                { "name": "uniquefield", "type": "UniqueField",
+                    "required": true,
+                    "maxlength": 255,
+                    "indexed": "asc",
+                    "collection": "testversioneduniques"
+                },
+                { "name": "integerfield", "type": "IntegerField",
+                    "required": true,
+                    "default": "42"
+                },
+                { "name": "aliasvaluelist", "type": "AliasValueList",
+                      "required": true,
+                      "default": "GREEN",
+                      "maxlength": 32,
+                      "internal": [ "GREEN", "RED", "BLUE" ],
+                      "aliases": []
+                },
+                { "name": "numberfield", "type": "NumberField",
+                    "required": true,
+                    "default": "42.01"
+                },
+                { "name": "amountfield", "type": "AmountField", "required": true,
+                    "precision": 15, "scale": 2,
+                    "default": "2400.78"
+                },
+                { "name": "booleanfield", "type": "BooleanField", "required": true,
+                  "default": "false"
+                },
+                { "name": "datefield", "type": "DateField", "required": true },
+                { "name": "datetimefield", "type": "DateTimeField", "required": true },
+                { "name": "uuidfield", "type": "UuidField", "required": true },
+                { "name": "pathfield", "type": "PathField", "required": true }
+            ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Entity",
+        "metadata": {
+            "name": "testimmutable"
+        },
+        "spec": {
+            "type": "ImmutableEntity",
+            "table": "testimmutable",
+            "keyFields": [
+                { "name": "keyfield", "type": "StringField", "required": true }
+            ],
+            "coreFields": [
+                { "name": "stringfield", "type": "StringField",
+                    "required": true,
+                    "default": "String Value"
+                },
+                { "name": "uniquefield", "type": "UniqueField",
+                    "required": true,
+                    "maxlength": 255,
+                    "indexed": "asc",
+                    "collection": "testimmutableuniques"
+                },
+                { "name": "integerfield", "type": "IntegerField",
+                    "required": true,
+                    "default": "42"
+                },
+                { "name": "aliasvaluelist", "type": "AliasValueList",
+                      "required": true,
+                      "default": "GREEN",
+                      "maxlength": 32,
+                      "internal": [ "GREEN", "RED", "BLUE" ],
+                      "aliases": []
+                },
+                { "name": "numberfield", "type": "NumberField",
+                    "required": true,
+                    "default": "42.01"
+                },
+                { "name": "amountfield", "type": "AmountField", "required": true,
+                    "precision": 15, "scale": 2,
+                    "default": "2400.78"
+                },
+                { "name": "booleanfield", "type": "BooleanField", "required": true,
+                  "default": "false"
+                },
+                { "name": "datefield", "type": "DateField", "required": true },
+                { "name": "datetimefield", "type": "DateTimeField", "required": true },
+                { "name": "uuidfield", "type": "UuidField", "required": true },
+                { "name": "pathfield", "type": "PathField", "required": true }
+            ]
+        }
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "Entity",
+        "metadata": {
+            "name": "testlocal"
+        },
+        "spec": {
+            "type": "LocalEntity",
+            "table": "testlocal",
+            "canUpdate": true,
+            "canDelete": true,
+            "keyFields": [
+                { "name": "keyfield", "type": "StringField", "required": true }
+            ],
+            "coreFields": [
+                { "name": "stringfield", "type": "StringField",
+                    "required": true,
+                    "default": "String Value"
+                },
+                { "name": "uniquefield", "type": "UniqueField",
+                    "required": true,
+                    "maxlength": 255,
+                    "indexed": "asc",
+                    "collection": "testlocals"
+                },
+                { "name": "integerfield", "type": "IntegerField",
+                    "required": true,
+                    "default": "42"
+                },
+                { "name": "aliasvaluelist", "type": "AliasValueList",
+                      "required": true,
+                      "default": "GREEN",
+                      "maxlength": 32,
+                      "internal": [ "GREEN", "RED", "BLUE" ],
+                      "aliases": []
+                },
+                { "name": "numberfield", "type": "NumberField",
+                    "required": true,
+                    "default": "42.01"
+                },
+                { "name": "amountfield", "type": "AmountField", "required": true,
+                    "precision": 15, "scale": 2,
+                    "default": "2400.78"
+                },
+                { "name": "booleanfield", "type": "BooleanField", "required": true,
+                  "default": "false"
+                },
+                { "name": "datefield", "type": "DateField", "required": true },
+                { "name": "datetimefield", "type": "DateTimeField", "required": true },
+                { "name": "uuidfield", "type": "UuidField", "required": true },
+                { "name": "pathfield", "type": "PathField", "required": true }
+            ]
+        }
+    }
+]
+

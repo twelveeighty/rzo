@@ -3,7 +3,7 @@
 #
 #    RZO - A Business Application Framework
 #
-#    Copyright (C) 2024 Frank Vanderham
+#    Copyright (C) 2024-2026 Frank Vanderham
 #
 #    This program is free software: you can redistribute it and/or modify
 #    it under the terms of the GNU General Public License as published by
@@ -21,29 +21,15 @@
 set -eu
 
 VAR="../var"
-CFG="$VAR/conf"
-CLT="$CFG/client"
 SRC="../src"
 MODS="../node_modules"
+BUNDLE="../var/web-config-bundle.json"
+METADATA="./metadata.js"
 BOOTSTRAP="../deps/bootstrap-5.3.8-dist"
+POUCHDB="../deps/pouchdb-9.0.0"
 
 if [[ $(basename "$(pwd)") = "build" ]]; then
-    echo "In build directory"
-
-    configs=(
-        "$CFG/entities.json"
-        "$CFG/accting.json"
-        "$CFG/personas.json"
-        "$CLT/collections.json"
-        "$CLT/accting-collections.json"
-        "$CLT/config.json"
-        )
-
-    for i in ${!configs[@]}; do
-      echo "> ${configs[$i]}"
-    done
-
-    node "config-merge.js" ${configs[@]} > "./metadata.js"
+    node "config-merge.js" "${BUNDLE}" "${METADATA}"
 
     cp -v "$VAR/img/rzo.png" .
     cp -v "$SRC/index.html" .
@@ -57,6 +43,10 @@ if [[ $(basename "$(pwd)") = "build" ]]; then
 
     mkdir -p ./bootstrap/js
     cp -v "$BOOTSTRAP/js/bootstrap.esm.min."* ./bootstrap/js/
+
+    mkdir -p ./pouchdb/
+    cp -v  "$POUCHDB/pouchdb-9.0.0.js" ./pouchdb/
+    cp -v  "$POUCHDB/pouchdb.find.js" ./pouchdb/
 
 else
     echo "This script must be run from the 'build' directory"

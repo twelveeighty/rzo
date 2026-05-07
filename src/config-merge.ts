@@ -18,36 +18,40 @@
 */
 
 
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { argv } from 'node:process';
-
-import { TypeCfg, ClassSpec } from "./base/core.js";
+import { TypeCfg, ClassSpec, ConfigBundleSpec } from "./base/core.js";
 
 try {
-    if (argv.length < 3) {
+    if (argv.length != 4) {
         throw new Error(
-            "Usage: node config-merge conf1 conf2 ...");
+            "Usage: node config-merge <bundle> <output>");
     }
-
-    const files: Promise<Buffer>[] = [];
-    for (const filename of argv.slice(2)) {
-        files.push(readFile(new URL(filename, import.meta.url)));
+    const bundleUrl = new URL(argv[2], import.meta.url);
+    const outputUrl =  new URL(argv[3], import.meta.url);
+    console.log(`Using bundle: ${bundleUrl}`);
+    console.log(`Output to: ${outputUrl}`);
+    const bundleContents = await readFile(bundleUrl, { encoding: "utf8" });
+    const bundle = JSON.parse(bundleContents) as TypeCfg<ConfigBundleSpec>;
+    const contentsP: Promise<string>[] = [];
+    for (const config of bundle.spec.configurations) {
+        const url = new URL(
+            `${bundle.spec.home}/${config}.json`, import.meta.url);
+        console.log(`> ${url}`);
+        contentsP.push(readFile(url, { encoding: 'utf8' }));
     }
-
-    const buffers = await Promise.all(files);
-
+    const configuration = await Promise.all(contentsP);
     let jsonConfig: TypeCfg<ClassSpec>[] = [];
-    for (const buffer of buffers) {
-        const configPart =
-            JSON.parse(buffer.toString("utf8")) as TypeCfg<ClassSpec>[];
+    for (const config of configuration) {
+        const configPart = JSON.parse(config) as TypeCfg<ClassSpec>[];
         jsonConfig = jsonConfig.concat(configPart);
     }
-
-    console.log("export const METADATA =");
-    console.log(JSON.stringify(jsonConfig, null, 3));
-    console.log(";\n");
-
+    let output: string[] = ["export const METADATA = "];
+    output = output.concat(JSON.stringify(jsonConfig, null, 3));
+    output.push(";\n");
+    await writeFile(outputUrl, output);
 } catch (err) {
     console.error(err);
+    process.exit(1);
 }
 

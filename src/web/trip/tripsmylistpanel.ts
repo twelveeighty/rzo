@@ -63,16 +63,13 @@ export class TripsMyListPanel extends BasePanel implements IPanel {
         this.appointmentTsField.v = RZO.getField("trip.appointmentts");
         this.service.v =
             (<ServiceSource>RZO.getSource("db").ensure(ServiceSource)).service;
-
         this.qElement("-my-search-time-sel")
         .addEventListener("change", (evt) => {
             this.onTimeframeChange(evt);
         });
-
         this.refreshBtn.addEventListener("click", (evt) => {
             this.onRefresh();
         });
-
         this.tripList.initialize((evt) => {
             evt.preventDefault();
             this.onAnchorClick(evt);
@@ -93,7 +90,10 @@ export class TripsMyListPanel extends BasePanel implements IPanel {
     }
 
     private onRefresh(): void {
-        this.queryList(this.qSelect("-my-search-time-sel").value);
+        const driverId = CONTEXT.c.getSubject("driver");
+        if (driverId) {
+            this.queryList(this.qSelect("-my-search-time-sel").value, driverId);
+        }
     }
 
     private onAnchorClick(evt: Event): void {
@@ -122,7 +122,8 @@ export class TripsMyListPanel extends BasePanel implements IPanel {
         return result;
     }
 
-    private async queryList(timeFrame: string): Promise<void> {
+    private async queryList(timeFrame: string,
+                            driverId: string): Promise<void> {
         try {
             const todayMidnight = this.midnight();
             switch (timeFrame) {
@@ -161,7 +162,7 @@ export class TripsMyListPanel extends BasePanel implements IPanel {
             if (this.endDate) {
                 filter.op("appointmentts", "<=", this.endDate.toISOString());
             }
-            filter.op("drivernum_id", "=", CONTEXT.c.getSubject("driver"));
+            filter.op("drivernum_id", "=", driverId);
             this.qElement("-my-search-daterange-pre").innerText =
                 this.shortDates(this.startDate, this.endDate);
             const query = new Query(

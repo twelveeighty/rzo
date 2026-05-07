@@ -20,9 +20,7 @@
 import { ServiceSource, Cfg, Entity, Row } from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
 
-import {
-    IPanel, FormPanel, Control, PanelMessage, PanelData
-} from "../panel.js";
+import { IPanel, FormPanel, Control, PanelData } from "../panel.js";
 
 
 export class AccountEditPanel extends FormPanel implements IPanel {
@@ -56,13 +54,26 @@ export class AccountEditPanel extends FormPanel implements IPanel {
         this.loadDropdown("-holding-sel", "holdings", "name");
     }
 
-    async onMessage(message: PanelMessage): Promise<void> {
-        if (message == "logged-in") {
-            if (CONTEXT.c.persona.name == "admins") {
-                this.loadLedgers();
-                this.loadHoldings();
-            }
+    collectPolicyQueries(policyQueries: Set<string>): void {
+        const queries = [
+            "entity/holding=get",
+            "entity/ledger=get"
+        ];
+        queries.forEach((q) => policyQueries.add(q));
+    }
+
+    async applyPolicies(policies: Set<string>) : Promise<void> {
+        if (policies.has("entity/holding=get") &&
+            policies.has("entity/ledger=get")) {
+            this.loadLedgers();
+            this.loadHoldings();
         }
+    }
+
+    protected initUI(): void {
+        super.initUI();
+        this.clearSelect("-ledger-sel");
+        this.clearSelect("-holding-sel");
     }
 
     protected async save(): Promise<Row> {

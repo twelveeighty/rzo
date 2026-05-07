@@ -24,7 +24,7 @@ import {
          CrossoverForeignKeyCfg, Cfg, Field, Row, EntitySpec, BigDecimal,
          TypeCfg, BizTrans
 } from "../base/core.js";
-import { Txn, FinDoc } from "../accting/acc-core.js";
+import { DocumentBuilder, FinDoc } from "../accting/acc-core.js";
 
 export const ACC_TICKET_PRICE = new BigDecimal("10.00");
 
@@ -409,7 +409,7 @@ export class Trip extends Entity {
 
     constructor(config: TypeCfg<EntitySpec>, blueprints: Map<string, any>) {
         super(config, blueprints);
-        this.findocEntity = new Cfg("acctrans");
+        this.findocEntity = new Cfg("findoc");
         this.driverEntity = new Cfg("driver");
         this.riderEntity = new Cfg("rider");
         this.statusField = new Cfg("status");
@@ -447,56 +447,39 @@ export class Trip extends Entity {
         const memo =
             `Ticket ${reason} for ${trip.get("ridernum")} on ` +
             `trip ${trip.get("tripnum")}`;
-        const findoc = await this.createFinDoc(
-            context, service, account, memo, now, id || trip.get("_id"));
-        const transnum = findoc.field("transnum").value;
-        const txn = new Txn(this.findocEntity.v, findoc);
-        const drSplit = await this.createSplit(
-            context, service, "Dr", transnum, dr, quantity, amount, now,
-            memo);
-        txn.splits.push(drSplit);
-        const crSplit = await this.createSplit(
-            context, service, "Cr", transnum, cr, quantity, amount, now,
-            memo);
-        txn.splits.push(crSplit);
-        await txn.toBizTrans(bizTrans, this.logger, context, service);
-    }
 
-    private async createFinDoc(context: IContext, service: IService,
-                               account: string, memo: string, now: Date,
-                               entityId: string): Promise<State> {
-        const entity = this.findocEntity.v;
-        const state = await entity.create(context, service);
-        const se: Promise<SideEffects>[] = [];
-        entity.cpSetValue(state, "account", account, context, se);
-        entity.cpSetValue(state, "entityid", entityId, context, se);
-        entity.cpSetValue(state, "memo", memo, context, se);
-        entity.cpSetValue(state, "posted", now, context, se);
-        entity.cpSetValue(state, "created", now, context, se);
-        await Promise.all(se);
-        return state;
-    }
-
-    private async createSplit(context: IContext, service: IService,
-                              change: string, transnum: string,
-                              account: string, quantity: BigDecimal,
-                              amount: BigDecimal, now: Date,
-                              memo: string): Promise<State> {
-        const entity = this.findocEntity.v.splitEntity.v;
-        const split = await entity.create(context, service);
-        const se: Promise<SideEffects>[] = [];
-        // Set acctrans without validation, since it doesn't exist yet.
-        split.field("acctrans").value = transnum;
-        entity.cpSetValue(split, "account", account, context, se);
-        entity.cpSetValue(split, "change", change, context, se);
-        entity.cpSetValue(split, "quantity", quantity, context, se);
-        entity.cpSetValue(split, "price", ACC_TICKET_PRICE, context, se);
-        entity.cpSetValue(split, "amount", amount, context, se);
-        entity.cpSetValue(split, "created", now, context, se);
-        entity.cpSetValue(split, "posted", now, context, se);
-        entity.cpSetValue(split, "memo", memo, context, se);
-        await Promise.all(se);
-        return split;
+        const builder = new DocumentBuilder(
+            this.findocEntity.v, bizTrans, context, service);
+        await builder.document(new Row(
+            {
+                account: account,
+                entityid: id || trip.get("_id"),
+                memo: memo,
+                posted: now,
+                created: now
+            }
+        ));
+        await builder.split(new Row(
+            {
+                account: dr,
+                change: "Dr",
+                quantity: quantity,
+                price: ACC_TICKET_PRICE,
+                amount: amount,
+                memo: memo
+            }
+        ));
+        await builder.split(new Row(
+            {
+                account: cr,
+                change: "Cr",
+                quantity: quantity,
+                price: ACC_TICKET_PRICE,
+                amount: amount,
+                memo: memo
+            }
+        ));
+        await builder.postBizTrans();
     }
 
     async createReservation(bizTrans: BizTrans, service: IService,

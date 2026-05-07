@@ -1,0 +1,23 @@
+{
+    "apiVersion": "v1",
+    "kind": "ConfigBundle",
+    "metadata": {
+        "name": "dataloadconfigbundle"
+    },
+    "spec": {
+        "home": "../var/conf",
+        "configurations": [
+            "entities",
+            "accting",
+            "entities-test",
+            "serverside-client/entities-server",
+            "personas",
+            "client/collections",
+            "serverside-client/collections-test",
+            "server/accting-collections",
+            "serverside-client/config"
+        ],
+        "policies": []
+    }
+}
+

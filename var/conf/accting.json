@@ -213,7 +213,7 @@
             "type": "accting.acc-core.FinDoc",
             "table": "findoc",
             "keyFields": [
-                { "name": "docnum", "type": "GeneratorField", "required": true,
+                { "name": "docnum", "type": "ManualGeneratorField", "required": true,
                       "maxlength": 32,
                       "format": "D$YY-$NEXT",
                       "min": 100000,
@@ -228,6 +228,7 @@
                       "collection": "accounts"
                 },
                 { "name": "entityid", "type": "UuidField" },
+                { "name": "parentid", "type": "UuidField" },
                 { "name": "amount", "type": "AmountField", "required": true,
                     "precision": 15, "scale": 2
                 },
@@ -252,7 +253,7 @@
             "type": "accting.acc-core.Split",
             "table": "split",
             "keyFields": [
-                { "name": "splitnum", "type": "GeneratorField", "required": true,
+                { "name": "splitnum", "type": "ManualGeneratorField", "required": true,
                       "maxlength": 32,
                       "format": "S$YY-$NEXT",
                       "min": 1000000,
@@ -260,11 +261,15 @@
                 }
             ],
             "coreFields": [
-                { "name": "findoc", "type": "ForeignKey",
+                { "name": "findoc", "type": "StateAwareCrossoverKey",
                       "required": true,
                       "target": "findoc",
                       "value": "docnum",
-                      "collection": "findocs"
+                      "collection": "findocs",
+                      "copies": [
+                          { "from": "created", "to": "created" },
+                          { "from": "posted", "to": "posted" }
+                      ]
                 },
                 { "name": "account", "type": "CrossoverForeignKey",
                       "required": true,

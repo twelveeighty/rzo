@@ -1,0 +1,22 @@
+{
+    "apiVersion": "v1",
+    "kind": "ConfigBundle",
+    "metadata": {
+        "name": "ddlconfigbundle"
+    },
+    "spec": {
+        "home": "../var/conf",
+        "configurations": [
+            "entities",
+            "accting",
+            "entities-test",
+            "server/entities-server",
+            "server/collections",
+            "server/collections-test",
+            "server/accting-collections",
+            "server/config-ddl"
+        ],
+        "policies": []
+    }
+}
+

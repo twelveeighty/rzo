@@ -1,7 +1,7 @@
 /*
     RZO - A Business Application Framework
 
-    Copyright (C) 2024 Frank Vanderham
+    Copyright (C) 2024-2026 Frank Vanderham
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -20,24 +20,9 @@
 
 import { readFile } from "node:fs/promises";
 import { env, argv } from "node:process";
-
+import { ConfigBundleSpec, TypeCfg } from "./base/core.js";
 import { RZO } from "./base/configuration.js";
-
 import { PolicyConfiguration } from "./server/policy.js";
-
-function urlFor(filename: string, subdir?: string): URL {
-    if (subdir) {
-        return new URL(`../var/conf/${subdir}/${filename}.json`,
-                       import.meta.url);
-    }
-    return new URL(`../var/conf/${filename}.json`, import.meta.url);
-}
-
-function getUrl(filename: string, subdir?: string): URL {
-    const result = urlFor(filename, subdir);
-    console.log(`Loading ${result}`);
-    return result;
-}
 
 function logEnvVars(): void {
     const dbId = "RZOID" in env ? "" + env.RZOID : "";
@@ -66,23 +51,32 @@ try {
     logEnvVars();
     const policyConfig = new PolicyConfiguration();
     RZO.policyConfig = policyConfig;
-    let config = "config";
+    let bundleName = "config-bundle";
     if (argv.length == 3 && argv[2] == "--bootstrap") {
         console.log("WARNING --- RUNNING IN BOOTSTRAP MODE");
-        config = "config-bootstrap";
+        bundleName = "bootstrap-config-bundle";
     }
-    const contents = await Promise.all([
-        readFile(getUrl("entities"), { encoding: 'utf8' }),
-        readFile(getUrl("accting"), { encoding: 'utf8' }),
-        readFile(getUrl("entities-server", "server"), { encoding: 'utf8' }),
-        readFile(getUrl("personas"), { encoding: 'utf8' }),
-        readFile(getUrl("collections", "server"), { encoding: 'utf8' }),
-        readFile(getUrl("accting-collections", "server"), { encoding: 'utf8' }),
-        readFile(getUrl(config, "server"), { encoding: 'utf8' })
-    ]);
-    const policies = await Promise.all([
-        readFile(getUrl("policies"), { encoding: 'utf8' })
-    ]);
+    const bundleContents = await readFile(
+        new URL(`../var/${bundleName}.json`, import.meta.url),
+        { encoding: 'utf8' });
+    const bundle = JSON.parse(bundleContents) as TypeCfg<ConfigBundleSpec>;
+    console.log(JSON.stringify(bundle, null, 3));
+    const contentsP: Promise<string>[] = [];
+    for (const config of bundle.spec.configurations) {
+        const url = new URL(
+            `${bundle.spec.home}/${config}.json`, import.meta.url);
+        console.log(`Loading config file: ${url}`);
+        contentsP.push(readFile(url, { encoding: 'utf8' }));
+    }
+    const contents = await Promise.all(contentsP);
+    const policiesP: Promise<string>[] = [];
+    for (const config of bundle.spec.policies) {
+        const url = new URL(
+            `${bundle.spec.home}/${config}.json`, import.meta.url);
+        console.log(`Loading policy file: ${url}`);
+        policiesP.push(readFile(url, { encoding: 'utf8' }));
+    }
+    const policies = await Promise.all(policiesP);
     await RZO.load(contents);
     await policyConfig.load(policies, RZO);
     process.on("SIGTERM", () => {

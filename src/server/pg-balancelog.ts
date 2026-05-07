@@ -23,9 +23,9 @@ import Cursor from "pg-cursor";
 import {
          Entity, IResultSet, IConfiguration, DaemonWorker, MemResultSet, Row,
          TypeCfg, ClassSpec, _IError, Nobody, Cfg, Logger, IntegerField,
-         BigDecimal
+         LocalDay, BigDecimal
 } from "../base/core.js";
-import { LocalDay, Split } from "../accting/acc-core.js";
+import { Split } from "../accting/acc-core.js";
 import { LeaderElector } from "./election.js";
 import { PgConnection } from "./pg-client.js";
 

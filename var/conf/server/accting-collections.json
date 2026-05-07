@@ -62,26 +62,26 @@
         "apiVersion": "v1",
         "kind": "Collection",
         "metadata": {
-            "name": "acctransactions"
+            "name": "findocs"
         },
         "spec": {
             "type": "Collection",
-            "entity": "acctrans",
+            "entity": "findoc",
             "source": "db",
             "via": "query",
             "fields": [ "*" ],
-            "orderBy": [ { "field": "transnum", "order": "asc" } ]
+            "orderBy": [ { "field": "docnum", "order": "asc" } ]
         }
     },
     {
         "apiVersion": "v1",
         "kind": "Collection",
         "metadata": {
-            "name": "accsplits"
+            "name": "splits"
         },
         "spec": {
             "type": "Collection",
-            "entity": "accsplit",
+            "entity": "split",
             "source": "db",
             "via": "query",
             "fields": [ "*" ],

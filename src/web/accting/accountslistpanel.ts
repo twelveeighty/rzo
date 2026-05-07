@@ -17,28 +17,17 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import {
-    ServiceSource, MemResultSet, Row, BooleanField
-} from "../../base/core.js";
+import { ServiceSource, MemResultSet, Row } from "../../base/core.js";
 import { RZO } from "../../base/configuration.js";
-import { IPanel, BasePanel, PanelData, PanelButton } from "../panel.js";
+import { IPanel, BasePanel, PanelData } from "../panel.js";
 import { AccountsList, RowListener } from "./accountlist.js";
 
 export class AccountsListPanel extends BasePanel implements IPanel {
-    splitsBtn: PanelButton;
-    transBtn: PanelButton;
     accountsList: AccountsList;
 
     constructor() {
         super();
         this.prefix = "accounts";
-        const btnDiv = this.qElement("-buttons-div");
-        this.splitsBtn = new PanelButton(
-            btnDiv, this.fqId("-splits-btn"),
-            "View Splits...", "btn btn-primary me-2");
-        this.transBtn = new PanelButton(
-            btnDiv, this.fqId("-trans-btn"),
-            "View Transactions...", "btn btn-primary me-2");
         this.accountsList = new AccountsList(
             this.qElement("-list-div"), this.qElement("accounts-heading"),
             this.qElement("-crumbs"), "accounts");
@@ -63,12 +52,6 @@ export class AccountsListPanel extends BasePanel implements IPanel {
         this.qButton("-edit-btn").addEventListener("click", (evt) => {
             this.onEdit(evt);
         });
-        this.splitsBtn.initialize((evt) => {
-            this.onSplits(evt);
-        });
-        this.transBtn.initialize((evt) => {
-            this.onTransactions(evt);
-        });
     }
 
     private onCreate(evt: Event): void {
@@ -76,39 +59,13 @@ export class AccountsListPanel extends BasePanel implements IPanel {
     }
 
     private onEdit(evt: Event): void {
-        if (this.accountsList.lastSelected) {
+        if (this.accountsList.lastParentShown) {
             this.controller.v.stack(
                 "account-edit-panel",
                 new PanelData(
                     "State",
-                    this.entity.v.rowToState(this.accountsList.lastSelected)));
-        }
-    }
-
-    private onSplits(evt: Event): void {
-        if (this.accountsList.lastSelected) {
-            this.navToAccountSplits(this.accountsList.lastSelected);
-        }
-    }
-
-    private onTransactions(evt: Event): void {
-    }
-
-    private navToAccountSplits(row: Row): void {
-        this.controller.v.stack(
-            BooleanField.toBoolean(row.get("islogged")) ?
-                "logsplits-panel" :
-                "splits-panel",
-            new PanelData("Row", row));
-    }
-
-    private setButtonsVisible(visible: boolean): void {
-        if (visible) {
-            this.splitsBtn.show();
-            this.transBtn.show();
-        } else {
-            this.splitsBtn.hide();
-            this.transBtn.hide();
+                    this.entity.v.rowToState(
+                        this.accountsList.lastParentShown)));
         }
     }
 
@@ -119,12 +76,6 @@ export class AccountsListPanel extends BasePanel implements IPanel {
     }
 
     private onDrillDown(row: Row): void {
-        this.setButtonsVisible(true);
-    }
-
-    private showTopLevelAccounts(): void {
-        this.setButtonsVisible(false);
-        this.accountsList.showTopLevelAccounts();
     }
 
     async show(panelData?: PanelData): Promise<void> {
@@ -138,7 +89,7 @@ export class AccountsListPanel extends BasePanel implements IPanel {
                 this.accountsList.setList(
                     MemResultSet.fromRow(row), row.get("_id"));
             } else {
-                this.showTopLevelAccounts();
+                this.accountsList.showTopLevelAccounts();
             }
         }
     }

@@ -18,16 +18,20 @@
 */
 
 import {
-    State, Row, Entity, IService, Cfg, IContext, SideEffects, StringField,
-    Logger, MemResultSet, JsonObject
+         State, Row, Entity, IService, Cfg, IContext, SideEffects, StringField,
+         BooleanField, Logger, IResultSet, MemResultSet, JsonObject, LocalDay
 } from "../base/core.js";
 import { RZO, CONTEXT } from "../base/configuration.js";
 import { TOASTER } from "./toaster.js";
 
-type PanelDataType = "None" | "State" | "Row" | "string" | "Parameter";
+type PanelDataType = "None" | "State" | "Row" | "string" | "Parameter" |
+                     "ResultSet";
 type PanelParameter = "Refresh" | "NoRefresh";
-type RenderAs = "asHTML" | "asText";
+export type RenderAs = "asHTML" | "asText";
 type ControlType = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+
+const RZO_TIME_FORMAT = new Intl.DateTimeFormat(
+    "en-US", { timeStyle: "medium" });
 
 export class PanelData {
 
@@ -41,6 +45,13 @@ export class PanelData {
             return "None";
         }
         return panelData.dataType;
+    }
+
+    static resultSetOf(panelData?: PanelData): IResultSet {
+        if (panelData) {
+            return panelData.resultSet;
+        }
+        throw new Error("panelData is undefined");
     }
 
     static stateOf(panelData?: PanelData): State {
@@ -73,7 +84,14 @@ export class PanelData {
 
 
     constructor(public dataType: PanelDataType,
-                public data: State | Row | string) {
+                public data: State | Row | string | IResultSet) {
+    }
+
+    get resultSet(): IResultSet {
+        if (this.dataType != "ResultSet") {
+            throw new Error(`Data type ${this.dataType} is not ResultSet`);
+        }
+        return this.data as IResultSet;
     }
 
     get state(): State {
@@ -115,7 +133,9 @@ export interface IPanel {
     show(panelData?: PanelData): Promise<void>;
     canHide(): boolean;
     hide(): void;
-    onMessage(message: PanelMessage): Promise<void>;
+    onMessage(message: PanelMessage, data?: PanelData): Promise<void>;
+    collectPolicyQueries(policyQueries: Set<string>): void;
+    applyPolicies(policies: Set<string>) : Promise<void>;
 }
 
 export class AttributeJoiner {
@@ -246,6 +266,10 @@ export class PanelButton {
         }
     }
 
+    get visible(): boolean {
+        return !!this.btn;
+    }
+
     show(): void {
         if (!this.btn) {
             this.btn = new DynElement(
@@ -291,6 +315,13 @@ export class BasePanel {
         }
     }
 
+    static rzoLocalString(date: Date): string {
+        const month = `${date.getMonth() + 1}`.padStart(2, "0");
+        const day = `${date.getDate()}`.padStart(2, "0");
+        const timeStr = RZO_TIME_FORMAT.format(date);
+        return `${date.getFullYear()}-${month}-${day} ${timeStr}`;
+    }
+
     static dateTimeLocalString(date: Date): string {
         const month = `${date.getMonth() + 1}`.padStart(2, "0");
         const day = `${date.getDate()}`.padStart(2, "0");
@@ -322,7 +353,7 @@ export class BasePanel {
         return true;
     }
 
-    async onMessage(message: PanelMessage): Promise<void> {
+    async onMessage(message: PanelMessage, data?: PanelData): Promise<void> {
     }
 
     ensure(obj: unknown, targetType: Function): unknown {
@@ -482,6 +513,33 @@ export class BasePanel {
         }
     }
 
+    addRow(tbody: HTMLElement, rs: IResultSet, header: string, field: string,
+           tdClass?: string): void {
+        this.addTableRowText(
+            tbody, header, rs.getString(field), "asText", tdClass);
+    }
+
+    addTdText(tr: HTMLElement, value: string, tdClass?: string): void {
+        const td = new DynElement(
+        {
+            tag: "td",
+            text: value
+        })
+        .addOptionalAttribute("class", tdClass);
+        tr.appendChild(td.asElement());
+    }
+
+    addTd(tr: HTMLElement, rs: IResultSet, field: string,
+          tdClass?: string): void {
+        const td = new DynElement(
+        {
+            tag: "td",
+            text: rs.getString(field)
+        })
+        .addOptionalAttribute("class", tdClass);
+        tr.appendChild(td.asElement());
+    }
+
     mapLink(input: string): string {
         if (input.startsWith("q=")) {
             return input.slice(2);
@@ -500,9 +558,19 @@ export class BasePanel {
         .addAttribute("target", "new");
         return anchor.asElement();
     }
+
+    collectPolicyQueries(policyQueries: Set<string>): void {
+    }
+
+    async applyPolicies(policies: Set<string>): Promise<void> {
+    }
+
+    hasGrantedPolicy(policy: string): boolean {
+        return this.controller.v.policies.has(policy);
+    }
 }
 
-export interface IBoundControl extends HTMLElement {
+interface IBoundControl extends HTMLElement {
     value: string;
     required: boolean;
     setCustomValidity(msg: string): void;
@@ -572,6 +640,102 @@ export class Control {
              context: IContext): Promise<SideEffects> {
         return entity.setValue(
             state, this.attribute, this.element.value, context)
+        .catch((err) => {
+            this.element.setCustomValidity(`${err}`);
+            throw err;
+        });
+    }
+}
+
+export class DateControl extends Control {
+
+    constructor(id: string, attribute: string, required?: boolean) {
+        super(id, attribute, required);
+        if (!(this.element instanceof HTMLInputElement)) {
+            throw new Error(`Element ${id} must be an <input> element`);
+        }
+    }
+
+    fromState(state: State): void {
+        const value = state.field(this.attribute).value;
+        if (StringField.isNullish(value)) {
+            this.element.value = "";
+        } else if (value instanceof Date) {
+            this.element.value = LocalDay.toDateInputValue(<Date>value);
+        } else {
+            throw new Error(`Control ${this.id}: invalid value: '${value}'`);
+        }
+    }
+
+    setValue(entity: Entity, state: State,
+             context: IContext): Promise<SideEffects> {
+        let value = (<HTMLInputElement>(this.element)).valueAsDate;
+        if (value != null) {
+            value = LocalDay.fromDateInputValueAsDate(value).utc;
+        }
+        return entity.setValue(state, this.attribute, value, context)
+        .catch((err) => {
+            this.element.setCustomValidity(`${err}`);
+            throw err;
+        });
+    }
+}
+
+export class LocalDateControl extends Control {
+    localTimeFormat: Intl.DateTimeFormat;
+    localMonthFormat: Intl.DateTimeFormat;
+    localDayFormat: Intl.DateTimeFormat;
+
+    constructor(id: string, attribute: string, required?: boolean) {
+        super(id, attribute, required);
+        this.localTimeFormat = new Intl.DateTimeFormat("en-US", {
+            hour: "numeric",
+            minute: "numeric",
+            hour12: false
+        });
+        this.localMonthFormat = new Intl.DateTimeFormat("en-US", {
+            month: "2-digit"
+        });
+        this.localDayFormat = new Intl.DateTimeFormat("en-US", {
+            day: "2-digit"
+        });
+    }
+
+    fromState(state: State): void {
+        const value = state.field(this.attribute).value;
+        if (StringField.isNullish(value)) {
+            this.element.value = "";
+        } else if (value instanceof Date) {
+            const result =
+                `${(<Date>value).getFullYear()}` +
+                `-${this.localMonthFormat.format(value)}` +
+                `-${this.localDayFormat.format(value)}` +
+                `T${this.localTimeFormat.format(value)}`;
+            this.element.value = result;
+        } else {
+            throw new Error(`Control ${this.id}: invalid value: '${value}'`);
+        }
+    }
+}
+
+export class CheckBoxControl extends Control {
+
+    constructor(id: string, attribute: string, required?: boolean) {
+        super(id, attribute, required);
+        if (!(this.element instanceof HTMLInputElement)) {
+            throw new Error(`Element ${id} must be an <input> element`);
+        }
+    }
+
+    fromState(state: State): void {
+        (<HTMLInputElement>(this.element)).checked = BooleanField.toBoolean(
+            state.field(this.attribute).value);
+    }
+
+    setValue(entity: Entity, state: State,
+             context: IContext): Promise<SideEffects> {
+        const value = (<HTMLInputElement>(this.element)).checked;
+        return entity.setValue(state, this.attribute, value, context)
         .catch((err) => {
             this.element.setCustomValidity(`${err}`);
             throw err;
@@ -767,43 +931,6 @@ export class DynElement {
     }
 }
 
-export class LocalDateControl extends Control {
-    localTimeFormat: Intl.DateTimeFormat;
-    localMonthFormat: Intl.DateTimeFormat;
-    localDayFormat: Intl.DateTimeFormat;
-
-    constructor(id: string, attribute: string, required?: boolean) {
-        super(id, attribute, required);
-        this.localTimeFormat = new Intl.DateTimeFormat("en-US", {
-            hour: "numeric",
-            minute: "numeric",
-            hour12: false
-        });
-        this.localMonthFormat = new Intl.DateTimeFormat("en-US", {
-            month: "2-digit"
-        });
-        this.localDayFormat = new Intl.DateTimeFormat("en-US", {
-            day: "2-digit"
-        });
-    }
-
-    fromState(state: State): void {
-        const value = state.field(this.attribute).value;
-        if (StringField.isNullish(value)) {
-            this.element.value = "";
-        } else if (value instanceof Date) {
-            const result =
-                `${(<Date>value).getFullYear()}` +
-                `-${this.localMonthFormat.format(value)}` +
-                `-${this.localDayFormat.format(value)}` +
-                `T${this.localTimeFormat.format(value)}`;
-            this.element.value = result;
-        } else {
-            throw new Error(`Control ${this.id}: invalid value: '${value}'`);
-        }
-    }
-}
-
 export class ViewPanel extends BasePanel {
     div: HTMLElement;
     backBtn: HTMLButtonElement;
@@ -878,7 +1005,7 @@ export class ViewPanel extends BasePanel {
                 this.div.hidden = false;
             })
             .catch((err) => {
-                TOASTER.error(`ERROR: ${err}`);
+                TOASTER.exc(err);
             });
         } else if (!PanelData.isParam("NoRefresh", panelData) && this.state) {
             this.dirty = false;
@@ -946,15 +1073,20 @@ export class FormPanel extends BasePanel {
         }
     }
 
+    clearSelect(id: string): void {
+        const sel = this.getSelect(id);
+        while (sel.options.length > 1) {
+            sel.remove(1);
+        }
+    }
+
     protected loadDropdown(selectId: string, collection: string,
                            valueField: string, labelField?: string): void {
+        this.clearSelect(selectId);
         const sel = this.getSelect(selectId);
         this.service.v.queryCollection(
             this.logger, CONTEXT.c, RZO.getCollection(collection))
         .then((resultSet) => {
-            while (sel.options.length > 1) {
-                sel.remove(1);
-            }
             while (resultSet.next()) {
                 const opt = document.createElement("option");
                 const value = resultSet.getString(valueField);
@@ -966,7 +1098,7 @@ export class FormPanel extends BasePanel {
             }
         })
         .catch((err) => {
-            TOASTER.error(`ERROR: ${err}`);
+            TOASTER.exc(err);
         });
     }
 
@@ -1081,7 +1213,7 @@ export class FormPanel extends BasePanel {
                     this.controller.v.pop(new PanelData("Row", row));
                 })
                 .catch((err) => {
-                    TOASTER.error(`ERROR: ${err}`);
+                    TOASTER.exc(err);
                 });
             })
             .catch((err) => {
@@ -1100,11 +1232,13 @@ export class PanelController {
     private panels: Map<string, IPanel>;
     private current: string[];
     private rootId: string;
+    policies: Set<string>;
 
     constructor(rootId: string) {
         this.rootId = rootId;
         this.current = [];
         this.panels = new Map();
+        this.policies = new Set();
     }
 
     add(panel: IPanel): IPanel {
@@ -1162,9 +1296,24 @@ export class PanelController {
         }
     }
 
-    async broadcast(message: PanelMessage): Promise<void> {
+    async broadcast(message: PanelMessage, data?: PanelData): Promise<void> {
         for (const panel of this.panels.values()) {
-            panel.onMessage(message);
+            panel.onMessage(message, data);
+        }
+    }
+
+    collectPolicyQueries(): Set<string> {
+        const queries: Set<string> = new Set();
+        for (const panel of this.panels.values()) {
+            panel.collectPolicyQueries(queries);
+        }
+        return queries;
+    }
+
+    async applyPolicies(policies: Set<string>) : Promise<void> {
+        this.policies = policies;
+        for (const panel of this.panels.values()) {
+            panel.applyPolicies(policies);
         }
     }
 }

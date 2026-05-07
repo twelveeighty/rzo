@@ -23,7 +23,7 @@ import {
     _IError, Entity, Cfg, DaemonWorker, IService, IPolicyConfiguration,
     TypeCfg, ClassSpec, IConfiguration, Persona, Row, Query, Filter,
     OrderBy, Collection, IResultSet, JsonObject, Logger, IContext,
-    ServiceSource, BizTrans
+    ServiceSource, BizTrans, PolicyAction
 } from "../base/core.js";
 
 import { ICache } from "./cache.js";
@@ -291,9 +291,7 @@ export class SessionAwareAdapter extends BaseAdapter {
 
     configure(configuration: IConfiguration): void {
         super.configure(configuration);
-
         this.personas.v = configuration.personas;
-
         const worker: unknown = configuration.workers.get(
             this.sessionCache.name);
         if (!worker || !((<any>worker).isCache)) {
@@ -303,14 +301,12 @@ export class SessionAwareAdapter extends BaseAdapter {
                 `cache`);
         }
         this.sessionCache.v = <ICache>worker;
-
         if (!configuration.policyConfig) {
             throw new AdapterError(
                 `Cannot start BaseAdapter '${this.name}' because no ` +
                 `policy configuration was defined`);
         }
         this.policyConfig.v = configuration.policyConfig!;
-
         const source = configuration.getSource(this.sessionBackend.name).ensure(
             ServiceSource) as ServiceSource;
         const sessionBackendService: unknown = source.service;
@@ -353,6 +349,66 @@ export class SessionAwareAdapter extends BaseAdapter {
     }
 }
 
+export class PolicyQueryAdapter extends SessionAwareAdapter {
+    static SILENT = true;
+
+    async handleGetPolicy(request: IncomingMessage, response: ServerResponse,
+                          uriElements: string[]): Promise<void> {
+        /* https:/host/
+         *             0   1   2
+         * GET         p   ?   entity-person=get&app-trip-reimburse=get
+         */
+        try {
+            const context = await this.pullContext(request);
+            if (uriElements.length == 3 && uriElements[1] == "?") {
+                const queries = uriElements[2].split("&");
+                const policies: string[] = [];
+                for (const query of queries) {
+                    const operands = query.split("=");
+                    if (operands.length != 2) {
+                        throw new AdapterError(`Invalid PolicyQuery: ${query}`);
+                    }
+                    const resource = operands[0].replaceAll("-", "/");
+                    const action = <PolicyAction>operands[1];
+                    try {
+                        this.policyConfig.v.guardResource(
+                            context, resource, action,
+                            PolicyQueryAdapter.SILENT);
+                        policies.push(`${resource}=${action}`);
+                    } catch (err) {
+                    }
+                }
+                response.end(JSON.stringify(policies));
+            } else {
+                throw new AdapterError(
+                    `Invalid request: invalid URI components for ` +
+                    `handleGetPolicy`);
+            }
+        } catch (error) {
+            AdapterError.toResponse(this.logger, error, response);
+        }
+    }
+
+    handle(request: IncomingMessage, response: ServerResponse,
+           uriElements: string[]): void {
+        try {
+            switch (request.method) {
+                case "HEAD":
+                    response.end();
+                    break;
+                case "GET":
+                    this.handleGetPolicy(request, response, uriElements);
+                    break;
+                default:
+                    throw new AdapterError(
+                        `Invalid PolicyQuery request: ${request.method}`, 400);
+            }
+        } catch (error) {
+            AdapterError.toResponse(this.logger, error, response);
+        }
+    }
+}
+
 export class EntityAdapter extends SessionAwareAdapter {
     entities: Cfg<Map<string, Entity>>;
 
@@ -392,9 +448,11 @@ export class EntityAdapter extends SessionAwareAdapter {
             const resource = `entity/${entity.name}`;
             this.policyConfig.v.guardResource(context, resource, "get");
             const query = stringToQuery(queryStr);
-            const resultSet = await this.source.v.getQuery(
+            const rs = await this.source.v.getQuery(
                 this.logger, context, entity, query);
-            this.policyConfig.v.guardResultSet(context, resource, resultSet);
+            this.policyConfig.v.guardResultSet(context, resource, rs);
+            response.end(JSON.stringify(rs.getAll()));
+            /*
             resultSet.rewind();
             const result: any[] = [];
             while (resultSet.next()) {
@@ -402,6 +460,7 @@ export class EntityAdapter extends SessionAwareAdapter {
                 result.push(Row.rowToData(row));
             }
             response.end(JSON.stringify(result));
+            */
         } catch (error) {
             AdapterError.toResponse(this.logger, error, response);
         }
@@ -482,10 +541,10 @@ export class EntityAdapter extends SessionAwareAdapter {
             let output: Row;
             if (id) {
                 output = await this.source.v.put(
-                    this.logger, context, entity, id, row);
+                    this.logger, context, entity, id, row.transport());
             } else {
                 output = await this.source.v.post(
-                    this.logger, context, entity, row);
+                    this.logger, context, entity, row.transport());
             }
             response.end(JSON.stringify(Row.rowToData(output)));
         } else {

@@ -1,0 +1,14 @@
+[
+    {
+        "apiVersion": "v1",
+        "kind": "Source",
+        "metadata": {
+            "name": "pouchdb"
+        },
+        "spec": {
+            "type": "mobile.pouch-client.PouchClientSource",
+            "replicateUrl": "http://localhost:5001/r/"
+        }
+    }
+]
+

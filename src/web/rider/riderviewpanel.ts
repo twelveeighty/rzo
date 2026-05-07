@@ -19,15 +19,15 @@
 
 import { Modal } from "bootstrap";
 import {
-    Entity, Field, State, Filter, Query, Collection, Cfg, ServiceSource,
-    IResultSet, SideEffects, BigDecimal, Row, BizTrans
+         Entity, Field, State, Filter, Query, Collection, Cfg, ServiceSource,
+         IResultSet, BigDecimal, Row, BizTrans
 } from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
-import { Txn, FinDoc } from "../../accting/acc-core.js";
+import { DocumentBuilder, FinDoc } from "../../accting/acc-core.js";
 import { Rider } from "../../scheduler/trip.js";
 import { TOASTER } from "../toaster.js";
 import {
-    IPanel, ViewPanel, PanelData, PanelButton, DynElement
+         IPanel, ViewPanel, PanelData, PanelButton, DynElement, BasePanel
 } from "../panel.js";
 import { TripList } from "../trip/triplist.js";
 
@@ -37,8 +37,6 @@ const ACC_TICKET_PRICE = new BigDecimal("10.00");
 
 export class RiderViewPanel extends ViewPanel implements IPanel {
     tripEntity: Cfg<Entity>;
-    accountEntity: Cfg<Entity>;
-    accBalanceEntity: Cfg<Entity>;
     findocEntity: Cfg<FinDoc>;
     tripRidernumField: Cfg<Field>;
     tripsCollection: Cfg<Collection>;
@@ -58,9 +56,7 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
               "-view-edit-btn", "rider-edit-panel");
         this.tripList = new TripList(this.qElement("-view-trips-div"));
         this.tripEntity = new Cfg("trip");
-        this.accountEntity = new Cfg("account");
-        this.accBalanceEntity = new Cfg("accountbalance");
-        this.findocEntity = new Cfg("acctrans");
+        this.findocEntity = new Cfg("findoc");
         this.tripRidernumField = new Cfg("tripRidernumField");
         this.tripsCollection = new Cfg("trips");
         this.accBalanceCollection = new Cfg("accountbalances");
@@ -89,8 +85,6 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
         this.service.v =
             (<ServiceSource>RZO.getSource("db").ensure(ServiceSource)).service;
         this.tripEntity.v = RZO.getEntity(this.tripEntity.name);
-        this.accountEntity.v = RZO.getEntity(this.accountEntity.name);
-        this.accBalanceEntity.v = RZO.getEntity(this.accBalanceEntity.name);
         this.findocEntity.setIfCast("riderviewpanel",
             RZO.entities.get(this.findocEntity.name), FinDoc);
         this.tripRidernumField.v = this.tripEntity.v.getField("ridernum");
@@ -133,11 +127,11 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
                     "trip-edit-panel", new PanelData("State", newTrip));
             })
             .catch((err) => {
-                TOASTER.error(`ERROR: ${err}`);
+                TOASTER.exc(err);
             });
         })
         .catch((err) => {
-            TOASTER.error(`ERROR: ${err}`);
+            TOASTER.exc(err);
         });
     }
 
@@ -165,52 +159,12 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
             this.queryAccting();
         })
         .catch((err) => {
-            TOASTER.error(`ERROR: ${err}`);
+            TOASTER.exc(err);
         });
     }
 
     private onOrder(evt: Event): void {
         this.orderModal.show();
-    }
-
-    private async createSplit(change: string, docnum: string,
-                              account: string, quantity: BigDecimal | null,
-                              amount: BigDecimal, now: Date,
-                              memo?: string): Promise<State> {
-        const entity = this.findocEntity.v.splitEntity.v;
-        const split = await entity.create(CONTEXT.c, this.service.v);
-        const se: Promise<SideEffects>[] = [];
-        // Set acctrans without validation, since it doesn't exist yet.
-        split.field("findoc").value = docnum;
-        entity.cpSetValue(split, "account", account, CONTEXT.c, se);
-        entity.cpSetValue(split, "change", change, CONTEXT.c, se);
-        if (quantity !== null) {
-            entity.cpSetValue(split, "quantity", quantity, CONTEXT.c, se);
-            entity.cpSetValue(split, "price", ACC_TICKET_PRICE, CONTEXT.c, se);
-        }
-        entity.cpSetValue(split, "amount", amount, CONTEXT.c, se);
-        entity.cpSetValue(split, "created", now, CONTEXT.c, se);
-        entity.cpSetValue(split, "posted", now, CONTEXT.c, se);
-        if (memo) {
-            entity.cpSetValue(split, "memo", memo, CONTEXT.c, se);
-        }
-        await Promise.all(se);
-        return split;
-    }
-
-    private async createFinDoc(account: string, memo: string,
-                               now: Date): Promise<State> {
-        const entity = this.findocEntity.v;
-        const state = await entity.create(CONTEXT.c, this.service.v);
-        const se: Promise<SideEffects>[] = [];
-        entity.cpSetValue(state, "account", account, CONTEXT.c, se);
-        entity.cpSetValue(
-            state, "entityid", State.must(this.state).id, CONTEXT.c, se);
-        entity.cpSetValue(state, "memo", memo, CONTEXT.c, se);
-        entity.cpSetValue(state, "posted", now, CONTEXT.c, se);
-        entity.cpSetValue(state, "created", now, CONTEXT.c, se);
-        await Promise.all(se);
-        return state;
     }
 
     private async processTicketOrder(qty: string,
@@ -224,20 +178,40 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
                 this.arAccBal.getString("account");
             const memo =
                 `Ticket purchase for ${this.state.asString("ridernum")}`;
-            const findoc = await this.createFinDoc(
-                creditAccName, memo, now);
-            const docnum = findoc.field("docnum").value;
-            const txn = new Txn(this.findocEntity.v, findoc);
-            const crSplit = await this.createSplit(
-                "Cr", docnum, creditAccName, quantity, amount, now, memo);
-            txn.splits.push(crSplit);
-            const drSplit = await this.createSplit(
-                "Dr", docnum, debitAccName, null, amount, now, memo);
-            txn.splits.push(drSplit);
-            const bizTrans = new BizTrans();
-            await txn.toBizTrans(
-                bizTrans, this.logger, CONTEXT.c, this.service.v);
-            await this.service.v.processBizTrans(this.logger, bizTrans);
+            const bt = new BizTrans();
+            const builder = new DocumentBuilder(
+                this.findocEntity.v, bt, CONTEXT.c, this.service.v);
+            await builder.document(new Row(
+                {
+                    account: creditAccName,
+                    entityid: State.must(this.state).id,
+                    memo: memo,
+                    posted: now,
+                    created: now
+                }
+            ));
+            await builder.split(new Row(
+                {
+                    account: creditAccName,
+                    change: "Cr",
+                    quantity: quantity,
+                    price: ACC_TICKET_PRICE,
+                    amount: amount,
+                    memo: memo
+                }
+            ));
+            await builder.split(new Row(
+                {
+                    account: debitAccName,
+                    change: "Dr",
+                    quantity: null,
+                    price: null,
+                    amount: amount,
+                    memo: memo
+                }
+            ));
+            await builder.postBizTrans();
+            await this.service.v.processBizTrans(this.logger, bt);
         }
     }
 
@@ -251,7 +225,7 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
                 this.queryAccting();
             })
             .catch((err) => {
-                TOASTER.error(`ERROR: ${err}`);
+                TOASTER.exc(err);
             });
         } else {
             TOASTER.error("You must specify a valid quantity");
@@ -265,20 +239,40 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
         const creditAccName = accountBalance.getString("account");
         const debitAccName = ACC_CHEQ_ACCOUNT;
         const memo = `Payment received for ${ridernum}`;
-        const findoc = await this.createFinDoc(
-            creditAccName, memo, now);
-        const docnum = findoc.field("docnum").value;
-        const txn = new Txn(this.findocEntity.v, findoc);
-        const crSplit = await this.createSplit(
-            "Cr", docnum, creditAccName, null, amount, now, memo);
-        txn.splits.push(crSplit);
-        const drSplit = await this.createSplit(
-            "Dr", docnum, debitAccName, null, amount, now, memo);
-        txn.splits.push(drSplit);
-        const bizTrans = new BizTrans();
-        await txn.toBizTrans(
-            bizTrans, this.logger, CONTEXT.c, this.service.v);
-        await this.service.v.processBizTrans(this.logger, bizTrans);
+        const bt = new BizTrans();
+        const builder = new DocumentBuilder(
+            this.findocEntity.v, bt, CONTEXT.c, this.service.v);
+        await builder.document(new Row(
+            {
+                account: creditAccName,
+                entityid: State.must(this.state).id,
+                memo: memo,
+                posted: now,
+                created: now
+            }
+        ));
+        await builder.split(new Row(
+            {
+                account: creditAccName,
+                change: "Cr",
+                quantity: null,
+                price: null,
+                amount: amount,
+                memo: memo
+            }
+        ));
+        await builder.split(new Row(
+            {
+                account: debitAccName,
+                change: "Dr",
+                quantity: null,
+                price: null,
+                amount: amount,
+                memo: memo
+            }
+        ));
+        await builder.postBizTrans();
+        await this.service.v.processBizTrans(this.logger, bt);
     }
 
     private onPayment(evt: Event): void {
@@ -288,16 +282,16 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
                 .op("_id", "=", this.arAccBal.get("_id"));
             this.accBalanceCollection.v.query(CONTEXT.c, new Query([], filter))
             .then((resultSet) => {
-                this.qInput("-payment-posted-txt").value =
-                    (new Date()).toISOString().slice(0, 10);
                 resultSet.next();
+                this.qInput("-payment-posted-txt").value =
+                    BasePanel.dateTimeLocalString(new Date());
                 this.qInput("-payment-owing-txt").value =
                     resultSet.getString("balance");
                 this.qInput("-payment-recvd-txt").value = "";
                 this.paymentModal.show();
             })
             .catch((err) => {
-                TOASTER.error(`ERROR: ${err}`);
+                TOASTER.exc(err);
             });
         }
     }
@@ -318,7 +312,7 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
                         this.queryAccting();
                     })
                     .catch((err) => {
-                        TOASTER.error(`ERROR: ${err}`);
+                        TOASTER.exc(err);
                     });
                 } else {
                     TOASTER.error(`Invalid payment: ${amount}`);
@@ -342,10 +336,10 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
                 this.tripList.render(resultSet);
             })
             .catch((err) => {
-                TOASTER.error(`ERROR: ${err}`);
+                TOASTER.exc(err);
             });
         } catch (err) {
-            TOASTER.error(`ERROR: ${err}`);
+            TOASTER.exc(err);
         }
     }
 
@@ -399,26 +393,26 @@ export class RiderViewPanel extends ViewPanel implements IPanel {
             this.handleAccData(rs);
         })
         .catch((err) => {
-            TOASTER.error(`ERROR: ${err}`);
+            TOASTER.exc(err);
         });
     }
 
     protected stateToUI(state: State): void {
         this.tbody.innerHTML = "";
-        this.addRowText("Rider", state.asString("name"));
-        this.addRowText("Rider Num", state.asString("ridernum"));
-        this.addRowText("Status", state.asString("status"));
-        this.addRowText("Zone", state.asString("zone"));
+        this.addRowText("Rider", state.value("name"));
+        this.addRowText("Rider Num", state.value("ridernum"));
+        this.addRowText("Status", state.value("status"));
+        this.addRowText("Zone", state.value("zone"));
         this.addTableRowElement(
             this.tbody, "Address",
-            this.addressMapAnchor(state.asString("address1"),
-                                  state.asString("maplink")));
+            this.addressMapAnchor(state.value("address1"),
+                                  state.value("maplink")));
         this.addRowText("Address2", state.asString("address2"));
         this.addRowText("City", state.asString("city"));
         this.addRowText("Prov/State", state.asString("stateprov"));
         this.addRowText("Zip", state.asString("postalcode"));
         this.addRowText(state.asString("phone1label"),
-                        state.asString("phone1"));
+                        state.value("phone1"));
         this.addRowText(state.asString("phone2label"),
                         state.asString("phone2"));
         this.addRowText(state.asString("phone3label"),

@@ -40,19 +40,19 @@ export class AccountViewPanel extends ViewPanel implements IPanel {
         this.qButton("-view-splits-btn").addEventListener("click", (evt) => {
             this.onSplits(evt);
         });
-        this.qButton("-view-txns-btn").addEventListener("click", (evt) => {
-            this.onTransactions(evt);
+        this.qButton("-view-docs-btn").addEventListener("click", (evt) => {
+            this.onDocuments(evt);
         });
-        this.qButton("-create-txn-btn").addEventListener("click", (evt) => {
-            this.onCreateTransaction(evt);
+        this.qButton("-create-doc-btn").addEventListener("click", (evt) => {
+            this.onCreateDocument(evt);
         });
     }
 
-    private onCreateTransaction(evt: Event): void {
+    private onCreateDocument(evt: Event): void {
         if (this.state) {
             const row = this.entity.v.stateToRow(this.state);
             this.controller.v.stack(
-                "transcreate-panel", new PanelData("Row", row));
+                "doccreate-panel", new PanelData("Row", row));
         }
     }
 
@@ -67,7 +67,12 @@ export class AccountViewPanel extends ViewPanel implements IPanel {
         }
     }
 
-    private onTransactions(evt: Event): void {
+    private onDocuments(evt: Event): void {
+        if (this.state) {
+            this.controller.v.stack(
+                "findocs-panel",
+                new PanelData("Row", this.entity.v.stateToRow(this.state)));
+        }
     }
 
     protected stateToUI(state: State): void {

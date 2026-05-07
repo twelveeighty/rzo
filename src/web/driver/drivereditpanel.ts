@@ -18,13 +18,10 @@
 */
 
 import { ServiceSource } from "../../base/core.js";
-
 import { RZO, CONTEXT } from "../../base/configuration.js";
-
 import { IPanel, FormPanel, Control, PanelData } from "../panel.js";
 
 export class DriverEditPanel extends FormPanel implements IPanel {
-
     maplinkManualControl: Control;
 
     constructor() {
@@ -53,7 +50,6 @@ export class DriverEditPanel extends FormPanel implements IPanel {
 
     protected initUI(): void {
         super.initUI();
-
         this.qInput("-override-cbox").addEventListener("change", (evt) => {
             this.toggleOverride();
         });

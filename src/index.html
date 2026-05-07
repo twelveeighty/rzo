@@ -35,6 +35,10 @@
     }
     </script>
 
+    <!-- PouchDB -->
+    <script src="pouchdb/pouchdb-9.0.0.js"></script>
+    <script src="pouchdb/pouchdb.find.js"></script>
+
     <!-- RZO -->
     <script type="module" src="webmain.js"></script>
 
@@ -194,9 +198,12 @@
         <p>Your password must be at least <b>12</b> characters long, it must contain
         at least <b>2</b> special characters and <b>2</b> numbers.</p>
         <form id="create-password-form">
+            <input name="username" type="text" autocomplete="username"
+                   style="display: none;">
             <div class="mb-3">
                 <label for="create-password-txt" class="form-label">New Password</label>
-                <input id="create-password-txt" type="password" class="form-control">
+                <input id="create-password-txt" type="password" class="form-control"
+                       autocomplete="new-password">
             </div>
             <button id="create-password-submit-btn" type="submit"
                 class="btn btn-primary">Submit</button>
@@ -206,13 +213,19 @@
     <div id="login-div" class="container" hidden>
         <h1>Login</h1>
         <form id="login-form">
-            <div class="mb-3">
-                <label for="login-user-txt" class="form-label">User</label>
-                <input id="login-user-txt" type="text" class="form-control">
+            <div class="row mb-3">
+                <div class="col-4">
+                    <label for="login-user-txt" class="form-label">User</label>
+                    <input id="login-user-txt" type="text" class="form-control"
+                           autocomplete="username">
+                </div>
             </div>
-            <div class="mb-3">
-                <label for="login-password-txt" class="form-label">Password</label>
-                <input id="login-password-txt" type="password" class="form-control">
+            <div class="row mb-3">
+                <div class="col-4">
+                    <label for="login-password-txt" class="form-label">Password</label>
+                    <input id="login-password-txt" type="password" class="form-control"
+                           autocomplete="current-password">
+                </div>
             </div>
             <button id="login-btn" type="submit" class="btn btn-primary">Login</button>
             <button id="login-reset-btn" type="button"
@@ -270,7 +283,7 @@
                         <div class="mb-3">
                             <label for="rider-payment-posted-txt"
                                    class="form-label">Post Date</label>
-                            <input id="rider-payment-posted-txt" type="date"
+                            <input id="rider-payment-posted-txt" type="datetime-local"
                                    class="form-control"/>
                         </div>
                         <div class="mb-3">
@@ -909,8 +922,7 @@
         </nav>
         <h4 id="accounts-heading">Top-level Accounts</h4>
         <div class="btn-toolbar" role="toolbar" aria-label="Toolbar">
-            <div id="accounts-buttons-div" class="btn-group me-2"
-                 role="group" aria-label="Control">
+            <div class="btn-group me-2" role="group" aria-label="Control">
                 <button id="accounts-edit-btn" type="button"
                     class="btn btn-primary me-2">Edit...</button>
                 <button id="accounts-create-btn" type="button"
@@ -930,10 +942,10 @@
                     class="btn btn-primary me-2">Edit Account...</button>
                 <button id="account-view-splits-btn" type="button"
                     class="btn btn-primary me-2">View Splits...</button>
-                <button id="account-view-txns-btn" type="button"
-                    class="btn btn-primary me-2">View Transactions...</button>
-                <button id="account-create-txn-btn" type="button"
-                    class="btn btn-primary me-2">Create Transaction...</button>
+                <button id="account-view-docs-btn" type="button"
+                    class="btn btn-primary me-2">View Documents...</button>
+                <button id="account-create-doc-btn" type="button"
+                    class="btn btn-primary me-2">Create Document...</button>
             </div>
         </div>
         <table class="table">
@@ -1026,14 +1038,40 @@
         </table>
     </div>
 
+    <div id="docview-list-div" class="container" hidden>
+        <div class="btn-toolbar" role="toolbar" aria-label="Toolbar">
+            <div class="btn-group me-2" role="group" aria-label="Control">
+                <button id="docview-list-back-btn" type="button"
+                    class="btn btn-primary me-2">Go back</button>
+            </div>
+        </div>
+        <h4 id="docview-list-account-heading">Documents</h4>
+        <table class="table table-bordered">
+            <thead>
+                <tr>
+                  <th scope="col">#</th>
+                  <th scope="col">Posted</th>
+                  <th scope="col">Memo</th>
+                  <th scope="col">Amount</th>
+                </tr>
+            </thead>
+            <tbody id="docview-list-table-tsec">
+            </tbody>
+        </table>
+    </div>
+
     <div id="docview-div" class="container" hidden>
         <div class="btn-toolbar" role="toolbar" aria-label="Toolbar">
             <div class="btn-group me-2" role="group" aria-label="Control">
                 <button id="docview-back-btn" type="button"
                         class="btn btn-primary me-2">Go Back</button>
+                <button id="docview-void-btn" type="button"
+                        class="btn btn-primary me-2">Void Document...</button>
+                <button id="docview-edit-btn" type="button"
+                        class="btn btn-primary me-2">Edit Document...</button>
             </div>
         </div>
-        <h4>View Transaction</h4>
+        <h4>View Document</h4>
         <table class="table table-bordered">
             <tbody id="docview-details">
             </tbody>
@@ -1042,12 +1080,12 @@
             <thead>
                 <tr>
                   <th scope="col">#</th>
-                  <th scope="col">Account</th>
+                  <th scope="col" colspan="2">Account</th>
                   <th scope="col">Memo</th>
                   <th scope="col">Qty</th>
                   <th scope="col">Price</th>
-                  <th scope="col">Dr</th>
-                  <th scope="col">Cr</th>
+                  <th scope="col" class="text-center">Dr</th>
+                  <th scope="col" class="text-center">Cr</th>
                 </tr>
             </thead>
             <tbody id="docview-splits-tsec">
@@ -1276,6 +1314,103 @@
             <button id="account-edit-cancel-btn" type="button"
                     class="btn btn-primary">Cancel</button>
         </form>
+    </div>
+
+    <div id="tests-div" class="container" hidden>
+        <h1>Mobile Test</h1>
+        <div class="btn-toolbar" role="toolbar" aria-label="Toolbar">
+            <div class="btn-group me-2" role="group" aria-label="Control">
+                <button id="tests-create-btn" type="button"
+                        class="btn btn-primary me-2">Create</button>
+                <button id="tests-replicate-btn" type="button"
+                        class="btn btn-primary me-2">Replicate</button>
+            </div>
+        </div>
+        <div class="b-divider"></div>
+        <div id="tests-list-div" class="list-group">
+        </div>
+    </div>
+
+    <div id="test-edit-div" class="container" hidden>
+        <form id="test-edit-form">
+            <div class="btn-toolbar" role="toolbar" aria-label="Toolbar">
+                <button id="test-edit-btn" type="submit"
+                        class="btn btn-primary me-2">Save</button>
+                <button id="test-edit-cancel-btn" type="button"
+                        class="btn btn-primary me-2">Cancel</button>
+            </div>
+            <div class="mb-3">
+                <label for="test-keyfield-txt" class="form-label">Key</label>
+                <input id="test-keyfield-txt" type="text" class="form-control"/>
+            </div>
+            <div class="mb-3">
+                <label for="test-stringfield-txt" class="form-label">String</label>
+                <input id="test-stringfield-txt" type="text" class="form-control"/>
+            </div>
+            <div class="mb-3">
+                <label for="test-uniquefield-txt" class="form-label">Unique</label>
+                <input id="test-uniquefield-txt" type="text" class="form-control"/>
+            </div>
+            <div class="mb-3">
+                <label for="test-integerfield-txt" class="form-label">Integer</label>
+                <input id="test-integerfield-txt" type="text" class="form-control"/>
+            </div>
+            <div class="mb-3">
+                <label for="test-aliasvaluelist-sel" class="form-label">Alias</label>
+                <select id="test-aliasvaluelist-sel" class="form-select">
+                    <option selected value="">Choose...</option>
+                    <option value="GREEN">GREEN</option>
+                    <option value="RED">RED</option>
+                    <option value="BLUE">BLUE</option>
+                </select>
+            </div>
+            <div class="mb-3">
+                <label for="test-numberfield-txt" class="form-label">Number</label>
+                <input id="test-numberfield-txt" type="text" class="form-control"/>
+            </div>
+            <div class="mb-3">
+                <label for="test-amountfield-txt" class="form-label">Amount</label>
+                <input id="test-amountfield-txt" type="text" class="form-control"/>
+            </div>
+            <div class="mb-3 form-check">
+                <input id="test-booleanfield-txt" type="checkbox"
+                       class="form-check-input">
+                <label class="form-check-label"
+                       for="test-booleanfield-txt">Boolean</label>
+            </div>
+            <div class="mb-3">
+                <label for="test-datefield-txt" class="form-label">Date</label>
+                <input id="test-datefield-txt" type="date" class="form-control"/>
+            </div>
+            <div class="mb-3">
+                <label for="test-datetimefield-txt" class="form-label">Datetime</label>
+                <input id="test-datetimefield-txt" type="datetime-local"
+                       class="form-control"/>
+            </div>
+            <div class="mb-3">
+                <label for="test-uuidfield-txt" class="form-label">Uuid</label>
+                <input id="test-uuidfield-txt" type="text" class="form-control"/>
+            </div>
+            <div class="mb-3">
+                <label for="test-pathfield-txt" class="form-label">Path</label>
+                <input id="test-pathfield-txt" type="text" class="form-control"/>
+            </div>
+        </form>
+    </div>
+
+    <div id="test-view-div" class="container" hidden>
+        <div class="btn-toolbar" role="toolbar" aria-label="Toolbar">
+            <div class="btn-group me-2" role="group" aria-label="Control">
+                <button id="test-view-back-btn" type="button"
+                    class="btn btn-primary me-2">Go back</button>
+                <button id="test-view-edit-btn" type="button"
+                    class="btn btn-primary me-2">Edit Test...</button>
+            </div>
+        </div>
+        <table class="table">
+            <tbody id="test-view-tsec">
+            </tbody>
+        </table>
     </div>
 
 </main>

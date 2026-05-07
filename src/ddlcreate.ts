@@ -1,7 +1,7 @@
 /*
     RZO - A Business Application Framework
 
-    Copyright (C) 2024 Frank Vanderham
+    Copyright (C) 2024-2026 Frank Vanderham
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -18,49 +18,33 @@
 */
 
 import { readFile, writeFile } from "node:fs/promises";
-
+import { ConfigBundleSpec, TypeCfg } from "./base/core.js";
 import { RZO } from "./base/configuration.js";
-
 import { PgCreator } from "./server/pg-ddl.js";
-
-function urlFor(filename: string, subdir?: string): URL {
-    if (subdir) {
-        return new URL(`../var/conf/${subdir}/${filename}.json`,
-                       import.meta.url);
-    }
-    return new URL(`../var/conf/${filename}.json`, import.meta.url);
-}
-
-function getUrl(filename: string, subdir?: string): URL {
-    const result = urlFor(filename, subdir);
-    console.log(`Loading ${result}`);
-    return result;
-}
-
 
 let creator: PgCreator | null = null;
 
 try {
-    const contents = await Promise.all([
-        readFile(getUrl("entities"), { encoding: 'utf8' }),
-        readFile(getUrl("accting"), { encoding: 'utf8' }),
-        readFile(getUrl("entities-server", "server"), { encoding: 'utf8' }),
-        readFile(getUrl("collections", "server"), { encoding: 'utf8' }),
-        readFile(getUrl("accting-collections", "server"), { encoding: 'utf8' }),
-        readFile(getUrl("config-ddl", "server"), { encoding: 'utf8' })
-    ]);
+    const bundleUrl =
+        new URL("../var/ddl-config-bundle.json", import.meta.url);
+    console.log(`Using bundle: ${bundleUrl}`);
+    const bundleContents = await readFile(bundleUrl, { encoding: "utf8" });
+    const bundle = JSON.parse(bundleContents) as TypeCfg<ConfigBundleSpec>;
+    const contentsP: Promise<string>[] = [];
+    for (const config of bundle.spec.configurations) {
+        const url = new URL(
+            `${bundle.spec.home}/${config}.json`, import.meta.url);
+        contentsP.push(readFile(url, { encoding: 'utf8' }));
+    }
+    const contents = await Promise.all(contentsP);
     await RZO.load(contents);
-
     creator = new PgCreator(RZO);
-
     await creator.allNewDDL(RZO.save());
-
     const filenameDate = new Date();
     const filenameDateStr = filenameDate.toISOString().replaceAll(":", "-").
         replaceAll(".", "-");
     const filename = `ddl-${filenameDateStr}.sql`;
     await writeFile(filename, creator.output);
-
 } catch (err) {
     console.error(err);
 }

@@ -1,16 +1,21 @@
 {
+  "name": "rzo",
+  "version": "0.1.0",
+  "license": "GPL-3.0-or-later",
   "dependencies": {
     "@popperjs/core": "^2.11.8",
-    "@types/bootstrap": "^5.2.10",
-    "@types/node": "^24.10.1",
-    "@types/pg-cursor": "^2.7.2",
-    "@types/pg-pool": "^2.0.6",
+    "@types/pouchdb": "^6.4.2",
     "md5": "^2.3.0",
     "pg": "^8.16.3",
     "pg-cursor": "^2.15.3",
-    "pg-pool": "^3.10.1"
+    "pg-pool": "^3.10.1",
+    "pouchdb": "^9.0.0"
   },
   "devDependencies": {
-    "@types/md5": "^2.3.6"
+    "@types/bootstrap": "^5.2.10",
+    "@types/md5": "^2.3.6",
+    "@types/node": "^24.10.1",
+    "@types/pg-cursor": "^2.7.2",
+    "@types/pg-pool": "^2.0.6"
   }
 }

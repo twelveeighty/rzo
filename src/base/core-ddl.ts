@@ -462,9 +462,7 @@ export class LTreeFieldDDL implements FieldCreator {
     private createLTreeDDL(field: Field, name: string,
                            doVersion: boolean): DataDef {
         const req = !doVersion && field.required ? " not null" : "";
-        const colDDL = !doVersion ?
-            `   ${field.name} ltree${req}` :
-            `   ${field.name} text`;
+        const colDDL = `   ${field.name} ltree${req}`;
         const postDDL: string[] = [];
         if (!doVersion) {
             const indexDDL =
@@ -626,7 +624,7 @@ export class EntityDDL implements EntityCreator {
             }
             if (!entity.local) {
                 columns.push("   _rev varchar(43) not null");
-                columns.push("   _att jsonb");
+                columns.push("   att_ jsonb");
             }
             if (entity.immutable || entity.local) {
                 columns.push("   updated timestamptz not null");
@@ -635,7 +633,7 @@ export class EntityDDL implements EntityCreator {
         } else {
             columns.push("   _id uuid not null");
             columns.push("   _rev varchar(43) not null");
-            columns.push("   _att jsonb");
+            columns.push("   att_ jsonb");
         }
 
         const clse   = "\n);\n";

@@ -111,7 +111,7 @@ export class TripEditPanel extends FormPanel implements IPanel {
             }
         })
         .catch((err) => {
-            TOASTER.error(`ERROR: ${err}`);
+            TOASTER.exc(err);
         });
     }
 
@@ -197,7 +197,7 @@ export class TripEditPanel extends FormPanel implements IPanel {
                     "trip-view-panel", new PanelData("Row", row));
             })
             .catch((err) => {
-                TOASTER.error(err);
+                TOASTER.exc(err);
             });
         } else {
             TOASTER.error(
@@ -214,7 +214,7 @@ export class TripEditPanel extends FormPanel implements IPanel {
                     "trip-view-panel", new PanelData("Row", row));
             })
             .catch((err) => {
-                TOASTER.error(err);
+                TOASTER.exc(err);
             });
         } else {
             TOASTER.error(
@@ -308,7 +308,7 @@ export class TripEditPanel extends FormPanel implements IPanel {
                 this.saveTrip(state, "rider-view-panel",
                               new PanelData("string", riderId))
                 .catch((err) => {
-                    TOASTER.error(`ERROR: ${err}`);
+                    TOASTER.exc(err);
                 });
             })
             .catch((err) => {

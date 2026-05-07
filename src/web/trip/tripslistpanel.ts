@@ -18,12 +18,12 @@
 */
 
 import {
-    Collection, Cfg, Field, Filter, Query, ServiceSource
+         Collection, Cfg, Field, Filter, Query, ServiceSource
 } from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
 import { TOASTER } from "../toaster.js";
 import {
-    IPanel, BasePanel, PanelMessage, PanelData, DynElement
+         IPanel, BasePanel, PanelMessage, PanelData, DynElement
 } from "../panel.js";
 import { TripList } from "./triplist.js";
 
@@ -119,7 +119,7 @@ export class TripsListPanel extends BasePanel implements IPanel {
             }
         })
         .catch((err) => {
-            TOASTER.error(`ERROR: ${err}`);
+            TOASTER.exc(err);
         });
     }
 
@@ -246,10 +246,10 @@ export class TripsListPanel extends BasePanel implements IPanel {
                 this.tripList.render(resultSet);
             })
             .catch((err) => {
-                TOASTER.error(`ERROR: ${err}`);
+                TOASTER.exc(err);
             });
         } catch (err) {
-            TOASTER.error(`ERROR: ${err}`);
+            TOASTER.exc(err);
         }
     }
 

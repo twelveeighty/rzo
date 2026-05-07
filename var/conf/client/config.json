@@ -23,6 +23,17 @@
     },
     {
         "apiVersion": "v1",
+        "kind": "PolicyAuthorizer",
+        "metadata": {
+            "name": "policyquery"
+        },
+        "spec": {
+            "type": "base.rest-client.RestClientPolicyAuthorizer",
+            "source": "db"
+        }
+    },
+    {
+        "apiVersion": "v1",
         "kind": "LogConfiguration",
         "metadata": {
             "name": "logging"
@@ -30,7 +41,10 @@
         "spec": {
             "defaultLevel": "Info",
             "loggers": [
-                { "name": "client", "level": "Info" }
+                { "name": "client", "level": "Info" },
+                { "name": "collection/testversioneds", "level": "Debug" },
+                { "name": "collection/testimmutables", "level": "Debug" },
+                { "name": "collection/testlocals", "level": "Debug" }
             ]
         }
     }

@@ -23,7 +23,6 @@ import {
 import { RZO, CONTEXT } from "../../base/configuration.js";
 import { BasePanel, PanelData, DynElement } from "../panel.js";
 
-const DATELEN =  "XXXX-XX-XX".length;
 
 export class SplitsBasePanel extends BasePanel {
     postedField: Cfg<Field>;
@@ -57,17 +56,17 @@ export class SplitsBasePanel extends BasePanel {
             this.addTableRowText(
                 tbody, "Current Balance",
                 `${balances.get("balance")} ${currency}`, "asText",
-                "text-end");
+                "font-monospace text-end");
             this.addTableRowText(
                 tbody, "Present Value",
                 `${balances.get("presentvalue")} ${lcurrency}`, "asText",
-                "text-end");
+                "font-monospace text-end");
         }
     }
 
     dayFormat(rs: IResultSet, field: string): string {
         const dt = this.ensureDate(this.postedField.v.transform(rs.get(field)));
-        return dt.toISOString().slice(0, DATELEN);
+        return BasePanel.rzoLocalString(dt);
     }
 
     addDateTd(tr: HTMLElement, rs: IResultSet, field: string): void {
@@ -76,17 +75,6 @@ export class SplitsBasePanel extends BasePanel {
             td.innerText = this.dayFormat(rs, field);
         }
         tr.appendChild(td);
-    }
-
-    addTd(tr: HTMLElement, rs: IResultSet, field: string,
-                  tdClass?: string): void {
-        const td = new DynElement(
-        {
-            tag: "td",
-            text: rs.getString(field)
-        })
-        .addOptionalAttribute("class", tdClass);
-        tr.appendChild(td.asElement());
     }
 
     addAnchor(tr: HTMLElement, rs: IResultSet, idField: string,
@@ -119,7 +107,7 @@ export class SplitsBasePanel extends BasePanel {
         tbody.innerHTML = "";
         while (resultSet.next()) {
             const tr = document.createElement("tr");
-            this.addTd(tr, resultSet, "splitnum");
+            this.addTd(tr, resultSet, "splitnum", "font-monospace");
             this.addDateTd(tr, resultSet, "posted");
             this.addAnchor(
                 tr, resultSet, "findoc_id", "findoc",
@@ -129,14 +117,14 @@ export class SplitsBasePanel extends BasePanel {
                 },
                 this.abortController);
             this.addTd(tr, resultSet, "memo");
-            this.addTd(tr, resultSet, "quantity", "text-end");
-            this.addTd(tr, resultSet, "price", "text-end");
+            this.addTd(tr, resultSet, "quantity", "font-monospace text-end");
+            this.addTd(tr, resultSet, "price", "font-monospace text-end");
             if (resultSet.get("change") == "Dr") {
-                this.addTd(tr, resultSet, "amount", "text-end");
+                this.addTd(tr, resultSet, "amount", "font-monospace text-end");
                 tr.appendChild(document.createElement("td"));
             } else {
                 tr.appendChild(document.createElement("td"));
-                this.addTd(tr, resultSet, "amount", "text-end");
+                this.addTd(tr, resultSet, "amount", "font-monospace text-end");
             }
             tbody.appendChild(tr);
         }

@@ -18,18 +18,20 @@
 */
 
 import {
-    Entity, Field, Cfg, Row, ServiceSource
+         Entity, Field, Cfg, Row, ServiceSource
 } from "../../base/core.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
 import { Trip } from "../../scheduler/trip.js";
 import { TOASTER } from "../toaster.js";
 import {
-    IPanel, BasePanel, PanelMessage, PanelData, DynElement, PanelButton
+         IPanel, BasePanel, PanelMessage, PanelData, DynElement, PanelButton,
+         RenderAs
 } from "../panel.js";
 import { OkCancelDialog } from "../dialogs.js";
 
 export class TripViewPanel extends BasePanel implements IPanel {
     appointmentTsField: Cfg<Field>;
+    driverEntity: Cfg<Entity>;
     div: HTMLElement;
     acceptButton: PanelButton;
     assignButton: PanelButton;
@@ -38,7 +40,6 @@ export class TripViewPanel extends BasePanel implements IPanel {
     splitButton: PanelButton;
     acceptConfirmDlg: OkCancelDialog;
     splitConfirmDlg: OkCancelDialog;
-    driverEntity: Cfg<Entity>;
     driver: Row | null;
     row: Row | null;
     dateFormat: Intl.DateTimeFormat;
@@ -102,52 +103,45 @@ export class TripViewPanel extends BasePanel implements IPanel {
         return "trip-view-panel";
     }
 
-    private async loadDriver(): Promise<Row | null> {
+    showAsGranted(button: PanelButton, policy: string,
+                  policies: Set<string>): void {
+        if (policies.has(policy)) {
+            button.show();
+        } else {
+            button.hide();
+        }
+    }
+
+    async onLogin(): Promise<void> {
+        this.driver = null;
         const driverId = CONTEXT.c.getSubject("driver");
         if (driverId) {
             this.driver = await this.service.v.getOne(
                 this.logger, CONTEXT.c, this.driverEntity.v, driverId);
-        } else {
-            this.driver = null;
-        }
-        return this.driver;
-    }
-
-    private onLogin(): void {
-        this.driver = null;
-        const persona = CONTEXT.c.persona.name;
-        if (persona == "drivers") {
-            this.loadDriver().then((driver) => {
-                if (driver) {
-                    this.acceptButton.show();
-                    this.assignButton.hide();
-                    this.editButton.hide();
-                    this.splitButton.hide();
-                    this.cloneButton.hide();
-                } else {
-                    this.acceptButton.hide();
-                    this.assignButton.hide();
-                    this.editButton.hide();
-                    this.splitButton.hide();
-                    this.cloneButton.hide();
-                }
-            });
-        } else if (persona == "planners" || persona == "admins") {
-            this.acceptButton.hide();
-            this.assignButton.show();
-            this.editButton.show();
-            this.splitButton.show();
-            this.cloneButton.show();
-        } else {
-            this.acceptButton.hide();
-            this.assignButton.hide();
-            this.editButton.hide();
-            this.splitButton.hide();
-            this.cloneButton.hide();
         }
     }
 
-    async onMessage(message: PanelMessage): Promise<void> {
+    collectPolicyQueries(policyQueries: Set<string>): void {
+        const queries = [
+            "app/trips=get",
+            "app/trips=put",
+            "app/trips=post",
+            "app/trips/accept=get",
+            "app/trips/assign=get",
+            "app/drivers=get"
+        ];
+        queries.forEach((q) => policyQueries.add(q));
+    }
+
+    async applyPolicies(policies: Set<string>) : Promise<void> {
+        this.showAsGranted(this.acceptButton, "app/trips/accept=get", policies);
+        this.showAsGranted(this.assignButton, "app/trips/assign=get", policies);
+        this.showAsGranted(this.editButton, "app/trips=put", policies);
+        this.showAsGranted(this.splitButton, "app/trips=post", policies);
+        this.showAsGranted(this.cloneButton, "app/trips=post", policies);
+    }
+
+    async onMessage(message: PanelMessage, data?: PanelData): Promise<void> {
         if (message == "logged-in") {
             this.onLogin();
         }
@@ -189,7 +183,7 @@ export class TripViewPanel extends BasePanel implements IPanel {
                     "trip-edit-panel", new PanelData("State", returnTrip));
             })
             .catch((err) => {
-                TOASTER.error(`ERROR: ${err}`);
+                TOASTER.exc(err);
             });
         }
     }
@@ -273,7 +267,7 @@ export class TripViewPanel extends BasePanel implements IPanel {
                     "trip-edit-panel", new PanelData("State", newTrip));
             })
             .catch((err) => {
-                TOASTER.error(`ERROR: ${err}`);
+                TOASTER.exc(err);
             });
         }
     }
@@ -323,26 +317,36 @@ export class TripViewPanel extends BasePanel implements IPanel {
     }
 
     private setDriverInfo(row: Row): void {
-        const driverTbody = this.qElement("-view-driver-table-tsec");
-        if (this.driverAbortController != null) {
-            this.driverAbortController.abort();
-        }
-        driverTbody.innerHTML = "";
-        const driverAnchor = new DynElement(
-            {
-                tag: "a",
-                href: "#",
-                text: row.get("drivernum"),
-                data: {
-                    id: row.get("drivernum_id")
-                }
+        const tbody = this.qElement("-view-driver-table-tsec");
+        tbody.innerHTML = "";
+        if (this.controller.v.policies.has("app/drivers=get")) {
+            if (this.driverAbortController != null) {
+                this.driverAbortController.abort();
             }
-        )
-        .addListener(
-            "click", this.driverClickedListener, this.driverAbortController);
-        this.addTableRowElement(
-            driverTbody, "Driver", driverAnchor.asElement());
-        this.addTableRowText(driverTbody, "Name", row.get("drivername"));
+            const driverAnchor = new DynElement(
+                {
+                    tag: "a",
+                    href: "#",
+                    text: row.get("drivernum"),
+                    data: {
+                        id: row.get("drivernum_id")
+                    }
+                }
+            )
+            .addListener(
+                "click", this.driverClickedListener,
+                         this.driverAbortController);
+            this.addTableRowElement(
+                tbody, "Driver", driverAnchor.asElement());
+        } else {
+            this.addText(tbody, row, "Driver", "drivernum");
+        }
+        this.addText(tbody, row, "Name", "drivername");
+    }
+
+    private addText(tbody: HTMLElement, row: Row, header: string, attr: string,
+                    renderAs?: RenderAs, tdClass?: string): void {
+        this.addTableRowText(tbody, header, row.get(attr), renderAs, tdClass);
     }
 
     private rowToUI(row: Row): void {
@@ -362,46 +366,40 @@ export class TripViewPanel extends BasePanel implements IPanel {
             `${this.timeFormat.format(appointmentts)}`;
         const returnTime =
             returnts ? ` - ${this.timeFormat.format(returnts)}` : "";
-        this.addTableRowText(pickup, "Rider", row.get("ridername"));
+        this.addText(pickup, row, "Rider", "ridername");
         this.addTableRowText(pickup, "Date/Time",
                     `${appointmentDateTime}${returnTime}`);
-        this.addTableRowText(pickup, "Type", row.get("triptype"));
-        this.addTableRowText(pickup, "Zone", row.get("zone"));
-        this.addTableRowText(pickup, "From", row.get("odescription"));
+        this.addText(pickup, row, "Type", "triptype");
+        this.addText(pickup, row, "Zone", "zone");
+        this.addText(pickup, row, "From", "odescription");
         this.addTableRowElement(
             pickup, "Address",
             this.addressMapAnchor(row.get("oaddress1"), row.get("omaplink")));
-        this.addTableRowText(pickup, "Address2", row.get("oaddress2"));
-        this.addTableRowText(pickup, "City", row.get("ocity"));
-        this.addTableRowText(pickup, "Prov/State",
-                    row.get("ostateprov"));
-        this.addTableRowText(pickup, "Zip", row.get("opostalcode"));
-        this.addTableRowText(pickup, "Phone", row.get("ophone"));
-        this.addTableRowText(pickup, "Notes", row.get("comments"), "asHTML");
-        this.addTableRowText(dest, "To", row.get("ddescription"));
+        this.addText(pickup, row, "Address2", "oaddress2");
+        this.addText(pickup, row, "City", "ocity");
+        this.addText(pickup, row, "Prov/State", "ostateprov");
+        this.addText(pickup, row, "Zip", "opostalcode");
+        this.addText(pickup, row, "Phone", "ophone");
+        this.addText(pickup, row, "Notes", "comments", "asHTML");
+        this.addText(dest, row, "To", "ddescription");
         this.addTableRowElement(
             dest, "Address",
             this.addressMapAnchor(row.get("daddress1"), row.get("dmaplink")));
-        this.addTableRowText(dest, "Address2", row.get("daddress2"));
-        this.addTableRowText(dest, "City", row.get("dcity"));
-        this.addTableRowText(dest, "Prov/State", row.get("dstateprov"));
-        this.addTableRowText(dest, "Zip", row.get("dpostalcode"));
-        this.addTableRowText(dest, "Phone", row.get("dphone"));
+        this.addText(dest, row, "Address2", "daddress2");
+        this.addText(dest, row, "City", "dcity");
+        this.addText(dest, row, "Prov/State", "dstateprov");
+        this.addText(dest, row, "Zip", "dpostalcode");
+        this.addText(dest, row, "Phone", "dphone");
         this.addDirections(dest, row);
         this.setDriverInfo(row);
-        this.addTableRowText(status, "Status", row.get("status"));
-        this.addTableRowText(status, "Trip No", row.get("tripnum"));
+        this.addText(status, row, "Status", "status");
+        this.addText(status, row, "Trip/No", "tripnum");
         this.addTableRowElement(status, "DB Id",
             new DynElement({ tag: "samp", text: row.get("_id") }).asElement());
         this.addTableRowElement(status, "DB Version",
             new DynElement({ tag: "samp", text: row.get("_rev") }).asElement());
-        const persona = CONTEXT.c.persona.name;
-        if (persona == "drivers") {
-            this.acceptButton.enabled = row.isNull("drivername");
-        } else if (persona == "planners" || persona == "admins") {
-            this.splitButton.enabled = row.isNull("drivername") &&
-                row.get("triptype") == "RETURN";
-        }
+        this.acceptButton.enabled = row.isNull("drivername");
+        this.splitButton.enabled = (row.get("triptype") == "RETURN");
     }
 
     async show(panelData?: PanelData): Promise<void> {
@@ -416,7 +414,7 @@ export class TripViewPanel extends BasePanel implements IPanel {
                 this.div.hidden = false;
             })
             .catch((err) => {
-                TOASTER.error(`ERROR: ${err}`);
+                TOASTER.exc(err);
             });
         } else if (PanelData.typeOf(panelData) == "Row") {
             this.row = PanelData.rowOf(panelData);

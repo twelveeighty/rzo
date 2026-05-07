@@ -1,0 +1,23 @@
+{
+    "apiVersion": "v1",
+    "kind": "ConfigBundle",
+    "metadata": {
+        "name": "server"
+    },
+    "spec": {
+        "home": "../var/conf",
+        "configurations": [
+            "entities",
+            "server/entities-server",
+            "accting",
+            "personas",
+            "server/collections",
+            "server/accting-collections",
+            "server/config-bootstrap"
+        ],
+        "policies": [
+            "policies"
+        ]
+    }
+}
+

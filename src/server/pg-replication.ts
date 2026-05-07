@@ -48,6 +48,12 @@ class PgReplicationError extends _IError {
     }
 }
 
+/* TODO: replace this with proper attachment replication.
+ */
+function att(row: Row): Row {
+    return row;
+}
+
 export class PgReplication extends PgBaseClient implements IReplicationService {
     filters: Map<string, ReplicationFilter>;
 
@@ -345,7 +351,8 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
                             const revisions = this.getRevisions(matchingRow);
                             this.convertDbRowToAppRow(matchingRow);
                             matchingRow.add("_revisions", revisions);
-                            outerIdObj.docs.push({ ok: matchingRow.raw() });
+                            outerIdObj.docs.push(
+                                { ok: att(matchingRow).raw() });
                         }
                     } else {
                         outerIdObj.docs.push({ error: {
@@ -362,7 +369,7 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
                         const revisions = this.getRevisions(row);
                         this.convertDbRowToAppRow(row);
                         row.add("_revisions", revisions);
-                        outerIdObj.docs.push({ ok: row.raw() });
+                        outerIdObj.docs.push({ ok: att(row).raw() });
                     }
                 }
             }
@@ -534,7 +541,8 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
                             id: id,
                             rev: rev,
                             error: "forbidden",
-                            reason: (err instanceof Error ? (<Error>err).message :
+                            reason: (err instanceof Error ?
+                                     (<Error>err).message :
                                      "unknown")
                         });
                     }
@@ -570,9 +578,10 @@ export class PgReplication extends PgBaseClient implements IReplicationService {
             `_id in (${idInList}) and _rev in (${versionInList})`;
         this.log(logger, statement);
         const results = await this.pool.query(statement);
-        // This query obviously can return more rows than intended if a given
-        // version is identical between two different records. However, we
-        // are only looking for those records that do NOT exist.
+        /* This query obviously can return more rows than intended if a given
+           version is identical between two different records. However, we
+           are only looking for those records that do NOT exist.
+        */
         const response: RevsDiffResponse = {};
         for (const [id, revs] of Object.entries(diffRequest)) {
             for (const rev of revs) {

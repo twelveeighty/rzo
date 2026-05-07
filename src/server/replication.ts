@@ -608,7 +608,6 @@ export class ReplicationAdapter extends SessionAwareAdapter {
          * PUT         r entity _local replicationid    Insert replication log
          *                      ^ not passed in
          */
-        await this.authenticate(request);
         if (this.logger.willLog("Debug")) {
             this.logger.debug(JSON.stringify(payload));
         }
@@ -617,15 +616,19 @@ export class ReplicationAdapter extends SessionAwareAdapter {
                 "Missing resource and/or id for ReplicationAdapter");
         }
         const entity = this.getEntity(resource!);
+        const context = await this.authenticate(request);
+        const pResource = `entity/${entity.name}`;
         if (request.method == "POST") {
             if (id == "_ensure_full_commit") {
                 response.end(JSON.stringify(
                     { ok: true, instance_start_time: "0" }));
             } else if (id == "_revs_diff") {
+                this.policyConfig.v.guardResource(context, pResource, "get");
                 const diffResponse = await this.replSource.v.getRevsDiffRequest(
                     this.logger, entity, payload as RevsDiffRequest);
                 response.end(JSON.stringify(diffResponse));
             } else if (id == "_bulk_docs") {
+                this.policyConfig.v.guardResource(context, pResource, "put");
                 const bulkResponse = await this.replSource.v.postBulkDocs(
                     this.logger, entity, payload as BulkDocsRequest);
                 response.statusCode = 201;
@@ -649,7 +652,11 @@ export class ReplicationAdapter extends SessionAwareAdapter {
     }
 
     protected async authenticate(
-        request: IncomingMessage): Promise<SessionContext> {
+            request: IncomingMessage): Promise<SessionContext> {
+        // If we have rzo-sessionid, use it.
+        if (getHeader(request.headers, "rzo-sessionid")) {
+            return this.pullContext(request);
+        }
         const authHeader = getHeader(request.headers, "Authorization");
         if (!authHeader) {
             console.log(

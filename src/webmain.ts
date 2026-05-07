@@ -1,7 +1,7 @@
 /*
     RZO - A Business Application Framework
 
-    Copyright (C) 2024 Frank Vanderham
+    Copyright (C) 2024-2026 Frank Vanderham
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -46,8 +46,14 @@ import { AccountViewPanel } from "./web/accting/accountviewpanel.js";
 import { AccountEditPanel } from "./web/accting/accounteditpanel.js";
 import { SplitsListPanel } from "./web/accting/splitslistpanel.js";
 import { LogSplitsListPanel } from "./web/accting/logsplitslistpanel.js";
-import { DocViewPanel } from "./web/accting/transviewpanel.js";
-import { DocCreatePanel } from "./web/accting/transcreatepanel.js";
+import { DocsListPanel } from "./web/accting/docslistpanel.js";
+import { DocViewPanel } from "./web/accting/docviewpanel.js";
+import { DocCreatePanel } from "./web/accting/doccreatepanel.js";
+
+import { TestsListPanel } from "./web/test/testslistpanel.js";
+import { TestViewPanel } from "./web/test/testviewpanel.js";
+import { TestEditPanel } from "./web/test/testeditpanel.js";
+
 import { G_AccountDialog } from "./web/accting/accountlist.js";
 
 const metadataName = "./metadata.js";
@@ -85,8 +91,13 @@ panelController.add(new AccountViewPanel());
 panelController.add(new AccountEditPanel());
 panelController.add(new SplitsListPanel());
 panelController.add(new LogSplitsListPanel());
+panelController.add(new DocsListPanel());
 panelController.add(new DocViewPanel());
 panelController.add(new DocCreatePanel());
+
+panelController.add(new TestsListPanel());
+panelController.add(new TestViewPanel());
+panelController.add(new TestEditPanel());
 
 function locationHashToMap(hash: string): Map<string, string> {
     const result = new Map();
@@ -127,14 +138,19 @@ import(metadataName)
     if (METADATA) {
         RZO.bootstrap(METADATA)
         .then(() => {
-            panelController.initialize();
-            G_AccountDialog().initialize();
-            entryPoint();
+            RZO.startAsyncTasks()
+            .then(() => {
+                panelController.initialize();
+                G_AccountDialog().initialize();
+                entryPoint();
+            })
+            .catch((error) => {
+                console.log(error);
+            });
         })
         .catch((error) => {
             console.log(error);
         });
-        // await RZO.startAsyncTasks();
     } else {
         console.error("METADATA is undefined or null");
     }

@@ -156,8 +156,8 @@ export class PgBaseClient {
         } else if (!row.get("_rev")) {
             row.put("_rev", row.get("vc_rev"));
         }
-        if (!row.has("_att")) {
-            row.add("_att", null);
+        if (!row.has("att_")) {
+            row.add("att_", null);
         }
         if (row.get("isdeleted")) {
             row.add("_deleted", true);
@@ -421,8 +421,8 @@ export class PgBaseClient {
             const fieldCols = entity.allFieldColumns.join(", ");
             const statement =
                 `insert into ${entity.table}_v ` +
-                `(_id, _rev, _att, ${fieldCols}) ` +
-                `select _id, '${toRev}', _att, ${fieldCols} ` +
+                `(_id, _rev, att_, ${fieldCols}) ` +
+                `select _id, '${toRev}', att_, ${fieldCols} ` +
                 `from ${entity.table}_v ` +
                 `where _id = \$1 and _rev = \$2`;
             const parameters = [id, fromRev];
@@ -464,9 +464,9 @@ export class PgBaseClient {
              * pull the current columns using the entity definition.
              */
             const updateSet = this.getSelfUpdateSet(entity, "v");
-            // Add _rev and _att to the update list.
+            // Add _rev and att_ to the update list.
             updateSet.push("_rev = v._rev");
-            updateSet.push("_att = v._att");
+            updateSet.push("att_ = v.att_");
             const statement =
                 `update ${entity.table} set ${updateSet.join(", ")} ` +
                 `from ${entity.table}_v as v ` +

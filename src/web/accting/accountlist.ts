@@ -59,7 +59,7 @@ class AccountDialog {
         }
         this._initialized = true;
         const drillIntoListener: RowListener =
-            (row) => { this.onDrillDown(row); };
+            (row) => { this.onDrillInto(row); };
         const ourSelectListener: RowListener =
             (row) => { this.onAccountSelect(row); };
         this.accountsList.initialize(drillIntoListener, ourSelectListener);
@@ -89,6 +89,7 @@ class AccountDialog {
     }
 
     private onAccountSelect(row: Row): void {
+        // Store selectListener and target, since dismiss() will reset them.
         const listener = this.selectListener;
         const target = this.target;
         this.dismiss();
@@ -101,7 +102,8 @@ class AccountDialog {
         }
     }
 
-    private onDrillDown(row: Row): void {
+    private onDrillInto(row: Row): void {
+        //TODO: add a feature to be able to return a 'parent' account.
     }
 
     showTopLevelAccounts(): void {
@@ -123,7 +125,7 @@ export class AccountsList {
     list: EntityList;
     defaultQuery: Query;
     lastResult: IResultSet | null;
-    lastSelected: Row | null;
+    lastParentShown: Row | null;
     service: Cfg<IService>;
     drillIntoListener: RowListener | null;
     selectListener: RowListener | null;
@@ -154,7 +156,7 @@ export class AccountsList {
                 .op("name", "=", "C500"),
             [{field: "name", order: "asc"}]);
         this.lastResult = null;
-        this.lastSelected = null;
+        this.lastParentShown = null;
         this.drillIntoListener = null;
         this.selectListener = null;
         this.crumbsClickedListener = (evt) => {
@@ -274,7 +276,6 @@ export class AccountsList {
             const selectedRow = this.lastResult.find(
                 (row) => row.get("_id") == id);
             if (selectedRow) {
-                this.lastSelected = selectedRow;
                 const query = new Query(
                     [],
                     new Filter().op(
@@ -283,6 +284,7 @@ export class AccountsList {
                 const resultSet = await this.collection.v.query(
                     CONTEXT.c, query);
                 if (resultSet.rowCount > 0) {
+                    this.lastParentShown = selectedRow;
                     this.lastResult = resultSet;
                     this.list.render(resultSet);
                     this.drillInto(selectedRow);
@@ -301,7 +303,7 @@ export class AccountsList {
         if (id) {
             this.drillDownOrSelect(id)
             .catch((err) => {
-                TOASTER.error(`ERROR: ${err}`);
+                TOASTER.exc(err);
             });
         }
     }
@@ -317,7 +319,7 @@ export class AccountsList {
             new Query([], new Filter().op("name", "=", name))
         );
         if (selectedRS.next()) {
-            this.lastSelected = selectedRS.getRow();
+            this.lastParentShown = selectedRS.getRow();
             const childrenRS = await this.collection.v.query(
                 CONTEXT.c,
                 new Query(
@@ -331,7 +333,7 @@ export class AccountsList {
                 this.list.render(childrenRS);
             }
             if (this.drillIntoListener) {
-                this.drillIntoListener(this.lastSelected);
+                this.drillIntoListener(this.lastParentShown);
             }
         } else {
             TOASTER.error(`Cannot find account: ${name}`);
@@ -339,7 +341,7 @@ export class AccountsList {
     }
 
     queryList(filter?: Filter): void {
-        this.lastSelected = null;
+        this.lastParentShown = null;
         const query = filter ?
             new Query(
             [],
@@ -352,7 +354,7 @@ export class AccountsList {
             this.list.render(resultSet);
         })
         .catch((err) => {
-            TOASTER.error(`ERROR: ${err}`);
+            TOASTER.exc(err);
         });
     }
 }

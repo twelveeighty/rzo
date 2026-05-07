@@ -1,0 +1,23 @@
+{
+    "apiVersion": "v1",
+    "kind": "ConfigBundle",
+    "metadata": {
+        "name": "webconfigbundle"
+    },
+    "spec": {
+        "home": "../var/conf",
+        "configurations": [
+            "entities",
+            "entities-test",
+            "accting",
+            "personas",
+            "client/collections",
+            "client/collections-test",
+            "client/accting-collections",
+            "client/config",
+            "client/config-test"
+        ],
+        "policies": []
+    }
+}
+

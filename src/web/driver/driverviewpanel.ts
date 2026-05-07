@@ -19,15 +19,15 @@
 
 import { Modal } from "bootstrap";
 import {
-    Entity, State, Filter, Query, Collection, Cfg, ServiceSource, Row,
-    IResultSet, BizTrans, BigDecimal, SideEffects
+         Entity, State, Filter, Query, Collection, Cfg, ServiceSource, Row,
+         IResultSet, BizTrans, BigDecimal
 } from "../../base/core.js";
-import { Txn, FinDoc } from "../../accting/acc-core.js";
+import { DocumentBuilder, FinDoc } from "../../accting/acc-core.js";
 import { Driver } from "../../scheduler/trip.js";
 import { RZO, CONTEXT } from "../../base/configuration.js";
 import { TOASTER } from "../toaster.js";
 import {
-    IPanel, ViewPanel, PanelData, DynElement, PanelButton
+         IPanel, ViewPanel, PanelData, DynElement, PanelButton
 } from "../panel.js";
 import { TripList } from "../trip/triplist.js";
 
@@ -37,14 +37,14 @@ const ACC_TICKET_PRICE = new BigDecimal("10.00");
 export class DriverViewPanel extends ViewPanel implements IPanel {
     tripEntity: Cfg<Entity>;
     tripsCollection: Cfg<Collection>;
+    accBalanceCollection: Cfg<Collection>;
+    findocEntity: Cfg<FinDoc>;
     tripList: TripList;
     owedAccBal: Row | null;
     expensedAccBal: Row | null;
     createAcctsBtn: PanelButton;
     reimburseBtn: PanelButton;
     reimburseModal: Modal;
-    accBalanceCollection: Cfg<Collection>;
-    findocEntity: Cfg<FinDoc>;
 
     constructor() {
         super("driver", "-view-div", "-view-tsec", "-view-back-btn",
@@ -58,7 +58,7 @@ export class DriverViewPanel extends ViewPanel implements IPanel {
         this.reimburseBtn = new PanelButton(
             btnDiv, this.fqId("-view-reimburse-btn"), "Reimburse Mileage...");
         this.accBalanceCollection = new Cfg("accountbalances");
-        this.findocEntity = new Cfg("acctrans");
+        this.findocEntity = new Cfg("findoc");
         this.reimburseModal = new Modal(this.qElement("-reimburse-div"));
         this.owedAccBal = null;
         this.expensedAccBal = null;
@@ -152,50 +152,38 @@ export class DriverViewPanel extends ViewPanel implements IPanel {
         const dr = owedAcct;
         const cr = ACC_CHEQ_ACCOUNT;
         const memo = `Driver reimbursement for ${driverNum}`;
-        // TRANSACTION
-        const entity = this.findocEntity.v;
-        const state = await entity.create(CONTEXT.c, this.service.v);
-        let se: Promise<SideEffects>[] = [];
-        entity.cpSetValue(state, "account", owedAcct, CONTEXT.c, se);
-        entity.cpSetValue(state, "entityid", driverId, CONTEXT.c, se);
-        entity.cpSetValue(state, "memo", memo, CONTEXT.c, se);
-        entity.cpSetValue(state, "posted", posted, CONTEXT.c, se);
-        entity.cpSetValue(state, "created", now, CONTEXT.c, se);
-        await Promise.all(se);
-        const docNum = state.field("docnum").value;
-        const txn = new Txn(entity, state);
-        // DR SPLIT
-        const split = this.findocEntity.v.splitEntity.v;
-        const drSplit = await split.create(CONTEXT.c, this.service.v);
-        se = [];
-        // Set acctrans without validation, since it doesn't exist yet.
-        drSplit.field("acctrans").value = docNum;
-        split.cpSetValue(drSplit, "account", dr, CONTEXT.c, se);
-        split.cpSetValue(drSplit, "change", "Dr", CONTEXT.c, se);
-        split.cpSetValue(drSplit, "quantity", qty, CONTEXT.c, se);
-        split.cpSetValue(drSplit, "price", price, CONTEXT.c, se);
-        split.cpSetValue(drSplit, "amount", amount, CONTEXT.c, se);
-        split.cpSetValue(drSplit, "created", now, CONTEXT.c, se);
-        split.cpSetValue(drSplit, "posted", posted, CONTEXT.c, se);
-        split.cpSetValue(drSplit, "memo", memo, CONTEXT.c, se);
-        await Promise.all(se);
-        txn.splits.push(drSplit);
-        // CR SPLIT
-        const crSplit = await split.create(CONTEXT.c, this.service.v);
-        se = [];
-        // Set acctrans without validation, since it doesn't exist yet.
-        crSplit.field("acctrans").value = docNum;
-        split.cpSetValue(crSplit, "account", cr, CONTEXT.c, se);
-        split.cpSetValue(crSplit, "change", "Cr", CONTEXT.c, se);
-        split.cpSetValue(crSplit, "quantity", qty, CONTEXT.c, se);
-        split.cpSetValue(crSplit, "price", price, CONTEXT.c, se);
-        split.cpSetValue(crSplit, "amount", amount, CONTEXT.c, se);
-        split.cpSetValue(crSplit, "created", now, CONTEXT.c, se);
-        split.cpSetValue(crSplit, "posted", posted, CONTEXT.c, se);
-        split.cpSetValue(crSplit, "memo", memo, CONTEXT.c, se);
-        await Promise.all(se);
-        txn.splits.push(crSplit);
-        await txn.toBizTrans(bt, this.logger, CONTEXT.c, this.service.v);
+        const builder = new DocumentBuilder(
+            this.findocEntity.v, bt, CONTEXT.c, this.service.v);
+        await builder.document(new Row(
+            {
+                account: owedAcct,
+                entityid: driverId,
+                memo: memo,
+                posted: posted,
+                created: now
+            }
+        ));
+        await builder.split(new Row(
+            {
+                account: dr,
+                change: "Dr",
+                quantity: qty,
+                price: price,
+                amount: amount,
+                memo: memo
+            }
+        ));
+        await builder.split(new Row(
+            {
+                account: cr,
+                change: "Cr",
+                quantity: qty,
+                price: price,
+                amount: amount,
+                memo: memo
+            }
+        ));
+        await builder.postBizTrans();
         await this.service.v.processBizTrans(this.logger, bt);
     }
 
@@ -249,7 +237,7 @@ export class DriverViewPanel extends ViewPanel implements IPanel {
                 this.calculateReimbursedTotal();
             })
             .catch((err) => {
-                TOASTER.error(`ERROR: ${err}`);
+                TOASTER.exc(err);
             });
         }
     }
@@ -261,7 +249,7 @@ export class DriverViewPanel extends ViewPanel implements IPanel {
             this.queryAccting();
         })
         .catch((err) => {
-            TOASTER.error(`ERROR: ${err}`);
+            TOASTER.exc(err);
         });
     }
 
@@ -316,7 +304,7 @@ export class DriverViewPanel extends ViewPanel implements IPanel {
             this.handleAccData(rs);
         })
         .catch((err) => {
-            TOASTER.error(`ERROR: ${err}`);
+            TOASTER.exc(err);
         });
     }
 
@@ -336,10 +324,10 @@ export class DriverViewPanel extends ViewPanel implements IPanel {
                 this.tripList.render(resultSet);
             })
             .catch((err) => {
-                TOASTER.error(`ERROR: ${err}`);
+                TOASTER.exc(err);
             });
         } catch (err) {
-            TOASTER.error(`ERROR: ${err}`);
+            TOASTER.exc(err);
         }
     }
 

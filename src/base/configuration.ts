@@ -21,7 +21,7 @@ import {
     TypeCfg, ClassSpec, EntitySpec, Entity, Field, Source, Persona, Nobody,
     Collection, AsyncTask, DaemonWorker, IConfiguration, IContext,
     IPolicyConfiguration, Authenticator, Logger, LogLevel, LogThreshold,
-    Artifact
+    Artifact, PolicyAuthorizer
 } from "./core.js";
 
 import { ClassInfo, Reflection } from "./reflect.js";
@@ -58,6 +58,9 @@ type SourceClass = { new(config: TypeCfg<ClassSpec>,
 
 type AuthenticatorClass = { new(config: TypeCfg<ClassSpec>,
                          blueprints: Map<string, any>): Authenticator; };
+
+type PolicyAuthorizerClass = { new(config: TypeCfg<ClassSpec>,
+                         blueprints: Map<string, any>): PolicyAuthorizer; };
 
 type PersonaClass = { new(config: TypeCfg<ClassSpec>,
                           blueprints: Map<string, any>): Persona; };
@@ -116,6 +119,7 @@ export class Configuration implements IConfiguration {
     entities: Map<string, Entity>;
     sources: Map<string, Source>;
     authenticators: Map<string, Authenticator>;
+    policyAuthorizers: Map<string, PolicyAuthorizer>;
     personas: Map<string, Persona>;
     collections: Map<string, Collection>;
     workers: Map<string, DaemonWorker>;
@@ -132,6 +136,7 @@ export class Configuration implements IConfiguration {
         this.entities = new Map();
         this.sources = new Map();
         this.authenticators = new Map();
+        this.policyAuthorizers = new Map();
         this.personas = new Map();
         this.collections = new Map();
         this.workers = new Map();
@@ -266,6 +271,10 @@ export class Configuration implements IConfiguration {
                     this.instantiate<Authenticator,AuthenticatorClass>(
                         config_j, this.authenticators);
                     break;
+                case "PolicyAuthorizer":
+                    this.instantiate<PolicyAuthorizer,PolicyAuthorizerClass>(
+                        config_j, this.policyAuthorizers);
+                    break;
                 case "Persona":
                     this.instantiate<Persona,PersonaClass>(
                         config_j, this.personas);
@@ -338,6 +347,14 @@ export class Configuration implements IConfiguration {
             return authenticator;
         }
         throw new ConfigError(`No such authenticator: ${name}`);
+    }
+
+    getPolicyAuthorizer(name: string): PolicyAuthorizer {
+        const authorizer = this.policyAuthorizers.get(name);
+        if (authorizer) {
+            return authorizer;
+        }
+        throw new ConfigError(`No such PolicyAuthorizer: ${name}`);
     }
 
     getArtifacts<T>(kind: string, targetType: Function): Map<string, T> {
@@ -416,6 +433,9 @@ export class Configuration implements IConfiguration {
         for (const authenticator of this.authenticators.values()) {
             authenticator.configure(this);
         }
+        for (const authorizer of this.policyAuthorizers.values()) {
+            authorizer.configure(this);
+        }
         for (const persona of this.personas.values()) {
             persona.configure(this);
         }
@@ -424,6 +444,9 @@ export class Configuration implements IConfiguration {
         }
         for (const worker of this.workers.values()) {
             worker.configure(this);
+        }
+        for (const artifact of this.artifacts.values()) {
+            artifact.configure(this);
         }
     }
 
